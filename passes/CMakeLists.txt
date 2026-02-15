@@ -2,7 +2,7 @@
 # Loom Yosys passes
 # Each pass is built as a loadable plugin (.so)
 
-# scan_insert pass - scan chain insertion
+# scan_insert pass - scan chain insertion for FFs
 add_subdirectory(scan_insert)
 
 # dpi_bridge pass - DPI-to-hardware bridge
@@ -11,5 +11,5 @@ add_subdirectory(dpi_bridge)
 # emu_top pass - top-level wrapper generation with clock gating
 add_subdirectory(emu_top)
 
-# mem_scan_insert pass - memory scan interface insertion
-add_subdirectory(mem_scan_insert)
+# mem_shadow pass - shadow port insertion for memories
+add_subdirectory(mem_shadow)
