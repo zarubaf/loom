@@ -56,6 +56,20 @@ This convention ensures that Loom infrastructure signals are clearly identifiabl
 - `YOSYS_ENABLE_GLOB`
 - `YOSYS_ENABLE_ZLIB`
 
+## Files to Never Commit
+
+Only source files should be committed. Never commit generated or build artifacts:
+
+- `*.log` - Yosys logs, build logs
+- `*.vcd` - Waveform dumps
+- `*.vvp` - Icarus Verilog simulation binaries
+- `*.json` - Generated memory maps, scan maps (e.g., `*_map*.json`)
+- `transformed*.v` - Generated Verilog output
+- `sim_*` - Compiled simulation executables
+- `build/` - Build directory
+
+These patterns are covered by `.gitignore` files in `tests/` subdirectories.
+
 ---
 
 ## Project Vision
