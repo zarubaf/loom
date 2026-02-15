@@ -1,0 +1,12 @@
+# Test scan chain insertion with equivalence checking
+# Verifies that the design is functionally equivalent when scan_enable=0
+
+read_verilog -sv ../fixtures/tiny_dff.sv
+hierarchy -check -top tiny_dff
+proc
+
+# Insert scan chain with equivalence verification
+scan_insert -check_equiv
+
+# If we get here, equivalence was proven
+stat

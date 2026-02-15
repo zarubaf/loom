@@ -35,7 +35,7 @@ endfunction()
 
 # Register Yosys script tests
 add_yosys_test(scan_basic)
-# add_yosys_test(scan_multiclk)
+add_yosys_test(scan_equiv)
 
 # End-to-end tests using slang frontend
 add_yosys_slang_test(e2e)
