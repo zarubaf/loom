@@ -10,3 +10,6 @@ add_subdirectory(dpi_bridge)
 
 # emu_top pass - top-level wrapper generation with clock gating
 add_subdirectory(emu_top)
+
+# mem_scan_insert pass - memory scan interface insertion
+add_subdirectory(mem_scan_insert)
