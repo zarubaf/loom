@@ -1,0 +1,6 @@
+# Generated files
+*.vcd
+*.vvp
+*.log
+*.json
+transformed_*.v

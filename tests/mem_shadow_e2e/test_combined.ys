@@ -31,7 +31,7 @@ stat
 
 # Load and run scan_insert pass
 plugin -i ../../build/passes/scan_insert/scan_insert.so
-scan_insert
+scan_insert -map scan_map_mem.json
 
 log "=== After scan_insert ==="
 stat

@@ -1,0 +1,14 @@
+# Common generated files across all test directories
+*.vcd
+*.vvp
+*.log
+yosys.log
+
+# Simulation binaries
+sim_*
+
+# Generated Verilog
+transformed*.v
+
+# Generated JSON maps
+*_map*.json
