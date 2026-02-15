@@ -97,28 +97,88 @@ struct ScanInsertPass : public Pass {
 
 ---
 
-## Stage 6: slang Integration
-**Commit message:** `Add slang frontend integration`
+## Stage 6: yosys-slang Integration
+**Commit message:** `Add yosys-slang SystemVerilog frontend`
+
+### Overview
+Integrate povik/yosys-slang as a git submodule in `third_party/yosys-slang/`. This provides `read_slang` command for IEEE 1800-2017/2023 SystemVerilog support.
 
 ### Tasks:
-1. Add yosys-slang as submodule
-2. Configure FetchSlang.cmake properly
-3. Verify `read_slang` works with our test fixtures
-4. Create end-to-end test: SV → scan_insert → write_verilog
+1. Add yosys-slang as git submodule in `third_party/`
+2. Create `cmake/FetchYosysSlang.cmake` to build the plugin
+3. Update top-level CMake to include yosys-slang build
+4. Verify `read_slang` loads and works with test fixtures
+5. Create end-to-end test: SV → read_slang → proc → scan_insert → write_verilog
+
+### Sub-stages:
+- **6a**: Add submodule and basic CMake integration
+- **6b**: Verify read_slang works with tiny_dff.sv
+- **6c**: Add end-to-end test
+
+### Build considerations:
+- yosys-slang requires: slang library, {fmt}
+- Plugin output: `slang.so`
+- Must use same `-undefined dynamic_lookup` pattern as scan_insert on macOS
 
 ---
 
-## Stage 7: DPI Bridge Pass (Future)
+## Stage 7: Sequential Equivalence Checking
+**Commit message:** `Add equivalence checking for scan chain insertion`
+
+### Overview
+Add `-check_equiv` option to scan_insert that verifies the design is functionally equivalent before and after scan insertion when scan ports are tied off (scan_enable=0, scan_in=0).
+
+### Tasks:
+1. Add `-check_equiv` flag to scan_insert pass
+2. Before insertion: save copy of original design
+3. After insertion: tie off scan ports (scan_enable=0)
+4. Run Yosys equiv_* passes to verify equivalence
+5. Report PASS/FAIL result
+
+### Implementation approach:
+```tcl
+# Conceptual flow (inside scan_insert pass):
+# 1. Copy design to "gold"
+# 2. Insert scan chain in "gate"
+# 3. Tie off scan ports in "gate": scan_enable=0, scan_in=0
+# 4. Run: equiv_make gold gate equiv
+# 5. Run: equiv_induct equiv
+# 6. Run: equiv_status -assert
+```
+
+### Yosys equiv commands to use:
+- `equiv_make` - Create equivalence checking module
+- `equiv_simple` - Simple combinational equivalence
+- `equiv_induct` - Inductive equivalence for sequential circuits
+- `equiv_status` - Check equivalence status
+
+### Test:
+- Run on tiny_dff.sv with `-check_equiv`
+- Should pass (scan chain is functionally transparent when disabled)
+
+---
+
+## Stage 8: DPI Bridge Pass (Future)
 **Commit message:** `Add DPI bridge pass skeleton`
 
+### Overview
+Fork yosys-slang to handle DPI-C declarations. Instead of erroring on `import "DPI-C"`, capture the signature and generate placeholder cells.
+
 ### Tasks:
-1. Create `passes/dpi_bridge/dpi_bridge.cc`
-2. Parse DPI declarations from RTLIL attributes
-3. Generate bridge module instantiations
+1. Fork yosys-slang to `third_party/yosys-slang/` (or use our submodule)
+2. Modify slang frontend to detect DPI imports
+3. Store DPI function signatures as RTLIL attributes
+4. Create `passes/dpi_bridge/dpi_bridge.cc` pass
+5. Generate bridge module instantiations from DPI attributes
+
+### DPI handling strategy:
+- DPI import → create `$loom_dpi_call` cell with attributes for function name, args
+- DPI export → not supported initially (error)
+- Bridge pass converts `$loom_dpi_call` to hardware mailbox interface
 
 ---
 
-## Stage 8: RTL Components (Future)
+## Stage 9: RTL Components (Future)
 **Commit message:** `Add PCIe bridge RTL modules`
 
 ### Tasks:
@@ -153,5 +213,8 @@ ctest --test-dir build -R scan_insert_test --output-on-failure
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
-| TBD | | |
+| 2026-02-15 | Use yosys-slang as submodule (not fork initially) | Start with upstream, fork only when DPI modifications needed |
+| 2026-02-15 | Plugins don't link libyosys directly | Required for proper symbol resolution on macOS |
+| 2026-02-15 | Use equiv_induct for sequential equivalence | Scan chain is sequential; need inductive proof |
+| 2026-02-15 | Tie scan_enable=0 for equivalence check | Scan chain must be disabled to be functionally transparent |
 

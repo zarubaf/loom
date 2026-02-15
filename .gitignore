@@ -22,4 +22,4 @@ cmake-build-*/
 compile_commands.json
 
 # Test outputs
-tests/**/scan_*_output.v
+tests/**/*_output.v
