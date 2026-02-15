@@ -48,6 +48,6 @@ struct ScanInsertPass : public Pass {
     }
 };
 
-ScanInsertPass ScanInsertPass;
+ScanInsertPass ScanInsertPass_singleton;
 
 PRIVATE_NAMESPACE_END
