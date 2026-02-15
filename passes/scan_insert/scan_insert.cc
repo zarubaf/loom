@@ -63,6 +63,26 @@ struct ScanInsertPass : public Pass {
         );
     }
 
+    // Check if a FF is a memory output register that was merged by memory_dff.
+    // After memory_dff, merged FFs have Q outputs connected to $ffmerge_disconnected wires.
+    // We skip these to avoid breaking BRAM inference in downstream tools (e.g., Vivado).
+    static bool is_memory_output_ff(RTLIL::Cell *cell) {
+        if (!cell->hasPort(ID::Q))
+            return false;
+
+        RTLIL::SigSpec q = cell->getPort(ID::Q);
+        for (auto bit : q) {
+            if (!bit.wire)
+                continue;
+            // Check if wire name contains "ffmerge_disconnected" - indicates merged memory FF
+            std::string wire_name = bit.wire->name.str();
+            if (wire_name.find("ffmerge_disconnected") != std::string::npos) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     void execute(std::vector<std::string> args, RTLIL::Design *design) override {
         log_header(design, "Executing SCAN_INSERT pass.\n");
 
@@ -118,20 +138,34 @@ struct ScanInsertPass : public Pass {
     }
 
     void run_scan_insert(RTLIL::Module *module, int /* chain_length */, std::vector<ScanElement> &elements) {
-        // Collect all flip-flop cells
+        // Collect all flip-flop cells, skipping memory output registers
         std::vector<RTLIL::Cell*> dffs;
+        int skipped_mem_ffs = 0;
         for (auto cell : module->cells()) {
             if (is_ff(cell)) {
+                if (is_memory_output_ff(cell)) {
+                    log("  Skipping memory output FF: %s\n", log_id(cell));
+                    skipped_mem_ffs++;
+                    continue;
+                }
                 dffs.push_back(cell);
             }
         }
 
         if (dffs.empty()) {
-            log("  No flip-flops found, skipping.\n");
+            if (skipped_mem_ffs > 0) {
+                log("  No flip-flops to scan (skipped %d memory output FFs).\n", skipped_mem_ffs);
+            } else {
+                log("  No flip-flops found, skipping.\n");
+            }
             return;
         }
 
-        log("  Found %zu flip-flop(s)\n", dffs.size());
+        log("  Found %zu flip-flop(s) to scan", dffs.size());
+        if (skipped_mem_ffs > 0) {
+            log(" (skipped %d memory output FFs)", skipped_mem_ffs);
+        }
+        log("\n");
 
         // Add scan ports (loom_ prefix for all generated signals)
         RTLIL::Wire *scan_en = module->addWire(ID(loom_scan_enable), 1);
