@@ -1,0 +1,22 @@
+# Build directories
+build/
+cmake-build-*/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Compiled objects
+*.o
+*.so
+*.dylib
+*.a
+
+# Generated files
+compile_commands.json
