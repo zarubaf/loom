@@ -12,6 +12,7 @@ YOSYS_BIN="${PREFIX}/bin/yosys"
 SLANG_PLUGIN="${PREFIX}/lib/loom/slang.so"
 SCAN_INSERT_PLUGIN="${PREFIX}/lib/loom/scan_insert.so"
 DPI_BRIDGE_PLUGIN="${PREFIX}/lib/loom/dpi_bridge.so"
+MEM_SHADOW_PLUGIN="${PREFIX}/lib/loom/mem_shadow.so"
 
 # Default options
 FILELIST=""
@@ -19,6 +20,8 @@ OUTPUT=""
 TOP_MODULE=""
 SCAN_ONLY=false
 DPI_BRIDGE=false
+MEM_SHADOW=false
+MEM_MAP=""
 VERBOSE=false
 
 usage() {
@@ -33,6 +36,8 @@ Options:
   -top, --top MODULE      Top module name (auto-detected if not specified)
   --scan-only             Only insert scan chains, skip DPI bridge
   --dpi-bridge            Include DPI-to-hardware bridge conversion
+  --mem-shadow            Add unified shadow ports to memories for debug access
+  --mem-map FILE          Output memory map JSON file (requires --mem-shadow)
   -v, --verbose           Verbose output
   -h, --help              Show this help message
   --version               Show version information
@@ -40,11 +45,14 @@ Options:
 Examples:
   loom -f design.f -o synthesized.v
   loom -f design.f -o synthesized.v -top my_soc --dpi-bridge
+  loom -f design.f -o synthesized.v --mem-shadow --mem-map mem_map.json
 
 Signal naming convention:
   All Loom-generated signals use the 'loom_' prefix:
     - loom_scan_enable, loom_scan_in, loom_scan_out (scan chain)
     - loom_dpi_req, loom_dpi_ack, loom_dpi_func_id, loom_dpi_args, loom_dpi_result (DPI bridge)
+    - loom_shadow_clk, loom_shadow_addr, loom_shadow_wdata, loom_shadow_rdata,
+      loom_shadow_wen, loom_shadow_ren (memory shadow access)
 
 EOF
     exit 0
@@ -77,6 +85,14 @@ while [[ $# -gt 0 ]]; do
         --dpi-bridge)
             DPI_BRIDGE=true
             shift
+            ;;
+        --mem-shadow)
+            MEM_SHADOW=true
+            shift
+            ;;
+        --mem-map)
+            MEM_MAP="$2"
+            shift 2
             ;;
         -v|--verbose)
             VERBOSE=true
@@ -120,6 +136,9 @@ YOSYS_CMD+="plugin -i $SCAN_INSERT_PLUGIN; "
 if [[ "$DPI_BRIDGE" == true ]]; then
     YOSYS_CMD+="plugin -i $DPI_BRIDGE_PLUGIN; "
 fi
+if [[ "$MEM_SHADOW" == true ]]; then
+    YOSYS_CMD+="plugin -i $MEM_SHADOW_PLUGIN; "
+fi
 
 # Read design using slang frontend with filelist
 YOSYS_CMD+="read_slang -F $FILELIST"
@@ -135,8 +154,21 @@ if [[ -n "$TOP_MODULE" ]]; then
 fi
 YOSYS_CMD+="; "
 
-# Standard optimization passes
-YOSYS_CMD+="proc; flatten; opt; "
+# Initial processing
+YOSYS_CMD+="proc; opt; "
+
+# Memory shadow ports (must run before flatten)
+if [[ "$MEM_SHADOW" == true ]]; then
+    YOSYS_CMD+="memory_collect; memory_dff; "
+    if [[ -n "$MEM_MAP" ]]; then
+        YOSYS_CMD+="mem_shadow -map $MEM_MAP; "
+    else
+        YOSYS_CMD+="mem_shadow; "
+    fi
+fi
+
+# Flatten and optimize for subsequent passes
+YOSYS_CMD+="flatten; opt; "
 
 # Insert scan chains
 if [[ "$SCAN_ONLY" == false ]] || [[ "$DPI_BRIDGE" == false ]]; then
