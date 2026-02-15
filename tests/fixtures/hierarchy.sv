@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // hierarchy.sv - Test module with nested hierarchy
 // Tests scan chain insertion across module boundaries
 

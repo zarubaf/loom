@@ -1,0 +1,160 @@
+#!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+# loom - CLI wrapper for Loom FPGA emulation toolchain
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PREFIX="${SCRIPT_DIR%/bin}"
+
+# Plugin paths (relative to install prefix)
+YOSYS_BIN="${PREFIX}/bin/yosys"
+SLANG_PLUGIN="${PREFIX}/lib/loom/slang.so"
+SCAN_INSERT_PLUGIN="${PREFIX}/lib/loom/scan_insert.so"
+DPI_BRIDGE_PLUGIN="${PREFIX}/lib/loom/dpi_bridge.so"
+
+# Default options
+FILELIST=""
+OUTPUT=""
+TOP_MODULE=""
+SCAN_ONLY=false
+DPI_BRIDGE=false
+VERBOSE=false
+
+usage() {
+    cat <<EOF
+Loom - Open-Source FPGA Emulation Toolchain
+
+Usage: loom [options] -f <filelist> -o <output.v>
+
+Options:
+  -f, --filelist FILE     Input filelist (required)
+  -o, --output FILE       Output Verilog file (required)
+  -top, --top MODULE      Top module name (auto-detected if not specified)
+  --scan-only             Only insert scan chains, skip DPI bridge
+  --dpi-bridge            Include DPI-to-hardware bridge conversion
+  -v, --verbose           Verbose output
+  -h, --help              Show this help message
+  --version               Show version information
+
+Examples:
+  loom -f design.f -o synthesized.v
+  loom -f design.f -o synthesized.v -top my_soc --dpi-bridge
+
+Signal naming convention:
+  All Loom-generated signals use the 'loom_' prefix:
+    - loom_scan_enable, loom_scan_in, loom_scan_out (scan chain)
+    - loom_dpi_req, loom_dpi_ack, loom_dpi_func_id, loom_dpi_args, loom_dpi_result (DPI bridge)
+
+EOF
+    exit 0
+}
+
+version() {
+    echo "Loom FPGA Emulation Toolchain v0.1.0"
+    exit 0
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -f|--filelist)
+            FILELIST="$2"
+            shift 2
+            ;;
+        -o|--output)
+            OUTPUT="$2"
+            shift 2
+            ;;
+        -top|--top)
+            TOP_MODULE="$2"
+            shift 2
+            ;;
+        --scan-only)
+            SCAN_ONLY=true
+            shift
+            ;;
+        --dpi-bridge)
+            DPI_BRIDGE=true
+            shift
+            ;;
+        -v|--verbose)
+            VERBOSE=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            ;;
+        --version)
+            version
+            ;;
+        *)
+            echo "Error: Unknown option $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Validate required arguments
+if [[ -z "$FILELIST" ]]; then
+    echo "Error: Input filelist (-f) is required" >&2
+    exit 1
+fi
+
+if [[ -z "$OUTPUT" ]]; then
+    echo "Error: Output file (-o) is required" >&2
+    exit 1
+fi
+
+if [[ ! -f "$FILELIST" ]]; then
+    echo "Error: Filelist not found: $FILELIST" >&2
+    exit 1
+fi
+
+# Build Yosys command
+YOSYS_CMD=""
+
+# Load plugins
+YOSYS_CMD+="plugin -i $SLANG_PLUGIN; "
+YOSYS_CMD+="plugin -i $SCAN_INSERT_PLUGIN; "
+if [[ "$DPI_BRIDGE" == true ]]; then
+    YOSYS_CMD+="plugin -i $DPI_BRIDGE_PLUGIN; "
+fi
+
+# Read design using slang frontend with filelist
+YOSYS_CMD+="read_slang -F $FILELIST"
+if [[ -n "$TOP_MODULE" ]]; then
+    YOSYS_CMD+=" --top $TOP_MODULE"
+fi
+YOSYS_CMD+="; "
+
+# Elaborate
+YOSYS_CMD+="hierarchy -check"
+if [[ -n "$TOP_MODULE" ]]; then
+    YOSYS_CMD+=" -top $TOP_MODULE"
+fi
+YOSYS_CMD+="; "
+
+# Standard optimization passes
+YOSYS_CMD+="proc; flatten; opt; "
+
+# Insert scan chains
+if [[ "$SCAN_ONLY" == false ]] || [[ "$DPI_BRIDGE" == false ]]; then
+    YOSYS_CMD+="scan_insert; "
+fi
+
+# DPI bridge if requested
+if [[ "$DPI_BRIDGE" == true ]]; then
+    YOSYS_CMD+="dpi_bridge; "
+fi
+
+# Final cleanup and output
+YOSYS_CMD+="opt_clean; "
+YOSYS_CMD+="write_verilog -noattr $OUTPUT"
+
+# Execute
+if [[ "$VERBOSE" == true ]]; then
+    echo "Running: $YOSYS_BIN -p \"$YOSYS_CMD\""
+fi
+
+exec "$YOSYS_BIN" -p "$YOSYS_CMD"

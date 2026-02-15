@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # Test DPI bridge pass with automatic DPI detection
 # Verifies that yosys-slang creates $__loom_dpi_call cells for DPI imports
 # and that dpi_bridge pass converts them to hardware bridge interfaces

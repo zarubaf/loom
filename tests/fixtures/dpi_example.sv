@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // dpi_example.sv - Test module with DPI-C function calls
 // Used to test DPI bridge pass
 

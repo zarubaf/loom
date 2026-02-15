@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // multi_clock.sv - Test module with multiple clock domains
 // Tests scan chain handling of different clock domains
 

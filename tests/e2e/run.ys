@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # End-to-end test: SystemVerilog → read_slang → proc → scan_insert → write_verilog
 # Tests the full pipeline with SV-specific features (structs, enums)
 

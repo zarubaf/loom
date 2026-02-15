@@ -1,5 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
 # Test scan chain insertion with equivalence checking
-# Verifies that the design is functionally equivalent when scan_enable=0
+# Verifies that the design is functionally equivalent when loom_scan_enable=0
 
 read_verilog -sv ../fixtures/tiny_dff.sv
 hierarchy -check -top tiny_dff

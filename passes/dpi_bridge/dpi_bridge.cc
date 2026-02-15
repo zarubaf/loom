@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 /*
  * dpi_bridge - Yosys pass for DPI-C function bridge generation
  *

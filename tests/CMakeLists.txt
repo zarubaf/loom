@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # Loom tests
 
 # Helper function for Yosys script tests (using read_verilog)

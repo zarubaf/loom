@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # Loom Yosys passes
 # Each pass is built as a loadable plugin (.so)
 

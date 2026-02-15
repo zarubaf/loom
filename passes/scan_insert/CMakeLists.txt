@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # scan_insert Yosys pass
 # Inserts scan chains into the design for state capture/restore
 

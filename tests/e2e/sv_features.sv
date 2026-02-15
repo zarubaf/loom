@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // sv_features.sv - SystemVerilog test with structs and enums
 // Tests that yosys-slang correctly handles SV-specific features
 

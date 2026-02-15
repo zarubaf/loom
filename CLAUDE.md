@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # CLAUDE.md — Loom: Open-Source FPGA Emulation Toolchain
 
 ## Quick Start
@@ -7,15 +8,42 @@
 brew install pkg-config libffi bison readline
 
 # Build
-cmake -B build -DCMAKE_BUILD_TYPE=Debug
+cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 
 # Run tests
 ctest --test-dir build --output-on-failure
 
-# Run Yosys with plugins
-./build/yosys/bin/yosys -m ./build/passes/scan_insert/scan_insert.so
+# Install (optional)
+cmake --install build --prefix ~/.local
 ```
+
+## Using the CLI
+
+```bash
+# Basic usage: transform SystemVerilog for FPGA emulation
+loom -f design.f -o synthesized.v
+
+# Specify top module
+loom -f design.f -o synthesized.v -top my_soc
+
+# Include DPI-to-hardware bridge conversion
+loom -f design.f -o synthesized.v --dpi-bridge
+
+# Verbose output
+loom -f design.f -o synthesized.v -v
+```
+
+## Signal Naming Convention
+
+All Loom-generated signals use the `loom_` prefix to avoid conflicts with user signals:
+
+| Pass | Signals |
+|------|---------|
+| `scan_insert` | `loom_scan_enable`, `loom_scan_in`, `loom_scan_out` |
+| `dpi_bridge` | `loom_dpi_req`, `loom_dpi_ack`, `loom_dpi_func_id`, `loom_dpi_args`, `loom_dpi_result` |
+
+This convention ensures that Loom infrastructure signals are clearly identifiable and won't conflict with design signals.
 
 ## Implementation Notes
 
@@ -44,6 +72,8 @@ Source SV → yosys + loom plugins (read_slang → RTLIL → custom passes) → 
 
 ```
 loom/
+├── bin/
+│   └── loom                      # CLI wrapper script
 ├── CLAUDE.md                     # This file
 ├── CMakeLists.txt                # Top-level CMake build
 ├── cmake/
@@ -288,11 +318,11 @@ TEST_F(ScanInsertTest, AddsPortsCorrectly) {
     auto mod = make_module_with_dffs("\\test3", 2);
     // Run scan insertion
     // ...
-    EXPECT_NE(mod->wire(ID(\\scan_enable)), nullptr);
-    EXPECT_NE(mod->wire(ID(\\scan_in)), nullptr);
-    EXPECT_NE(mod->wire(ID(\\scan_out)), nullptr);
-    EXPECT_TRUE(mod->wire(ID(\\scan_enable))->port_input);
-    EXPECT_TRUE(mod->wire(ID(\\scan_out))->port_output);
+    EXPECT_NE(mod->wire(ID(\\loom_scan_enable)), nullptr);
+    EXPECT_NE(mod->wire(ID(\\loom_scan_in)), nullptr);
+    EXPECT_NE(mod->wire(ID(\\loom_scan_out)), nullptr);
+    EXPECT_TRUE(mod->wire(ID(\\loom_scan_enable))->port_input);
+    EXPECT_TRUE(mod->wire(ID(\\loom_scan_out))->port_output);
 }
 ```
 
@@ -324,8 +354,8 @@ scan_insert
 # Verify
 log "=== After scan insertion ==="
 
-# Check: scan ports exist
-select w:scan_enable
+# Check: scan ports exist (loom_ prefix)
+select w:loom_scan_enable
 stat
 # This should report 1 wire
 
@@ -469,7 +499,7 @@ RTLIL::Cell       // A cell instance with type, parameters, and port connections
 
 **Creating a wire:**
 ```cpp
-RTLIL::Wire *w = module->addWire(ID(\scan_enable), 1);
+RTLIL::Wire *w = module->addWire(ID(\loom_scan_enable), 1);
 w->port_input = true;
 module->fixup_ports();  // Always call after changing port properties
 ```
@@ -584,11 +614,11 @@ struct ScanInsertPass : public Pass {
         if (dffs.empty()) return;
         log("  Found %zu flip-flops\n", dffs.size());
 
-        RTLIL::Wire *scan_en = module->addWire(ID(\scan_enable), 1);
+        RTLIL::Wire *scan_en = module->addWire(ID(\loom_scan_enable), 1);
         scan_en->port_input = true;
-        RTLIL::Wire *scan_in = module->addWire(ID(\scan_in), 1);
+        RTLIL::Wire *scan_in = module->addWire(ID(\loom_scan_in), 1);
         scan_in->port_input = true;
-        RTLIL::Wire *scan_out = module->addWire(ID(\scan_out), 1);
+        RTLIL::Wire *scan_out = module->addWire(ID(\loom_scan_out), 1);
         scan_out->port_output = true;
 
         RTLIL::SigSpec prev_q = RTLIL::SigSpec(scan_in);
@@ -717,9 +747,9 @@ For `int foo(int a, logic [31:0] b)`:
 1. **Collect** all `$dff*` cells
 2. **Partition** by clock domain or fixed chain length
 3. **Per chain:**
-   a. Add `scan_enable`, `scan_in`, `scan_out` ports
-   b. Per FF: create `$mux` (sel=scan_enable, A=orig_D, B=prev_Q), reconnect FF's `\D`
-   c. Wire last Q to `scan_out`
+   a. Add `loom_scan_enable`, `loom_scan_in`, `loom_scan_out` ports
+   b. Per FF: create `$mux` (sel=loom_scan_enable, A=orig_D, B=prev_Q), reconnect FF's `\D`
+   c. Wire last Q to `loom_scan_out`
 4. **Add** scan controller module
 5. **`fixup_ports()`**
 

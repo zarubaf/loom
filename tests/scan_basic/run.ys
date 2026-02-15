@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # scan_basic test - Basic scan chain insertion test
 # Tests that scan_insert pass runs without errors on a simple design
 
@@ -19,6 +20,11 @@ scan_insert
 # Show design after scan insertion
 log "=== After scan insertion ==="
 stat
+
+# Verify loom_scan_* ports were added (unified naming convention)
+select -assert-count 1 w:\loom_scan_enable
+select -assert-count 1 w:\loom_scan_in
+select -assert-count 1 w:\loom_scan_out
 
 # Verify design is still valid
 check -assert

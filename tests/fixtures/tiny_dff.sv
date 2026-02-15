@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // tiny_dff.sv - Minimal test module with flip-flops
 // Used to test scan chain insertion
 

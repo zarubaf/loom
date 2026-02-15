@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # DPI Bridge pass - converts DPI placeholders to hardware bridges
 
 add_library(dpi_bridge MODULE dpi_bridge.cc)

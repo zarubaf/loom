@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 /*
  * scan_insert - Yosys pass for scan chain insertion
  *
@@ -5,10 +6,10 @@
  * enabling state capture and restore for FPGA emulation.
  *
  * For each flip-flop, a mux is inserted:
- *   - When scan_enable=0: normal D input passes through
- *   - When scan_enable=1: scan_in (from previous FF's Q) passes through
+ *   - When loom_scan_enable=0: normal D input passes through
+ *   - When loom_scan_enable=1: loom_scan_in (from previous FF's Q) passes through
  *
- * The chain connects: scan_in -> FF1.D -> FF1.Q -> FF2.D -> ... -> scan_out
+ * The chain connects: loom_scan_in -> FF1.D -> FF1.Q -> FF2.D -> ... -> loom_scan_out
  */
 
 #include "kernel/yosys.h"
@@ -92,14 +93,14 @@ struct ScanInsertPass : public Pass {
 
         log("  Found %zu flip-flop(s)\n", dffs.size());
 
-        // Add scan ports
-        RTLIL::Wire *scan_en = module->addWire(ID(\\scan_enable), 1);
+        // Add scan ports (loom_ prefix for all generated signals)
+        RTLIL::Wire *scan_en = module->addWire(ID(\\loom_scan_enable), 1);
         scan_en->port_input = true;
 
-        RTLIL::Wire *scan_in = module->addWire(ID(\\scan_in), 1);
+        RTLIL::Wire *scan_in = module->addWire(ID(\\loom_scan_in), 1);
         scan_in->port_input = true;
 
-        RTLIL::Wire *scan_out = module->addWire(ID(\\scan_out), 1);
+        RTLIL::Wire *scan_out = module->addWire(ID(\\loom_scan_out), 1);
         scan_out->port_output = true;
 
         // Track the previous Q output to chain to next FF
@@ -151,7 +152,7 @@ struct ScanInsertPass : public Pass {
         module->fixup_ports();
 
         log("  Inserted scan chain with %zu element(s)\n", dffs.size());
-        log("  Added ports: scan_enable (in), scan_in (in), scan_out (out)\n");
+        log("  Added ports: loom_scan_enable (in), loom_scan_in (in), loom_scan_out (out)\n");
     }
 
     void run_scan_insert_with_equiv_check(RTLIL::Module *module, int chain_length, RTLIL::Design *design) {
@@ -197,9 +198,9 @@ struct ScanInsertPass : public Pass {
 
     void tie_off_scan_ports(RTLIL::Module *module) {
         // Find scan ports
-        RTLIL::Wire *scan_en = module->wire(ID(\\scan_enable));
-        RTLIL::Wire *scan_in = module->wire(ID(\\scan_in));
-        RTLIL::Wire *scan_out = module->wire(ID(\\scan_out));
+        RTLIL::Wire *scan_en = module->wire(ID(\\loom_scan_enable));
+        RTLIL::Wire *scan_in = module->wire(ID(\\loom_scan_in));
+        RTLIL::Wire *scan_out = module->wire(ID(\\loom_scan_out));
 
         SigMap sigmap(module);
 
