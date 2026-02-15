@@ -16,8 +16,8 @@ function(add_yosys_test TEST_NAME)
     )
 endfunction()
 
-# Register Yosys script tests (uncomment as implemented)
-# add_yosys_test(scan_basic)
+# Register Yosys script tests
+add_yosys_test(scan_basic)
 # add_yosys_test(scan_multiclk)
 # add_yosys_test(dpi_simple)
 # add_yosys_test(e2e)

@@ -1,0 +1,27 @@
+# scan_basic test - Basic scan chain insertion test
+# Tests that scan_insert pass runs without errors on a simple design
+
+# Read the test design
+read_verilog -sv ../fixtures/tiny_dff.sv
+
+# Elaborate and optimize
+hierarchy -top tiny_dff
+proc
+opt_clean
+
+# Show design before scan insertion
+log "=== Before scan insertion ==="
+stat
+
+# Run scan insertion
+scan_insert
+
+# Show design after scan insertion
+log "=== After scan insertion ==="
+stat
+
+# Verify design is still valid
+check -assert
+
+# Write output for inspection
+write_verilog scan_basic_output.v

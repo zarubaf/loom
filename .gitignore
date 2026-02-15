@@ -20,3 +20,6 @@ cmake-build-*/
 
 # Generated files
 compile_commands.json
+
+# Test outputs
+tests/**/scan_*_output.v
