@@ -22,4 +22,9 @@ cmake-build-*/
 compile_commands.json
 
 # Test outputs
-tests/**/*_output.v
+tests/**/*.v
+
+*.vcd
+*.vvp
+
+Testing/
