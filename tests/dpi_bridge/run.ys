@@ -16,11 +16,12 @@ stat
 dpi_bridge -gen_wrapper
 
 # Check that loom_dpi_* interface ports were added
-select -assert-count 1 w:\loom_dpi_req
-select -assert-count 1 w:\loom_dpi_ack
-select -assert-count 1 w:\loom_dpi_func_id
-select -assert-count 1 w:\loom_dpi_args
-select -assert-count 1 w:\loom_dpi_result
+# loom_dpi_valid triggers clock gating at emu_top level
+# Note: loom_dpi_ack is NOT in DUT - it's added by emu_top wrapper
+select -assert-count 1 w:loom_dpi_valid
+select -assert-count 1 w:loom_dpi_func_id
+select -assert-count 1 w:loom_dpi_args
+select -assert-count 1 w:loom_dpi_result
 
 # Show final design
 stat

@@ -3,22 +3,21 @@
  * dpi_bridge - Yosys pass for DPI-C function bridge generation
  *
  * This pass converts DPI function call cells ($__loom_dpi_call) into hardware
- * mailbox interfaces that enable FPGA<->host communication for emulation.
+ * interfaces that enable FPGA<->host communication for emulation.
  *
  * DPI functions cannot be synthesized directly. The yosys-slang frontend
  * automatically creates $__loom_dpi_call cells for DPI import calls, which
- * this pass then converts to hardware bridges that:
- *   1. Capture function arguments
- *   2. Signal the host via mailbox/interrupt
- *   3. Wait for host to compute result
- *   4. Return result to the design
+ * this pass then converts to hardware bridges.
  *
- * Bridge interface:
- *   - loom_dpi_req:     Request valid (FPGA->host)
- *   - loom_dpi_func_id: Function identifier
- *   - loom_dpi_args:    Packed function arguments
- *   - loom_dpi_ack:     Host acknowledgment (host->FPGA)
- *   - loom_dpi_result:  Return value from host
+ * DUT bridge interface (directly connects to emu_top wrapper):
+ *   - loom_dpi_valid:   DPI call pending (output, triggers clock gating)
+ *   - loom_dpi_func_id: Function identifier (output)
+ *   - loom_dpi_args:    Packed function arguments (output)
+ *   - loom_dpi_result:  Return value from host (input)
+ *
+ * Note: loom_dpi_ack is NOT part of the DUT interface. It's added by emu_top
+ * for clock gating control. The DUT is clock-gated and transparent to the
+ * handshaking - it just sees the result when the clock resumes.
  */
 
 #include "kernel/yosys.h"
@@ -45,13 +44,13 @@ struct DpiBridgePass : public Pass {
         log("\n");
         log("    dpi_bridge [options] [selection]\n");
         log("\n");
-        log("Convert DPI function call cells to hardware mailbox bridges.\n");
+        log("Convert DPI function call cells to hardware bridge interfaces.\n");
         log("\n");
         log("This pass processes $__loom_dpi_call cells created by yosys-slang\n");
         log("when it encounters DPI import function calls in SystemVerilog.\n");
         log("\n");
         log("    -gen_wrapper\n");
-        log("        Generate Verilog wrapper module for host software interface\n");
+        log("        Generate info about host software interface\n");
         log("\n");
         log("    -base_addr N\n");
         log("        Base address for mailbox registers (default: 0x1000)\n");
@@ -62,6 +61,15 @@ struct DpiBridgePass : public Pass {
         log("  - Parameter RET_WIDTH: Width of return value\n");
         log("  - Port ARGS: Packed function arguments\n");
         log("  - Port RESULT: Return value wire\n");
+        log("\n");
+        log("DUT ports created:\n");
+        log("  - loom_dpi_valid:   DPI call pending (output, gates clock at emu_top)\n");
+        log("  - loom_dpi_func_id: Function identifier (output, 8-bit)\n");
+        log("  - loom_dpi_args:    Packed function arguments (output)\n");
+        log("  - loom_dpi_result:  Return value from host (input)\n");
+        log("\n");
+        log("Note: loom_dpi_ack is added by emu_top wrapper, not the DUT.\n");
+        log("The DUT is clock-gated and transparent to the handshaking.\n");
         log("\n");
     }
 
@@ -162,28 +170,30 @@ struct DpiBridgePass : public Pass {
 
         // Create bridge interface ports if they don't exist
         // Use loom_ prefix to avoid name conflicts with user signals
-        RTLIL::Wire *dpi_req = module->wire(ID(\\loom_dpi_req));
-        if (!dpi_req) {
-            dpi_req = module->addWire(ID(\\loom_dpi_req), 1);
-            dpi_req->port_output = true;
+
+        // loom_dpi_valid: indicates a DPI call is pending
+        // This signal triggers clock gating at the emu_top level
+        RTLIL::Wire *dpi_valid = module->wire(ID(loom_dpi_valid));
+        if (!dpi_valid) {
+            dpi_valid = module->addWire(ID(loom_dpi_valid), 1);
+            dpi_valid->port_output = true;
         }
 
-        RTLIL::Wire *dpi_ack = module->wire(ID(\\loom_dpi_ack));
-        if (!dpi_ack) {
-            dpi_ack = module->addWire(ID(\\loom_dpi_ack), 1);
-            dpi_ack->port_input = true;
-        }
+        // Note: loom_dpi_ack is NOT added to the DUT - it's only used by emu_top
+        // for clock gating. The DUT is transparent to the handshaking since
+        // its clock is gated while waiting for the host response.
 
-        RTLIL::Wire *dpi_func_id = module->wire(ID(\\loom_dpi_func_id));
+        // loom_dpi_func_id: identifies which DPI function is being called
+        RTLIL::Wire *dpi_func_id = module->wire(ID(loom_dpi_func_id));
         if (!dpi_func_id) {
-            dpi_func_id = module->addWire(ID(\\loom_dpi_func_id), 8);
+            dpi_func_id = module->addWire(ID(loom_dpi_func_id), 8);
             dpi_func_id->port_output = true;
         }
 
         // Create or extend args output port
-        RTLIL::Wire *dpi_args_out = module->wire(ID(\\loom_dpi_args));
+        RTLIL::Wire *dpi_args_out = module->wire(ID(loom_dpi_args));
         if (!dpi_args_out) {
-            dpi_args_out = module->addWire(ID(\\loom_dpi_args), func.arg_width);
+            dpi_args_out = module->addWire(ID(loom_dpi_args), func.arg_width);
             dpi_args_out->port_output = true;
         } else if (GetSize(dpi_args_out) < func.arg_width) {
             // Extend width if needed for this function
@@ -191,20 +201,20 @@ struct DpiBridgePass : public Pass {
         }
 
         // Create or extend result input port
-        RTLIL::Wire *dpi_result_in = module->wire(ID(\\loom_dpi_result));
+        RTLIL::Wire *dpi_result_in = module->wire(ID(loom_dpi_result));
         if (!dpi_result_in) {
-            dpi_result_in = module->addWire(ID(\\loom_dpi_result), func.ret_width);
+            dpi_result_in = module->addWire(ID(loom_dpi_result), func.ret_width);
             dpi_result_in->port_input = true;
         } else if (GetSize(dpi_result_in) < func.ret_width) {
             dpi_result_in->width = func.ret_width;
         }
 
-        // Create a request signal for this specific DPI call
-        // For now, we tie dpi_req high when the cell exists (combinational)
-        // In a full implementation, this would be controlled by state machine
-        RTLIL::Wire *req_wire = module->addWire(NEW_ID, 1);
-        module->connect(RTLIL::SigSpec(req_wire), RTLIL::SigSpec(RTLIL::State::S1));
-        module->connect(RTLIL::SigSpec(dpi_req), RTLIL::SigSpec(req_wire));
+        // Connect dpi_valid high when there's a DPI call in the module
+        // The clock gating logic at emu_top uses: CE = !dpi_valid | dpi_ack
+        // This means: clock runs when no DPI call OR when host has acked
+        RTLIL::Wire *valid_wire = module->addWire(NEW_ID, 1);
+        module->connect(RTLIL::SigSpec(valid_wire), RTLIL::SigSpec(RTLIL::State::S1));
+        module->connect(RTLIL::SigSpec(dpi_valid), RTLIL::SigSpec(valid_wire));
 
         // Connect args to dpi_args port
         if (GetSize(func.args_sig) > 0) {
@@ -251,8 +261,8 @@ struct DpiBridgePass : public Pass {
     }
 
     void generate_host_wrapper(const std::vector<DpiFunction> &functions, int base_addr) {
-        log("\nGenerating host software interface:\n");
-        log("// DPI Bridge Host Interface\n");
+        log("\nDPI Bridge Interface Summary:\n");
+        log("// Clock gating: emu_top gates all clocks when loom_dpi_valid=1\n");
         log("// Base address: 0x%x\n", base_addr);
         log("\n");
 
@@ -261,7 +271,6 @@ struct DpiBridgePass : public Pass {
             log("// Function: %s (ID: %d)\n", func.name.c_str(), func.func_id);
             log("//   Args register:   0x%x (%d bits)\n", addr, func.arg_width);
             log("//   Result register: 0x%x (%d bits)\n", addr + 0x10, func.ret_width);
-            log("//   Control/Status:  0x%x\n", addr + 0x20);
             log("\n");
         }
     }

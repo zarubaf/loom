@@ -94,13 +94,13 @@ struct ScanInsertPass : public Pass {
         log("  Found %zu flip-flop(s)\n", dffs.size());
 
         // Add scan ports (loom_ prefix for all generated signals)
-        RTLIL::Wire *scan_en = module->addWire(ID(\\loom_scan_enable), 1);
+        RTLIL::Wire *scan_en = module->addWire(ID(loom_scan_enable), 1);
         scan_en->port_input = true;
 
-        RTLIL::Wire *scan_in = module->addWire(ID(\\loom_scan_in), 1);
+        RTLIL::Wire *scan_in = module->addWire(ID(loom_scan_in), 1);
         scan_in->port_input = true;
 
-        RTLIL::Wire *scan_out = module->addWire(ID(\\loom_scan_out), 1);
+        RTLIL::Wire *scan_out = module->addWire(ID(loom_scan_out), 1);
         scan_out->port_output = true;
 
         // Track the previous Q output to chain to next FF
@@ -198,9 +198,9 @@ struct ScanInsertPass : public Pass {
 
     void tie_off_scan_ports(RTLIL::Module *module) {
         // Find scan ports
-        RTLIL::Wire *scan_en = module->wire(ID(\\loom_scan_enable));
-        RTLIL::Wire *scan_in = module->wire(ID(\\loom_scan_in));
-        RTLIL::Wire *scan_out = module->wire(ID(\\loom_scan_out));
+        RTLIL::Wire *scan_en = module->wire(ID(loom_scan_enable));
+        RTLIL::Wire *scan_in = module->wire(ID(loom_scan_in));
+        RTLIL::Wire *scan_out = module->wire(ID(loom_scan_out));
 
         SigMap sigmap(module);
 
