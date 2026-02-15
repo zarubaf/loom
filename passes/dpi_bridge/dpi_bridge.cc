@@ -35,6 +35,7 @@ struct DpiFunction {
     RTLIL::Cell *cell;
     RTLIL::SigSpec args_sig;
     RTLIL::SigSpec result_sig;
+    RTLIL::SigSpec valid_condition;  // Derived execution condition
 };
 
 struct DpiBridgePass : public Pass {
@@ -165,6 +166,111 @@ struct DpiBridgePass : public Pass {
         log("Processed %zu DPI function(s)\n", dpi_functions.size());
     }
 
+    // Derive the execution condition for a DPI call by tracing how its result is used.
+    // The DPI result typically flows through mux chains where the select signals
+    // represent the conditions under which the result is actually needed.
+    //
+    // For example, if the DPI call is in: if (start && state==IDLE) sum <= dpi_func(a,b);
+    // After proc, this becomes muxes:
+    //   _18_ = start ? dpi_result : sum       (select = start)
+    //   _20_ = !state ? _18_ : xxx            (select = !state, i.e., state==IDLE)
+    // The select signals (start, !state) are ANDed to form the valid condition.
+    RTLIL::SigSpec derive_valid_condition(RTLIL::Module *module, const DpiFunction &func) {
+        SigMap sigmap(module);
+
+        // Get the DPI result signal
+        RTLIL::SigSpec result_sig = sigmap(func.result_sig);
+        if (GetSize(result_sig) == 0) {
+            log("    No result signal, defaulting to valid=1\n");
+            return RTLIL::SigSpec(RTLIL::State::S1);
+        }
+
+        // Collect select conditions by tracing through the mux chain
+        std::vector<RTLIL::SigSpec> select_conditions;
+        pool<RTLIL::SigBit> signals_to_trace;
+        pool<RTLIL::SigBit> traced_signals;
+
+        // Start with the DPI result signal bits
+        for (auto bit : result_sig.bits()) {
+            signals_to_trace.insert(bit);
+        }
+
+        // Trace through mux chain - find all muxes that gate the DPI result
+        // and collect their select signals
+        while (!signals_to_trace.empty()) {
+            pool<RTLIL::SigBit> next_signals;
+
+            for (auto cell : module->cells()) {
+                if (cell->type != ID($mux))
+                    continue;
+
+                RTLIL::SigSpec port_b = sigmap(cell->getPort(ID::B));
+                RTLIL::SigSpec port_y = sigmap(cell->getPort(ID::Y));
+
+                // Check if any signal we're tracing is used in port B (selected when S=1)
+                bool uses_traced_signal = false;
+                for (auto bit : port_b.bits()) {
+                    if (signals_to_trace.count(bit)) {
+                        uses_traced_signal = true;
+                        break;
+                    }
+                }
+
+                if (uses_traced_signal) {
+                    RTLIL::SigSpec sel = cell->getPort(ID::S);
+
+                    // Only add if we haven't seen this select before
+                    bool already_have = false;
+                    RTLIL::SigSpec mapped_sel = sigmap(sel);
+                    for (auto &existing : select_conditions) {
+                        if (sigmap(existing) == mapped_sel) {
+                            already_have = true;
+                            break;
+                        }
+                    }
+
+                    if (!already_have) {
+                        log("    Found mux in chain: %s, select=%s\n",
+                            log_id(cell), log_signal(sel));
+                        select_conditions.push_back(sel);
+                    }
+
+                    // Add mux output to signals to trace (follow the chain)
+                    for (auto bit : port_y.bits()) {
+                        if (!traced_signals.count(bit)) {
+                            next_signals.insert(bit);
+                        }
+                    }
+                }
+            }
+
+            // Mark current signals as traced
+            for (auto bit : signals_to_trace) {
+                traced_signals.insert(bit);
+            }
+
+            signals_to_trace = next_signals;
+        }
+
+        if (select_conditions.empty()) {
+            log("    No mux conditions found, defaulting to valid=1\n");
+            return RTLIL::SigSpec(RTLIL::State::S1);
+        }
+
+        // Combine all select conditions with AND
+        // valid = sel1 & sel2 & sel3 & ...
+        RTLIL::SigSpec valid = select_conditions[0];
+
+        for (size_t i = 1; i < select_conditions.size(); i++) {
+            RTLIL::Wire *and_out = module->addWire(NEW_ID, 1);
+            module->addAnd(NEW_ID, valid, select_conditions[i], and_out);
+            valid = RTLIL::SigSpec(and_out);
+        }
+
+        log("    Derived valid condition from %zu mux select(s)\n", select_conditions.size());
+        return valid;
+    }
+
     void convert_to_bridge(RTLIL::Module *module, const DpiFunction &func, int base_addr) {
         RTLIL::Cell *cell = func.cell;
 
@@ -209,12 +315,15 @@ struct DpiBridgePass : public Pass {
             dpi_result_in->width = func.ret_width;
         }
 
-        // Connect dpi_valid high when there's a DPI call in the module
+        // Derive the valid condition from the DPI call's execution context
+        // This traces how the result is used through mux chains to find when
+        // the DPI result is actually needed (e.g., state==IDLE && start)
+        RTLIL::SigSpec valid_condition = derive_valid_condition(module, func);
+
+        // Connect dpi_valid to the derived condition
         // The clock gating logic at emu_top uses: CE = !dpi_valid | dpi_ack
         // This means: clock runs when no DPI call OR when host has acked
-        RTLIL::Wire *valid_wire = module->addWire(NEW_ID, 1);
-        module->connect(RTLIL::SigSpec(valid_wire), RTLIL::SigSpec(RTLIL::State::S1));
-        module->connect(RTLIL::SigSpec(dpi_valid), RTLIL::SigSpec(valid_wire));
+        module->connect(RTLIL::SigSpec(dpi_valid), valid_condition);
 
         // Connect args to dpi_args port
         if (GetSize(func.args_sig) > 0) {

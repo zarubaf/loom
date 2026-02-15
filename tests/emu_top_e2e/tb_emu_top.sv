@@ -93,10 +93,14 @@ module tb_emu_top;
         a = 32'd10;
         b = 32'd20;
         start = 1;
-        @(posedge clk);
+
+        // Wait for host to ack (clock will be released)
+        // Keep start=1 until DUT captures the result on the released clock edge
+        wait(dpi_ack);
+        @(posedge clk);  // Allow DUT to capture on the released clock
         start = 0;
 
-        // Wait for done (DPI call will gate clock, host stub will respond)
+        // Wait for FSM to complete
         wait(done);
         @(posedge clk);
 
@@ -112,6 +116,9 @@ module tb_emu_top;
         a = 32'd100;
         b = 32'd200;
         start = 1;
+
+        // Wait for host to ack, then allow DUT to capture
+        wait(dpi_ack);
         @(posedge clk);
         start = 0;
 
