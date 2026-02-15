@@ -253,12 +253,12 @@ struct EmuTopPass : public Pass {
         wrapper->fixup_ports();
 
         // === Instantiate loom_clk_gate ===
-        // Module: loom_clk_gate(clk_in, ce, clk_out)
+        // Module: loom_clk_gate(clk_i, ce_i, clk_o) - lowRISC style
         // CE = !dpi_valid | dpi_ack (clock runs when no call OR host has acked)
         RTLIL::Cell *clk_gate = wrapper->addCell(ID(u_clk_gate), ID(loom_clk_gate));
-        clk_gate->setPort(ID(clk_in), RTLIL::SigSpec(ext_clk));
-        clk_gate->setPort(ID(ce), RTLIL::SigSpec(clk_enable));
-        clk_gate->setPort(ID(clk_out), RTLIL::SigSpec(clk_gated));
+        clk_gate->setPort(ID(clk_i), RTLIL::SigSpec(ext_clk));
+        clk_gate->setPort(ID(ce_i), RTLIL::SigSpec(clk_enable));
+        clk_gate->setPort(ID(clk_o), RTLIL::SigSpec(clk_gated));
 
         // Generate clock enable: CE = !dpi_valid | dpi_ack
         // This means: clock enabled when no DPI call pending OR when host has acknowledged

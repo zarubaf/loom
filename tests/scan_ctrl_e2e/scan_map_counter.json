@@ -1,0 +1,355 @@
+{
+  "chain_length": 50,
+  "flops": [
+    {
+      "chain_position": 0,
+      "cell_name": "multi_counter.$driver$counter_b.wrapped",
+      "wire_name": "multi_counter.counter_b.wrapped",
+      "bit_index": 0,
+      "width": 1
+    },
+    {
+      "chain_position": 1,
+      "cell_name": "multi_counter.$driver$counter_b.prev_counter",
+      "wire_name": "multi_counter.counter_b.prev_counter",
+      "bit_index": 0,
+      "width": 16
+    },
+    {
+      "chain_position": 2,
+      "cell_name": "multi_counter.$driver$counter_b.prev_counter",
+      "wire_name": "multi_counter.counter_b.prev_counter",
+      "bit_index": 1,
+      "width": 16
+    },
+    {
+      "chain_position": 3,
+      "cell_name": "multi_counter.$driver$counter_b.prev_counter",
+      "wire_name": "multi_counter.counter_b.prev_counter",
+      "bit_index": 2,
+      "width": 16
+    },
+    {
+      "chain_position": 4,
+      "cell_name": "multi_counter.$driver$counter_b.prev_counter",
+      "wire_name": "multi_counter.counter_b.prev_counter",
+      "bit_index": 3,
+      "width": 16
+    },
+    {
+      "chain_position": 5,
+      "cell_name": "multi_counter.$driver$counter_b.prev_counter",
+      "wire_name": "multi_counter.counter_b.prev_counter",
+      "bit_index": 4,
+      "width": 16
+    },
+    {
+      "chain_position": 6,
+      "cell_name": "multi_counter.$driver$counter_b.prev_counter",
+      "wire_name": "multi_counter.counter_b.prev_counter",
+      "bit_index": 5,
+      "width": 16
+    },
+    {
+      "chain_position": 7,
+      "cell_name": "multi_counter.$driver$counter_b.prev_counter",
+      "wire_name": "multi_counter.counter_b.prev_counter",
+      "bit_index": 6,
+      "width": 16
+    },
+    {
+      "chain_position": 8,
+      "cell_name": "multi_counter.$driver$counter_b.prev_counter",
+      "wire_name": "multi_counter.counter_b.prev_counter",
+      "bit_index": 7,
+      "width": 16
+    },
+    {
+      "chain_position": 9,
+      "cell_name": "multi_counter.$driver$counter_b.prev_counter",
+      "wire_name": "multi_counter.counter_b.prev_counter",
+      "bit_index": 8,
+      "width": 16
+    },
+    {
+      "chain_position": 10,
+      "cell_name": "multi_counter.$driver$counter_b.prev_counter",
+      "wire_name": "multi_counter.counter_b.prev_counter",
+      "bit_index": 9,
+      "width": 16
+    },
+    {
+      "chain_position": 11,
+      "cell_name": "multi_counter.$driver$counter_b.prev_counter",
+      "wire_name": "multi_counter.counter_b.prev_counter",
+      "bit_index": 10,
+      "width": 16
+    },
+    {
+      "chain_position": 12,
+      "cell_name": "multi_counter.$driver$counter_b.prev_counter",
+      "wire_name": "multi_counter.counter_b.prev_counter",
+      "bit_index": 11,
+      "width": 16
+    },
+    {
+      "chain_position": 13,
+      "cell_name": "multi_counter.$driver$counter_b.prev_counter",
+      "wire_name": "multi_counter.counter_b.prev_counter",
+      "bit_index": 12,
+      "width": 16
+    },
+    {
+      "chain_position": 14,
+      "cell_name": "multi_counter.$driver$counter_b.prev_counter",
+      "wire_name": "multi_counter.counter_b.prev_counter",
+      "bit_index": 13,
+      "width": 16
+    },
+    {
+      "chain_position": 15,
+      "cell_name": "multi_counter.$driver$counter_b.prev_counter",
+      "wire_name": "multi_counter.counter_b.prev_counter",
+      "bit_index": 14,
+      "width": 16
+    },
+    {
+      "chain_position": 16,
+      "cell_name": "multi_counter.$driver$counter_b.prev_counter",
+      "wire_name": "multi_counter.counter_b.prev_counter",
+      "bit_index": 15,
+      "width": 16
+    },
+    {
+      "chain_position": 17,
+      "cell_name": "multi_counter.$driver$counter_b.counter",
+      "wire_name": "multi_counter.counter_b.counter",
+      "bit_index": 0,
+      "width": 16
+    },
+    {
+      "chain_position": 18,
+      "cell_name": "multi_counter.$driver$counter_b.counter",
+      "wire_name": "multi_counter.counter_b.counter",
+      "bit_index": 1,
+      "width": 16
+    },
+    {
+      "chain_position": 19,
+      "cell_name": "multi_counter.$driver$counter_b.counter",
+      "wire_name": "multi_counter.counter_b.counter",
+      "bit_index": 2,
+      "width": 16
+    },
+    {
+      "chain_position": 20,
+      "cell_name": "multi_counter.$driver$counter_b.counter",
+      "wire_name": "multi_counter.counter_b.counter",
+      "bit_index": 3,
+      "width": 16
+    },
+    {
+      "chain_position": 21,
+      "cell_name": "multi_counter.$driver$counter_b.counter",
+      "wire_name": "multi_counter.counter_b.counter",
+      "bit_index": 4,
+      "width": 16
+    },
+    {
+      "chain_position": 22,
+      "cell_name": "multi_counter.$driver$counter_b.counter",
+      "wire_name": "multi_counter.counter_b.counter",
+      "bit_index": 5,
+      "width": 16
+    },
+    {
+      "chain_position": 23,
+      "cell_name": "multi_counter.$driver$counter_b.counter",
+      "wire_name": "multi_counter.counter_b.counter",
+      "bit_index": 6,
+      "width": 16
+    },
+    {
+      "chain_position": 24,
+      "cell_name": "multi_counter.$driver$counter_b.counter",
+      "wire_name": "multi_counter.counter_b.counter",
+      "bit_index": 7,
+      "width": 16
+    },
+    {
+      "chain_position": 25,
+      "cell_name": "multi_counter.$driver$counter_b.counter",
+      "wire_name": "multi_counter.counter_b.counter",
+      "bit_index": 8,
+      "width": 16
+    },
+    {
+      "chain_position": 26,
+      "cell_name": "multi_counter.$driver$counter_b.counter",
+      "wire_name": "multi_counter.counter_b.counter",
+      "bit_index": 9,
+      "width": 16
+    },
+    {
+      "chain_position": 27,
+      "cell_name": "multi_counter.$driver$counter_b.counter",
+      "wire_name": "multi_counter.counter_b.counter",
+      "bit_index": 10,
+      "width": 16
+    },
+    {
+      "chain_position": 28,
+      "cell_name": "multi_counter.$driver$counter_b.counter",
+      "wire_name": "multi_counter.counter_b.counter",
+      "bit_index": 11,
+      "width": 16
+    },
+    {
+      "chain_position": 29,
+      "cell_name": "multi_counter.$driver$counter_b.counter",
+      "wire_name": "multi_counter.counter_b.counter",
+      "bit_index": 12,
+      "width": 16
+    },
+    {
+      "chain_position": 30,
+      "cell_name": "multi_counter.$driver$counter_b.counter",
+      "wire_name": "multi_counter.counter_b.counter",
+      "bit_index": 13,
+      "width": 16
+    },
+    {
+      "chain_position": 31,
+      "cell_name": "multi_counter.$driver$counter_b.counter",
+      "wire_name": "multi_counter.counter_b.counter",
+      "bit_index": 14,
+      "width": 16
+    },
+    {
+      "chain_position": 32,
+      "cell_name": "multi_counter.$driver$counter_b.counter",
+      "wire_name": "multi_counter.counter_b.counter",
+      "bit_index": 15,
+      "width": 16
+    },
+    {
+      "chain_position": 33,
+      "cell_name": "multi_counter.$driver$counter_a.wrapped",
+      "wire_name": "multi_counter.counter_a.wrapped",
+      "bit_index": 0,
+      "width": 1
+    },
+    {
+      "chain_position": 34,
+      "cell_name": "multi_counter.$driver$counter_a.prev_counter",
+      "wire_name": "multi_counter.counter_a.prev_counter",
+      "bit_index": 0,
+      "width": 8
+    },
+    {
+      "chain_position": 35,
+      "cell_name": "multi_counter.$driver$counter_a.prev_counter",
+      "wire_name": "multi_counter.counter_a.prev_counter",
+      "bit_index": 1,
+      "width": 8
+    },
+    {
+      "chain_position": 36,
+      "cell_name": "multi_counter.$driver$counter_a.prev_counter",
+      "wire_name": "multi_counter.counter_a.prev_counter",
+      "bit_index": 2,
+      "width": 8
+    },
+    {
+      "chain_position": 37,
+      "cell_name": "multi_counter.$driver$counter_a.prev_counter",
+      "wire_name": "multi_counter.counter_a.prev_counter",
+      "bit_index": 3,
+      "width": 8
+    },
+    {
+      "chain_position": 38,
+      "cell_name": "multi_counter.$driver$counter_a.prev_counter",
+      "wire_name": "multi_counter.counter_a.prev_counter",
+      "bit_index": 4,
+      "width": 8
+    },
+    {
+      "chain_position": 39,
+      "cell_name": "multi_counter.$driver$counter_a.prev_counter",
+      "wire_name": "multi_counter.counter_a.prev_counter",
+      "bit_index": 5,
+      "width": 8
+    },
+    {
+      "chain_position": 40,
+      "cell_name": "multi_counter.$driver$counter_a.prev_counter",
+      "wire_name": "multi_counter.counter_a.prev_counter",
+      "bit_index": 6,
+      "width": 8
+    },
+    {
+      "chain_position": 41,
+      "cell_name": "multi_counter.$driver$counter_a.prev_counter",
+      "wire_name": "multi_counter.counter_a.prev_counter",
+      "bit_index": 7,
+      "width": 8
+    },
+    {
+      "chain_position": 42,
+      "cell_name": "multi_counter.$driver$counter_a.counter",
+      "wire_name": "multi_counter.counter_a.counter",
+      "bit_index": 0,
+      "width": 8
+    },
+    {
+      "chain_position": 43,
+      "cell_name": "multi_counter.$driver$counter_a.counter",
+      "wire_name": "multi_counter.counter_a.counter",
+      "bit_index": 1,
+      "width": 8
+    },
+    {
+      "chain_position": 44,
+      "cell_name": "multi_counter.$driver$counter_a.counter",
+      "wire_name": "multi_counter.counter_a.counter",
+      "bit_index": 2,
+      "width": 8
+    },
+    {
+      "chain_position": 45,
+      "cell_name": "multi_counter.$driver$counter_a.counter",
+      "wire_name": "multi_counter.counter_a.counter",
+      "bit_index": 3,
+      "width": 8
+    },
+    {
+      "chain_position": 46,
+      "cell_name": "multi_counter.$driver$counter_a.counter",
+      "wire_name": "multi_counter.counter_a.counter",
+      "bit_index": 4,
+      "width": 8
+    },
+    {
+      "chain_position": 47,
+      "cell_name": "multi_counter.$driver$counter_a.counter",
+      "wire_name": "multi_counter.counter_a.counter",
+      "bit_index": 5,
+      "width": 8
+    },
+    {
+      "chain_position": 48,
+      "cell_name": "multi_counter.$driver$counter_a.counter",
+      "wire_name": "multi_counter.counter_a.counter",
+      "bit_index": 6,
+      "width": 8
+    },
+    {
+      "chain_position": 49,
+      "cell_name": "multi_counter.$driver$counter_a.counter",
+      "wire_name": "multi_counter.counter_a.counter",
+      "bit_index": 7,
+      "width": 8
+    }
+  ]
+}

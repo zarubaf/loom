@@ -807,12 +807,76 @@ write_verilog -noattr loom_output.v
 
 ## Coding Conventions
 
+### Yosys/C++ Conventions
 - Use `log()` / `log_header()` / `log_warning()` / `log_error()`, never `printf`
 - Use `NEW_ID` for auto-generated names, `ID(\name)` for user-visible, `ID($type)` for cell types
 - Always call `module->fixup_ports()` after modifying ports
 - Use `log_id(thing)` to print names in log messages
 - Wrap pass internals in `PRIVATE_NAMESPACE_BEGIN` / `PRIVATE_NAMESPACE_END`
 - Static `Pass` object auto-registers with Yosys
+
+### SystemVerilog/RTL Coding Style
+
+Follow the [lowRISC Verilog Coding Style Guide](https://github.com/lowRISC/style-guides/blob/master/VerilogCodingStyle.md).
+
+**Key conventions:**
+
+| Aspect | Convention |
+|--------|------------|
+| Reset | Active-low, asynchronous: `rst_ni` |
+| Clock | Primary clock: `clk_i` |
+| Inputs | Suffix `_i` (e.g., `data_i`, `valid_i`) |
+| Outputs | Suffix `_o` (e.g., `data_o`, `ready_o`) |
+| Active-low | Suffix `_n` before direction (e.g., `rst_ni`) |
+| Registered signals | `_d` for input, `_q` for output |
+
+**State Machines:**
+```systemverilog
+// 1. Enum with UpperCamelCase states
+typedef enum logic [1:0] {
+  StIdle,
+  StActive,
+  StDone
+} state_e;
+
+state_e state_q, state_d;
+
+// 2. Combinational next-state logic (always_comb)
+always_comb begin
+  state_d = state_q;  // Default: hold state
+  unique case (state_q)
+    StIdle:   if (start_i) state_d = StActive;
+    StActive: if (done)    state_d = StDone;
+    StDone:   state_d = StIdle;
+    default:  state_d = StIdle;
+  endcase
+end
+
+// 3. Sequential state register (always_ff)
+always_ff @(posedge clk_i or negedge rst_ni) begin
+  if (!rst_ni) begin
+    state_q <= StIdle;
+  end else begin
+    state_q <= state_d;
+  end
+end
+```
+
+**Module Structure:**
+```systemverilog
+module my_module #(
+  parameter int Width = 8
+) (
+  input  logic             clk_i,
+  input  logic             rst_ni,
+  input  logic [Width-1:0] data_i,
+  output logic [Width-1:0] data_o
+);
+  // Signal declarations
+  // Combinational logic
+  // Sequential logic
+endmodule
+```
 
 ---
 

@@ -1,139 +1,200 @@
 // SPDX-License-Identifier: Apache-2.0
-// loom_host_stub.sv - Simulation stub for host-side DPI handling
+// Copyright lowRISC contributors.
+// Copyright Loom contributors.
+//
+// loom_host_stub - Simulation stub for host-side DPI handling
 //
 // This module implements DPI function behavior in Verilog for simulation.
-// It monitors loom_dpi_valid, computes results, and signals completion via dpi_ack.
-//
-// For real hardware, this is replaced by loom_host_pcie (Xilinx XDMA).
-//
-// Clock gating in emu_top uses: CE = !dpi_valid | dpi_ack
-// When dpi_valid=1 and dpi_ack=0, clock is gated.
-// Host asserts dpi_ack when result is ready, releasing the clock.
+// For real hardware, this would be replaced by loom_host_pcie (Xilinx XDMA).
 
 module loom_host_stub #(
-    parameter int FUNC_ID_WIDTH = 8,
-    parameter int MAX_ARG_WIDTH = 512,
-    parameter int MAX_RET_WIDTH = 64,
-    // Simulated host latency in clock cycles (0 = immediate)
-    parameter int HOST_LATENCY = 10
-)(
-    input  logic                       clk,
-    input  logic                       rst,
+  parameter int unsigned FuncIdWidth   = 8,
+  parameter int unsigned MaxArgWidth   = 512,
+  parameter int unsigned MaxRetWidth   = 64,
+  parameter int unsigned HostLatency   = 10,  // Simulated latency in cycles
+  parameter int unsigned ScanDataWidth = 64
+) (
+  input  logic                     clk_i,
+  input  logic                     rst_ni,
 
-    // DPI signals from transformed design
-    input  logic                       dpi_valid,
-    input  logic [FUNC_ID_WIDTH-1:0]   dpi_func_id,
-    input  logic [MAX_ARG_WIDTH-1:0]   dpi_args,
-    output logic [MAX_RET_WIDTH-1:0]   dpi_result,
+  // DPI signals from transformed design
+  input  logic                     dpi_valid_i,
+  input  logic [FuncIdWidth-1:0]   dpi_func_id_i,
+  input  logic [MaxArgWidth-1:0]   dpi_args_i,
+  output logic [MaxRetWidth-1:0]   dpi_result_o,
+  output logic                     dpi_ack_o,
 
-    // DPI acknowledgment - asserted when result is ready
-    // emu_top clock gate: CE = !dpi_valid | dpi_ack
-    output logic                       dpi_ack
+  // Scan chain interface
+  output logic                     scan_cmd_valid_o,
+  output logic [2:0]               scan_cmd_o,
+  output logic [15:0]              scan_shift_count_o,
+  output logic [ScanDataWidth-1:0] scan_data_o,
+  input  logic [ScanDataWidth-1:0] scan_data_i,
+  input  logic                     scan_busy_i,
+  input  logic                     scan_done_i
 );
 
-    // State machine
-    typedef enum logic [1:0] {
-        IDLE,
-        PROCESSING,
-        DONE
-    } state_t;
+  // ---------------------------------------------------------------------------
+  // Scan command codes (match loom_scan_ctrl)
+  // ---------------------------------------------------------------------------
+  localparam logic [2:0] ScanCmdNop     = 3'd0;
+  localparam logic [2:0] ScanCmdCapture = 3'd1;
+  localparam logic [2:0] ScanCmdRestore = 3'd2;
 
-    state_t state, state_next;
-    logic [15:0] latency_cnt;
-    logic [MAX_RET_WIDTH-1:0] computed_result;
+  // Special DPI function IDs for scan operations (0xF0-0xFF reserved)
+  localparam logic [7:0] FuncScanCapture = 8'hF0;
+  localparam logic [7:0] FuncScanRestore = 8'hF1;
 
-    // State register
-    always_ff @(posedge clk or posedge rst) begin
-        if (rst) begin
-            state <= IDLE;
-            latency_cnt <= '0;
-        end else begin
-            state <= state_next;
+  // ---------------------------------------------------------------------------
+  // State machine
+  // ---------------------------------------------------------------------------
+  typedef enum logic [1:0] {
+    StIdle,
+    StProcessing,
+    StScanWait,
+    StDone
+  } state_e;
 
-            if (state == PROCESSING) begin
-                latency_cnt <= latency_cnt + 1;
-            end else begin
-                latency_cnt <= '0;
-            end
+  state_e state_q, state_d;
+
+  // ---------------------------------------------------------------------------
+  // Registers
+  // ---------------------------------------------------------------------------
+  logic [15:0]            latency_cnt_q, latency_cnt_d;
+  logic [MaxRetWidth-1:0] result_q, result_d;
+  logic                   is_scan_q, is_scan_d;
+  logic [2:0]             scan_cmd_q, scan_cmd_d;
+  logic                   scan_cmd_valid_q, scan_cmd_valid_d;
+  logic [15:0]            scan_shift_cnt_q, scan_shift_cnt_d;
+  logic [ScanDataWidth-1:0] scan_data_q, scan_data_d;
+
+  // Detect scan operations
+  wire is_scan_op = (dpi_func_id_i[7:4] == 4'hF);
+
+  // ---------------------------------------------------------------------------
+  // Combinational next-state and output logic
+  // ---------------------------------------------------------------------------
+  always_comb begin
+    // Default: hold values
+    state_d          = state_q;
+    latency_cnt_d    = latency_cnt_q;
+    result_d         = result_q;
+    is_scan_d        = is_scan_q;
+    scan_cmd_d       = scan_cmd_q;
+    scan_cmd_valid_d = 1'b0;  // Pulse only
+    scan_shift_cnt_d = scan_shift_cnt_q;
+    scan_data_d      = scan_data_q;
+
+    // Output defaults
+    dpi_ack_o = 1'b0;
+
+    unique case (state_q)
+      StIdle: begin
+        latency_cnt_d = '0;
+        if (dpi_valid_i) begin
+          is_scan_d = is_scan_op;
+
+          if (is_scan_op) begin
+            // Setup scan command
+            unique case (dpi_func_id_i)
+              FuncScanCapture: begin
+                scan_cmd_d       = ScanCmdCapture;
+                scan_shift_cnt_d = dpi_args_i[15:0];
+                scan_cmd_valid_d = 1'b1;
+              end
+              FuncScanRestore: begin
+                scan_cmd_d       = ScanCmdRestore;
+                scan_shift_cnt_d = dpi_args_i[15:0];
+                scan_data_d      = dpi_args_i[16 +: ScanDataWidth];
+                scan_cmd_valid_d = 1'b1;
+              end
+              default: ;
+            endcase
+            state_d = StScanWait;
+          end else begin
+            // Compute DPI result
+            result_d = compute_dpi_result(dpi_func_id_i, dpi_args_i);
+            state_d  = StProcessing;
+          end
         end
-    end
+      end
 
-    // Result is available combinationally (ready when dpi_ack is asserted)
-    assign dpi_result = computed_result;
-
-    // Next state logic
-    always_comb begin
-        state_next = state;
-        dpi_ack = 1'b0;  // Default: no acknowledgment
-
-        case (state)
-            IDLE: begin
-                if (dpi_valid) begin
-                    state_next = PROCESSING;
-                    // dpi_ack = 0, so clock is gated (CE = !valid | ack = 0)
-                end
-            end
-
-            PROCESSING: begin
-                // Still processing, dpi_ack = 0
-                if (latency_cnt >= HOST_LATENCY) begin
-                    state_next = DONE;
-                end
-            end
-
-            DONE: begin
-                // Result is ready, assert dpi_ack to release clock
-                dpi_ack = 1'b1;
-                state_next = IDLE;
-            end
-
-            default: state_next = IDLE;
-        endcase
-    end
-
-    // DPI function implementation (Verilog model)
-    // TODO: This should be extensible/configurable per design
-    always_comb begin
-        computed_result = '0;
-
-        case (dpi_func_id)
-            // Function 0: dpi_add(int a, int b) -> int
-            // Args layout: {b[31:0], a[31:0]}
-            8'd0: begin
-                // Add a[31:0] + b[63:32]
-                computed_result = dpi_args[31:0] + dpi_args[63:32];
-            end
-
-            // Function 1: dpi_read_mem(int addr) -> int
-            // TODO: Implement memory model
-            8'd1: begin
-                computed_result = 32'hDEADBEEF;  // Placeholder
-            end
-
-            // Function 2: dpi_write_mem(int addr, int data) -> void
-            // TODO: Implement memory model
-            8'd2: begin
-                computed_result = '0;  // void return
-            end
-
-            // Add more DPI functions as needed
-            default: begin
-                computed_result = '0;
-            end
-        endcase
-    end
-
-    // Debug/monitoring
-    // synthesis translate_off
-    always @(posedge dpi_valid) begin
-        $display("[LOOM HOST STUB] DPI call: func_id=%0d, args=%h", dpi_func_id, dpi_args);
-    end
-
-    always @(posedge clk) begin
-        if (state == DONE) begin
-            $display("[LOOM HOST STUB] DPI result: %h", computed_result);
+      StProcessing: begin
+        latency_cnt_d = latency_cnt_q + 1'b1;
+        if (latency_cnt_q >= HostLatency[15:0]) begin
+          state_d = StDone;
         end
+      end
+
+      StScanWait: begin
+        if (scan_done_i) begin
+          result_d = {{(MaxRetWidth-ScanDataWidth){1'b0}}, scan_data_i};
+          state_d  = StDone;
+        end
+      end
+
+      StDone: begin
+        dpi_ack_o = 1'b1;
+        state_d   = StIdle;
+      end
+
+      default: state_d = StIdle;
+    endcase
+  end
+
+  // ---------------------------------------------------------------------------
+  // DPI function computation (simulation model)
+  // ---------------------------------------------------------------------------
+  function automatic logic [MaxRetWidth-1:0] compute_dpi_result(
+    input logic [FuncIdWidth-1:0] func_id,
+    input logic [MaxArgWidth-1:0] args
+  );
+    logic [MaxRetWidth-1:0] result;
+    result = '0;
+
+    case (func_id)
+      // Function 0: add(a, b) -> a + b
+      8'd0: result = args[31:0] + args[63:32];
+      // Function 1: placeholder
+      8'd1: result = 32'hDEADBEEF;
+      default: result = '0;
+    endcase
+
+    return result;
+  endfunction
+
+  // ---------------------------------------------------------------------------
+  // Sequential logic
+  // ---------------------------------------------------------------------------
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      state_q          <= StIdle;
+      latency_cnt_q    <= '0;
+      result_q         <= '0;
+      is_scan_q        <= 1'b0;
+      scan_cmd_q       <= ScanCmdNop;
+      scan_cmd_valid_q <= 1'b0;
+      scan_shift_cnt_q <= '0;
+      scan_data_q      <= '0;
+    end else begin
+      state_q          <= state_d;
+      latency_cnt_q    <= latency_cnt_d;
+      result_q         <= result_d;
+      is_scan_q        <= is_scan_d;
+      scan_cmd_q       <= scan_cmd_d;
+      scan_cmd_valid_q <= scan_cmd_valid_d;
+      scan_shift_cnt_q <= scan_shift_cnt_d;
+      scan_data_q      <= scan_data_d;
     end
-    // synthesis translate_on
+  end
+
+  // ---------------------------------------------------------------------------
+  // Output assignments
+  // ---------------------------------------------------------------------------
+  assign dpi_result_o      = result_q;
+  assign scan_cmd_valid_o  = scan_cmd_valid_q;
+  assign scan_cmd_o        = scan_cmd_q;
+  assign scan_shift_count_o = scan_shift_cnt_q;
+  assign scan_data_o       = scan_data_q;
 
 endmodule
