@@ -42,6 +42,7 @@ All Loom-generated signals use the `loom_` prefix to avoid conflicts with user s
 |------|---------|
 | `scan_insert` | `loom_scan_enable`, `loom_scan_in`, `loom_scan_out` |
 | `dpi_bridge` | `loom_dpi_req`, `loom_dpi_ack`, `loom_dpi_func_id`, `loom_dpi_args`, `loom_dpi_result` |
+| `mem_shadow` | `loom_shadow_clk`, `loom_shadow_addr`, `loom_shadow_wdata`, `loom_shadow_rdata`, `loom_shadow_wen`, `loom_shadow_ren` |
 
 This convention ensures that Loom infrastructure signals are clearly identifiable and won't conflict with design signals.
 
@@ -88,6 +89,8 @@ loom/
 │   ├── dpi_bridge/
 │   │   ├── dpi_bridge.cc         # DPI-to-hardware bridge pass
 │   │   └── dpi_bridge_test.cc
+│   ├── mem_shadow/
+│   │   └── mem_shadow.cc         # Shadow port insertion for memories
 │   └── emu_top/
 │       └── emu_top.cc            # Top-level wrapper generation
 ├── frontend/
@@ -771,11 +774,17 @@ proc
 flatten
 opt
 
+# Memory handling - run after proc, before BRAM mapping
+memory_collect
+memory_dff
+mem_shadow -map loom_memmap.json   # Add shadow ports to $mem_v2 cells
+
 scan_insert -chain_length 4096
 dpi_bridge_elaborate -pcie_ip xdma -base_addr 0x10000
 emu_top -board xcu200 -pcie xdma
 
 write_verilog -noattr loom_output.v
+# Then: Vivado does memory_bram mapping during synthesis
 ```
 
 ---
