@@ -10,13 +10,26 @@
  *   - When loom_scan_enable=1: loom_scan_in (from previous FF's Q) passes through
  *
  * The chain connects: loom_scan_in -> FF1.D -> FF1.Q -> FF2.D -> ... -> loom_scan_out
+ *
+ * Generates a JSON mapping file that maps scan chain bit positions to original
+ * flip-flop names for RTL simulation replay with $deposit.
  */
 
 #include "kernel/yosys.h"
 #include "kernel/sigtools.h"
+#include <fstream>
 
 USING_YOSYS_NAMESPACE
 PRIVATE_NAMESPACE_BEGIN
+
+// Scan chain element for mapping
+struct ScanElement {
+    std::string cell_name;      // Original FF cell name
+    std::string wire_name;      // Q output wire name (for $deposit)
+    int bit_index;              // Bit index within the FF (for multi-bit)
+    int chain_position;         // Position in scan chain (0 = first shifted out)
+    int width;                  // Total width of the FF
+};
 
 struct ScanInsertPass : public Pass {
     ScanInsertPass() : Pass("scan_insert", "Insert scan chains into the design") {}
@@ -29,6 +42,10 @@ struct ScanInsertPass : public Pass {
         log("\n");
         log("    -chain_length N\n");
         log("        Maximum flip-flops per chain (default: all in one chain)\n");
+        log("\n");
+        log("    -map <file.json>\n");
+        log("        Write scan chain mapping to JSON file for RTL replay.\n");
+        log("        Maps bit positions to original flip-flop names.\n");
         log("\n");
         log("    -check_equiv\n");
         log("        Verify functional equivalence after scan insertion.\n");
@@ -51,11 +68,16 @@ struct ScanInsertPass : public Pass {
 
         int chain_length = 0;
         bool check_equiv = false;
+        std::string map_file;
 
         size_t argidx;
         for (argidx = 1; argidx < args.size(); argidx++) {
             if (args[argidx] == "-chain_length" && argidx + 1 < args.size()) {
                 chain_length = atoi(args[++argidx].c_str());
+                continue;
+            }
+            if (args[argidx] == "-map" && argidx + 1 < args.size()) {
+                map_file = args[++argidx];
                 continue;
             }
             if (args[argidx] == "-check_equiv") {
@@ -66,18 +88,36 @@ struct ScanInsertPass : public Pass {
         }
         extra_args(args, argidx, design);
 
+        std::vector<ScanElement> all_elements;
+
         for (auto module : design->selected_modules()) {
             log("Processing module %s\n", log_id(module));
 
+            std::vector<ScanElement> elements;
             if (check_equiv) {
-                run_scan_insert_with_equiv_check(module, chain_length, design);
+                run_scan_insert_with_equiv_check(module, chain_length, design, elements);
             } else {
-                run_scan_insert(module, chain_length);
+                run_scan_insert(module, chain_length, elements);
             }
+
+            // Add module prefix for hierarchical names
+            std::string mod_name = module->name.str();
+            if (mod_name[0] == '\\') mod_name = mod_name.substr(1);
+
+            for (auto &elem : elements) {
+                elem.cell_name = mod_name + "." + elem.cell_name;
+                elem.wire_name = mod_name + "." + elem.wire_name;
+                all_elements.push_back(elem);
+            }
+        }
+
+        // Write mapping file if requested
+        if (!map_file.empty() && !all_elements.empty()) {
+            write_scan_map(map_file, all_elements);
         }
     }
 
-    void run_scan_insert(RTLIL::Module *module, int /* chain_length */) {
+    void run_scan_insert(RTLIL::Module *module, int /* chain_length */, std::vector<ScanElement> &elements) {
         // Collect all flip-flop cells
         std::vector<RTLIL::Cell*> dffs;
         for (auto cell : module->cells()) {
@@ -105,6 +145,7 @@ struct ScanInsertPass : public Pass {
 
         // Track the previous Q output to chain to next FF
         RTLIL::SigSpec prev_q = RTLIL::SigSpec(scan_in);
+        int chain_pos = 0;  // Track position in scan chain
 
         // Process each flip-flop
         for (auto dff : dffs) {
@@ -115,24 +156,51 @@ struct ScanInsertPass : public Pass {
 
             log("  Processing %s (width=%d)\n", log_id(dff), width);
 
-            // For multi-bit FFs, we need to handle scan bit-by-bit or in parallel
-            // For simplicity, we do parallel scan (all bits shift together)
-            // This requires scan_in to be expanded to match width
+            // Get clean cell name (strip backslash prefix)
+            std::string cell_name = dff->name.str();
+            if (cell_name[0] == '\\') cell_name = cell_name.substr(1);
+
+            // Get Q wire name for $deposit target
+            std::string wire_name = cell_name;  // Default to cell name
+            for (int i = 0; i < GetSize(q); i++) {
+                RTLIL::SigBit bit = q[i];
+                if (bit.wire) {
+                    std::string w_name = bit.wire->name.str();
+                    if (w_name[0] == '\\') w_name = w_name.substr(1);
+                    wire_name = w_name;
+                    break;
+                }
+            }
+
+            // Record mapping for each bit in this FF
+            for (int i = 0; i < width; i++) {
+                ScanElement elem;
+                elem.cell_name = cell_name;
+                elem.wire_name = wire_name;
+                elem.bit_index = i;
+                elem.chain_position = chain_pos + i;
+                elem.width = width;
+                elements.push_back(elem);
+            }
+            chain_pos += width;
+
+            // For multi-bit FFs, we do bit-serial scan:
+            // Each bit of the FF is connected individually in the chain
+            // This allows proper bit-by-bit capture and restore
 
             // Create intermediate wire for mux output
             RTLIL::Wire *mux_out = module->addWire(NEW_ID, width);
 
-            // Expand prev_q to match width if needed (repeat the signal)
+            // Build serial scan chain: each bit connects to the previous bit's Q
             RTLIL::SigSpec scan_data;
-            if (GetSize(prev_q) < width) {
-                // For parallel scan: replicate scan input or use serial
-                // Here we do serial: take LSB of prev_q for all bits shifted in
-                scan_data = RTLIL::SigSpec();
-                for (int i = 0; i < width; i++) {
-                    scan_data.append(prev_q[i % GetSize(prev_q)]);
+            for (int i = 0; i < width; i++) {
+                if (i == 0) {
+                    // First bit of this FF connects to previous FF's last bit
+                    scan_data.append(prev_q[GetSize(prev_q) - 1]);
+                } else {
+                    // Subsequent bits connect to this FF's previous bit
+                    scan_data.append(q[i - 1]);
                 }
-            } else {
-                scan_data = prev_q.extract(0, width);
             }
 
             // Add mux: sel=scan_enable, A=orig_d (normal), B=scan_data (scan mode)
@@ -145,17 +213,17 @@ struct ScanInsertPass : public Pass {
             prev_q = q;
         }
 
-        // Connect the last FF's Q to scan_out (take LSB for single-bit output)
-        module->connect(RTLIL::SigSpec(scan_out), RTLIL::SigBit(prev_q[0]));
+        // Connect the last FF's Q MSB to scan_out (end of serial chain)
+        module->connect(RTLIL::SigSpec(scan_out), RTLIL::SigBit(prev_q[GetSize(prev_q) - 1]));
 
         // Update port list
         module->fixup_ports();
 
-        log("  Inserted scan chain with %zu element(s)\n", dffs.size());
+        log("  Inserted scan chain with %zu element(s), %d bits total\n", dffs.size(), chain_pos);
         log("  Added ports: loom_scan_enable (in), loom_scan_in (in), loom_scan_out (out)\n");
     }
 
-    void run_scan_insert_with_equiv_check(RTLIL::Module *module, int chain_length, RTLIL::Design *design) {
+    void run_scan_insert_with_equiv_check(RTLIL::Module *module, int chain_length, RTLIL::Design *design, std::vector<ScanElement> &elements) {
         std::string orig_name = module->name.str();
         std::string gold_name = orig_name + "_gold";
         std::string gate_name = orig_name + "_gate";
@@ -169,7 +237,7 @@ struct ScanInsertPass : public Pass {
         design->add(gold);
 
         // Step 2: Run scan insertion on the original module
-        run_scan_insert(module, chain_length);
+        run_scan_insert(module, chain_length, elements);
 
         // Step 3: Create gate copy and tie off scan ports
         log("  Creating gate copy with scan ports tied off: %s\n", gate_name.c_str());
@@ -194,6 +262,36 @@ struct ScanInsertPass : public Pass {
         } else {
             log_error("  Equivalence check FAILED - scan insertion may have altered functionality\n");
         }
+    }
+
+    void write_scan_map(const std::string &filename, const std::vector<ScanElement> &elements) {
+        std::ofstream f(filename);
+        if (!f.is_open()) {
+            log_error("Cannot open scan map file '%s' for writing\n", filename.c_str());
+        }
+
+        f << "{\n";
+        f << "  \"chain_length\": " << elements.size() << ",\n";
+        f << "  \"flops\": [\n";
+
+        for (size_t i = 0; i < elements.size(); i++) {
+            const auto &elem = elements[i];
+            f << "    {\n";
+            f << "      \"chain_position\": " << elem.chain_position << ",\n";
+            f << "      \"cell_name\": \"" << elem.cell_name << "\",\n";
+            f << "      \"wire_name\": \"" << elem.wire_name << "\",\n";
+            f << "      \"bit_index\": " << elem.bit_index << ",\n";
+            f << "      \"width\": " << elem.width << "\n";
+            f << "    }";
+            if (i < elements.size() - 1) f << ",";
+            f << "\n";
+        }
+
+        f << "  ]\n";
+        f << "}\n";
+
+        f.close();
+        log("Wrote scan chain mapping to '%s' (%zu bits)\n", filename.c_str(), elements.size());
     }
 
     void tie_off_scan_ports(RTLIL::Module *module) {
