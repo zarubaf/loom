@@ -3,6 +3,12 @@
  *
  * This pass inserts scan chain multiplexers on all flip-flops in the design,
  * enabling state capture and restore for FPGA emulation.
+ *
+ * For each flip-flop, a mux is inserted:
+ *   - When scan_enable=0: normal D input passes through
+ *   - When scan_enable=1: scan_in (from previous FF's Q) passes through
+ *
+ * The chain connects: scan_in -> FF1.D -> FF1.Q -> FF2.D -> ... -> scan_out
  */
 
 #include "kernel/yosys.h"
@@ -25,6 +31,15 @@ struct ScanInsertPass : public Pass {
         log("\n");
     }
 
+    // Check if a cell is a flip-flop type
+    static bool is_ff(RTLIL::Cell *cell) {
+        return cell->type.in(
+            ID($dff), ID($dffe), ID($adff), ID($adffe),
+            ID($sdff), ID($sdffe), ID($sdffce),
+            ID($dffsr), ID($dffsre), ID($aldff), ID($aldffe)
+        );
+    }
+
     void execute(std::vector<std::string> args, RTLIL::Design *design) override {
         log_header(design, "Executing SCAN_INSERT pass.\n");
 
@@ -42,9 +57,86 @@ struct ScanInsertPass : public Pass {
 
         for (auto module : design->selected_modules()) {
             log("Processing module %s\n", log_id(module));
-            // TODO: Implement scan chain insertion
-            log("  scan_insert: Not yet implemented\n");
+            run_scan_insert(module, chain_length);
         }
+    }
+
+    void run_scan_insert(RTLIL::Module *module, int /* chain_length */) {
+        // Collect all flip-flop cells
+        std::vector<RTLIL::Cell*> dffs;
+        for (auto cell : module->cells()) {
+            if (is_ff(cell)) {
+                dffs.push_back(cell);
+            }
+        }
+
+        if (dffs.empty()) {
+            log("  No flip-flops found, skipping.\n");
+            return;
+        }
+
+        log("  Found %zu flip-flop(s)\n", dffs.size());
+
+        // Add scan ports
+        RTLIL::Wire *scan_en = module->addWire(ID(\\scan_enable), 1);
+        scan_en->port_input = true;
+
+        RTLIL::Wire *scan_in = module->addWire(ID(\\scan_in), 1);
+        scan_in->port_input = true;
+
+        RTLIL::Wire *scan_out = module->addWire(ID(\\scan_out), 1);
+        scan_out->port_output = true;
+
+        // Track the previous Q output to chain to next FF
+        RTLIL::SigSpec prev_q = RTLIL::SigSpec(scan_in);
+
+        // Process each flip-flop
+        for (auto dff : dffs) {
+            // Get the D and Q signals
+            RTLIL::SigSpec orig_d = dff->getPort(ID::D);
+            RTLIL::SigSpec q = dff->getPort(ID::Q);
+            int width = GetSize(orig_d);
+
+            log("  Processing %s (width=%d)\n", log_id(dff), width);
+
+            // For multi-bit FFs, we need to handle scan bit-by-bit or in parallel
+            // For simplicity, we do parallel scan (all bits shift together)
+            // This requires scan_in to be expanded to match width
+
+            // Create intermediate wire for mux output
+            RTLIL::Wire *mux_out = module->addWire(NEW_ID, width);
+
+            // Expand prev_q to match width if needed (repeat the signal)
+            RTLIL::SigSpec scan_data;
+            if (GetSize(prev_q) < width) {
+                // For parallel scan: replicate scan input or use serial
+                // Here we do serial: take LSB of prev_q for all bits shifted in
+                scan_data = RTLIL::SigSpec();
+                for (int i = 0; i < width; i++) {
+                    scan_data.append(prev_q[i % GetSize(prev_q)]);
+                }
+            } else {
+                scan_data = prev_q.extract(0, width);
+            }
+
+            // Add mux: sel=scan_enable, A=orig_d (normal), B=scan_data (scan mode)
+            module->addMux(NEW_ID, orig_d, scan_data, RTLIL::SigSpec(scan_en), mux_out);
+
+            // Reconnect FF's D input to mux output
+            dff->setPort(ID::D, RTLIL::SigSpec(mux_out));
+
+            // Update prev_q to this FF's Q for the next iteration
+            prev_q = q;
+        }
+
+        // Connect the last FF's Q to scan_out (take LSB for single-bit output)
+        module->connect(RTLIL::SigSpec(scan_out), RTLIL::SigBit(prev_q[0]));
+
+        // Update port list
+        module->fixup_ports();
+
+        log("  Inserted scan chain with %zu element(s)\n", dffs.size());
+        log("  Added ports: scan_enable (in), scan_in (in), scan_out (out)\n");
     }
 };
 
