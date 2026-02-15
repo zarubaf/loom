@@ -82,3 +82,21 @@ add_emu_top_test(emu_top)
 
 # End-to-end tests using slang frontend
 add_yosys_slang_test(e2e)
+
+# Helper function for mem_shadow E2E tests (transform + simulate)
+function(add_mem_shadow_e2e_test TEST_NAME)
+    set(TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/${TEST_NAME})
+    add_test(
+        NAME mem_shadow_${TEST_NAME}
+        COMMAND make sim
+        WORKING_DIRECTORY ${TEST_DIR}
+    )
+    set_tests_properties(mem_shadow_${TEST_NAME} PROPERTIES
+        DEPENDS "yosys_ext;mem_shadow"
+        TIMEOUT 120
+        ENVIRONMENT "YOSYS=${YOSYS_BIN}"
+    )
+endfunction()
+
+# mem_shadow E2E test
+add_mem_shadow_e2e_test(mem_shadow_e2e)

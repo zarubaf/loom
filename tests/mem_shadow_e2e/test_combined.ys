@@ -1,0 +1,43 @@
+# Test script for combined Loom passes (mem_shadow + scan_insert)
+
+# Read design (include sram fixture)
+read_verilog -sv ../fixtures/sram.sv
+read_verilog -sv mem_test.sv
+
+# Process design
+hierarchy -top mem_test
+proc
+opt
+
+# Flatten to bring hierarchical memories to top level
+flatten
+opt
+
+# Memory collection - this creates $mem_v2 cells
+memory_collect
+memory_dff
+
+# Show state before transformations
+stat
+log "=== Before Loom passes ==="
+select -list t:$mem_v2
+
+# Load and run mem_shadow pass
+plugin -i ../../build/passes/mem_shadow/mem_shadow.so
+mem_shadow -map mem_shadow_map.json
+
+log "=== After mem_shadow ==="
+stat
+
+# Load and run scan_insert pass
+plugin -i ../../build/passes/scan_insert/scan_insert.so
+scan_insert
+
+log "=== After scan_insert ==="
+stat
+
+# Final cleanup
+opt_clean
+
+# Write output
+write_verilog -noattr transformed_combined.v

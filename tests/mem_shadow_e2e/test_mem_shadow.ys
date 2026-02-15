@@ -1,0 +1,34 @@
+# Test script for mem_shadow pass
+
+# Read design (include sram fixture)
+read_verilog -sv ../fixtures/sram.sv
+read_verilog -sv mem_test.sv
+
+# Process design
+hierarchy -top mem_test
+proc
+opt
+
+# Flatten to bring hierarchical memories to top level
+flatten
+opt
+
+# Memory collection - this creates $mem_v2 cells
+memory_collect
+memory_dff
+
+# Show state before shadow insertion
+stat
+log "=== Before mem_shadow ==="
+select -list t:$mem_v2
+
+# Load and run mem_shadow pass
+plugin -i ../../build/passes/mem_shadow/mem_shadow.so
+mem_shadow -map mem_shadow_map.json
+
+# Show state after shadow insertion
+log "=== After mem_shadow ==="
+stat
+
+# Write output
+write_verilog -noattr transformed_mem_test.v

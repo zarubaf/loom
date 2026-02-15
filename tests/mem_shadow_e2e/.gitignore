@@ -1,0 +1,5 @@
+# Generated files
+sim_mem_shadow
+transformed_*.v
+mem_shadow_map.json
+*.vcd
