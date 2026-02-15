@@ -1,5 +1,34 @@
 # CLAUDE.md — Loom: Open-Source FPGA Emulation Toolchain
 
+## Quick Start
+
+```bash
+# Prerequisites (macOS)
+brew install pkg-config libffi bison readline
+
+# Build
+cmake -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build -j$(nproc)
+
+# Run tests
+ctest --test-dir build --output-on-failure
+
+# Run Yosys with plugins
+./build/yosys/bin/yosys -m ./build/passes/scan_insert/scan_insert.so
+```
+
+## Implementation Notes
+
+**Plugin linking on macOS:** Yosys plugins must NOT link against libyosys.so directly. Instead, use `-undefined dynamic_lookup` to resolve symbols at runtime from the Yosys executable. See `passes/scan_insert/CMakeLists.txt`.
+
+**Required compile definitions for plugins:**
+- `_YOSYS_`
+- `YOSYS_ENABLE_PLUGINS`
+- `YOSYS_ENABLE_GLOB`
+- `YOSYS_ENABLE_ZLIB`
+
+---
+
 ## Project Vision
 
 Loom is an open-source alternative to commercial hardware emulation platforms (Zebu, Veloce, Palladium). It transforms simulation-grade SystemVerilog (including DPI-C calls) into FPGA-synthesizable RTL with scan chain instrumentation and PCIe-based host communication, targeting Xilinx/AMD FPGAs via Vivado.
