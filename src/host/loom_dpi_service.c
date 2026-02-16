@@ -11,14 +11,12 @@ static const loom_dpi_func_t *g_funcs = NULL;
 static int g_n_funcs = 0;
 static uint64_t g_call_count = 0;
 static uint64_t g_error_count = 0;
-static int g_exit_requested = 0;
 
 void loom_dpi_service_init(const loom_dpi_func_t *funcs, int n_funcs) {
     g_funcs = funcs;
     g_n_funcs = n_funcs;
     g_call_count = 0;
     g_error_count = 0;
-    g_exit_requested = 0;
 }
 
 static const loom_dpi_func_t *find_func(int func_id) {
@@ -37,6 +35,9 @@ int loom_dpi_service_once(loom_ctx_t *ctx) {
 
     // Poll for pending DPI calls
     rc = loom_dpi_poll(ctx, &pending_mask);
+    if (rc == LOOM_ERR_SHUTDOWN) {
+        return LOOM_ERR_SHUTDOWN;
+    }
     if (rc != LOOM_OK) {
         fprintf(stderr, "[dpi_service] Poll failed: %d\n", rc);
         return rc;
@@ -83,6 +84,10 @@ int loom_dpi_service_once(loom_ctx_t *ctx) {
 
         // Complete the call
         rc = loom_dpi_complete(ctx, func_id, result);
+        if (rc == LOOM_ERR_SHUTDOWN) {
+            // Shutdown was triggered (e.g., by loom_finish() in the callback)
+            return LOOM_ERR_SHUTDOWN;
+        }
         if (rc != LOOM_OK) {
             fprintf(stderr, "[dpi_service] Failed to complete call for '%s': %d\n",
                     func->name, rc);
@@ -97,10 +102,6 @@ int loom_dpi_service_once(loom_ctx_t *ctx) {
     return serviced;
 }
 
-void loom_dpi_service_request_exit(void) {
-    g_exit_requested = 1;
-}
-
 loom_dpi_exit_t loom_dpi_service_run(loom_ctx_t *ctx, int timeout_ms) {
     int rc;
     int no_activity_count = 0;
@@ -111,6 +112,10 @@ loom_dpi_exit_t loom_dpi_service_run(loom_ctx_t *ctx, int timeout_ms) {
     while (1) {
         // Service pending calls
         rc = loom_dpi_service_once(ctx);
+        if (rc == LOOM_ERR_SHUTDOWN) {
+            printf("[dpi_service] Shutdown message received\n");
+            return LOOM_DPI_EXIT_SHUTDOWN;
+        }
         if (rc < 0) {
             return LOOM_DPI_EXIT_ERROR;
         }
@@ -121,15 +126,13 @@ loom_dpi_exit_t loom_dpi_service_run(loom_ctx_t *ctx, int timeout_ms) {
             no_activity_count++;
         }
 
-        // Check if a DPI callback requested exit
-        if (g_exit_requested) {
-            printf("[dpi_service] Exit requested by DPI callback\n");
-            return LOOM_DPI_EXIT_COMPLETE;
-        }
-
         // Check emulation state
         loom_state_t state;
         rc = loom_get_state(ctx, &state);
+        if (rc == LOOM_ERR_SHUTDOWN) {
+            printf("[dpi_service] Shutdown message received\n");
+            return LOOM_DPI_EXIT_SHUTDOWN;
+        }
         if (rc != LOOM_OK) {
             fprintf(stderr, "[dpi_service] Failed to get state: %d\n", rc);
             return LOOM_DPI_EXIT_ERROR;

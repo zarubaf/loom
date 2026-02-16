@@ -27,6 +27,7 @@ typedef enum {
     LOOM_ERR_NOT_CONNECTED = -4,
     LOOM_ERR_PROTOCOL = -5,
     LOOM_ERR_DPI_ERROR = -6,
+    LOOM_ERR_SHUTDOWN = -7,       // Simulation shutdown message received
 } loom_error_t;
 
 // ============================================================================
@@ -94,6 +95,7 @@ struct loom_transport {
 #define LOOM_EMU_LOOM_VERSION 0x38
 #define LOOM_EMU_IRQ_STATUS   0x40
 #define LOOM_EMU_IRQ_ENABLE   0x44
+#define LOOM_EMU_FINISH       0x4C
 
 // emu_ctrl commands
 #define LOOM_CMD_START    0x01
@@ -179,6 +181,9 @@ int loom_get_cycle_count(loom_ctx_t *ctx, uint64_t *count);
 
 // Assert/deassert DUT reset
 int loom_dut_reset(loom_ctx_t *ctx, int assert_reset);
+
+// Request shutdown with exit code (triggers BFM $finish in sim)
+int loom_finish(loom_ctx_t *ctx, int exit_code);
 
 // ============================================================================
 // DPI function handling

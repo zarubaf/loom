@@ -187,6 +187,10 @@ struct EmuTopPass : public Pass {
         RTLIL::Wire *irq_o = wrapper->addWire(ID(irq_o), n_irq);
         irq_o->port_output = true;
 
+        // Finish output (triggers simulation shutdown)
+        RTLIL::Wire *finish_o = wrapper->addWire(ID(finish_o), 1);
+        finish_o->port_output = true;
+
         wrapper->fixup_ports();
 
         // =========================================================================
@@ -234,6 +238,7 @@ struct EmuTopPass : public Pass {
         RTLIL::Wire *dut_rst_n = wrapper->addWire(ID(dut_rst_n), 1);
         RTLIL::Wire *cycle_count = wrapper->addWire(ID(cycle_count), 64);
         RTLIL::Wire *irq_state_change = wrapper->addWire(ID(irq_state_change), 1);
+        RTLIL::Wire *emu_finish = wrapper->addWire(ID(emu_finish), 1);
 
         // DPI regfile <-> wrapper signals
         int max_args = 8;
@@ -349,9 +354,13 @@ struct EmuTopPass : public Pass {
         emu_ctrl->setPort(ID(axil_bready_i), m0_bready);
         // DPI stall input - use dpi_stall from regfile (already n_dpi_funcs bits wide)
         emu_ctrl->setPort(ID(dpi_stall_i), dpi_stall);
+        // DUT finish inputs (tie to 0 - no finish_transform pass yet)
+        emu_ctrl->setPort(ID(dut_finish_req_i), RTLIL::SigSpec(RTLIL::State::S0));
+        emu_ctrl->setPort(ID(dut_finish_code_i), RTLIL::SigSpec(RTLIL::State::S0, 8));
         emu_ctrl->setPort(ID(emu_clk_en_o), emu_clk_en);
         emu_ctrl->setPort(ID(dut_rst_no), dut_rst_n);
         emu_ctrl->setPort(ID(cycle_count_o), cycle_count);
+        emu_ctrl->setPort(ID(finish_o), emu_finish);
         emu_ctrl->setPort(ID(irq_state_change_o), irq_state_change);
 
         // =========================================================================
@@ -511,6 +520,11 @@ struct EmuTopPass : public Pass {
         irq_sig.append(RTLIL::SigSpec(irq_state_change));  // IRQ[1]
         irq_sig.append(RTLIL::SigSpec(RTLIL::State::S0, n_irq - 2));  // IRQ[15:2]
         wrapper->connect(RTLIL::SigSpec(irq_o), irq_sig);
+
+        // =========================================================================
+        // Finish wiring
+        // =========================================================================
+        wrapper->connect(RTLIL::SigSpec(finish_o), RTLIL::SigSpec(emu_finish));
 
         wrapper->fixup_ports();
 

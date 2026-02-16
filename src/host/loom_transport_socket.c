@@ -33,6 +33,7 @@
 #define MSG_READ_RESP   0
 #define MSG_WRITE_ACK   1
 #define MSG_IRQ         2
+#define MSG_SHUTDOWN    3
 
 // Private data for socket transport
 typedef struct {
@@ -150,6 +151,11 @@ static int socket_read32(loom_transport_t *t, uint32_t addr, uint32_t *data) {
             continue;
         }
 
+        if (type == MSG_SHUTDOWN) {
+            // Simulation is shutting down
+            return LOOM_ERR_SHUTDOWN;
+        }
+
         if (type == MSG_READ_RESP) {
             *data = rdata;
             return LOOM_OK;
@@ -177,6 +183,11 @@ static int socket_write32(loom_transport_t *t, uint32_t addr, uint32_t data) {
         if (type == MSG_IRQ) {
             priv->pending_irq |= irq_bits;
             continue;
+        }
+
+        if (type == MSG_SHUTDOWN) {
+            // Simulation is shutting down
+            return LOOM_ERR_SHUTDOWN;
         }
 
         if (type == MSG_WRITE_ACK) {

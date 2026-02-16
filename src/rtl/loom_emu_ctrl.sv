@@ -20,6 +20,7 @@
 //   0x38  LOOM_VERSION     R     Toolchain version
 //   0x40  IRQ_STATUS       R     Aggregated IRQ status
 //   0x44  IRQ_ENABLE       W     Aggregated IRQ enable
+//   0x4C  EMU_FINISH       RW    Finish request: [0]=req, [15:8]=exit_code
 
 `timescale 1ns/1ps
 
@@ -56,6 +57,10 @@ module loom_emu_ctrl #(
     // DPI stall inputs (active high = DPI call pending)
     input  logic [N_DPI_FUNCS-1:0] dpi_stall_i,
 
+    // DUT finish request (from transformed $finish/$fatal cells)
+    input  logic        dut_finish_req_i,
+    input  logic [7:0]  dut_finish_code_i,
+
     // Clock enable output (to gate DUT clock)
     output logic        emu_clk_en_o,
 
@@ -64,6 +69,9 @@ module loom_emu_ctrl #(
 
     // Cycle counter output (for debug/status)
     output logic [63:0] cycle_count_o,
+
+    // Finish output (triggers simulation shutdown)
+    output logic        finish_o,
 
     // IRQ output (active high)
     output logic        irq_state_change_o
@@ -99,6 +107,7 @@ module loom_emu_ctrl #(
     logic        dut_reset_q;
     logic [31:0] irq_enable_q;
     logic        state_changed_q;
+    logic [15:0] finish_reg_q;  // [0]=finish_req, [15:8]=exit_code
 
     // DUT reset control signals (set by write logic, processed by state machine)
     logic        dut_reset_assert_req;
@@ -220,6 +229,7 @@ module loom_emu_ctrl #(
             cmd_reg_q        <= 8'd0;
             cmd_valid_q      <= 1'b0;
             state_changed_q  <= 1'b0;
+            finish_reg_q     <= 16'd0;
         end else begin
             // State transition
             if (state_q != state_d) begin
@@ -256,11 +266,20 @@ module loom_emu_ctrl #(
             end else if (dut_reset_release_req) begin
                 dut_reset_q <= 1'b0;
             end
+
+            // DUT-initiated finish (from transformed $finish/$fatal cells)
+            // Once set, stays set until reset
+            if (dut_finish_req_i && !finish_reg_q[0]) begin
+                finish_reg_q[0]    <= 1'b1;
+                finish_reg_q[15:8] <= dut_finish_code_i;
+            end
+            // Host-initiated finish is handled in write logic below
         end
     end
 
     assign cycle_count_o = cycle_count_q;
     assign dut_rst_no = ~dut_reset_q;
+    assign finish_o = finish_reg_q[0];
     assign irq_state_change_o = state_changed_q && irq_enable_q[2];
 
     // =========================================================================
@@ -305,6 +324,7 @@ module loom_emu_ctrl #(
                     6'h0E: axil_rdata_o <= LOOM_VERSION;             // LOOM_VERSION
                     6'h10: axil_rdata_o <= {29'd0, state_changed_q, dpi_stall_any, 1'b0}; // IRQ_STATUS
                     6'h11: axil_rdata_o <= irq_enable_q;             // IRQ_ENABLE
+                    6'h13: axil_rdata_o <= {16'd0, finish_reg_q};    // EMU_FINISH
                     default: axil_rdata_o <= 32'hDEAD_BEEF;
                 endcase
 
@@ -368,6 +388,12 @@ module loom_emu_ctrl #(
                         if (wr_data_q[1]) dut_reset_release_req <= 1'b1;
                     end
                     6'h11: irq_enable_q <= wr_data_q;    // IRQ_ENABLE
+                    6'h13: begin  // EMU_FINISH - host-initiated shutdown
+                        if (wr_data_q[0] && !finish_reg_q[0]) begin
+                            finish_reg_q[0]    <= 1'b1;
+                            finish_reg_q[15:8] <= wr_data_q[15:8];
+                        end
+                    end
                     default: ;
                 endcase
 

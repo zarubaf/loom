@@ -10,6 +10,9 @@
 #include "loom_dpi_service.h"
 #include "dpi_test_dpi.h"
 
+// From dpi_impl.c - set context for shutdown mechanism
+extern void dpi_impl_set_context(loom_ctx_t *ctx);
+
 // ============================================================================
 // DPI callback wrappers
 // The generic service uses a uniform callback signature. These wrappers
@@ -84,6 +87,7 @@ int main(int argc, char **argv) {
     loom_start(ctx);
 
     // Initialize DPI service
+    dpi_impl_set_context(ctx);  // Allow DPI callbacks to trigger shutdown
     loom_dpi_service_init(dpi_funcs, DPI_N_FUNCS);
 
     // Run service loop
@@ -102,8 +106,8 @@ int main(int argc, char **argv) {
     loom_transport_socket_destroy(transport);
 
     // Report result
-    if (exit_code == LOOM_DPI_EXIT_COMPLETE) {
-        printf("[test] TEST COMPLETED SUCCESSFULLY\n");
+    if (exit_code == LOOM_DPI_EXIT_COMPLETE || exit_code == LOOM_DPI_EXIT_SHUTDOWN) {
+        printf("[test] TEST COMPLETED SUCCESSFULLY (exit=%d)\n", exit_code);
         return 0;
     } else {
         printf("[test] TEST FAILED (exit_code=%d)\n", exit_code);

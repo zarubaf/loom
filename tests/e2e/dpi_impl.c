@@ -6,8 +6,15 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include "libloom.h"
 #include "dpi_test_dpi.h"
-#include "loom_dpi_service.h"
+
+// Global context for DPI callbacks to trigger shutdown
+static loom_ctx_t *g_ctx = NULL;
+
+void dpi_impl_set_context(loom_ctx_t *ctx) {
+    g_ctx = ctx;
+}
 
 // ============================================================================
 // DPI function implementations
@@ -31,7 +38,9 @@ int32_t dpi_report_result(int32_t passed, int32_t result) {
     } else {
         printf("[dpi] TEST FAILED: result=%d\n", result);
     }
-    // Signal test completion to the service loop
-    loom_dpi_service_request_exit();
+    // Signal test completion via loom_finish - triggers BFM shutdown
+    if (g_ctx) {
+        loom_finish(g_ctx, passed ? 0 : 1);
+    }
     return 0;
 }

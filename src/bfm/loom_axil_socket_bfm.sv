@@ -36,7 +36,13 @@ module loom_axil_socket_bfm #(
     output logic                    m_axil_bready_o,
 
     // Interrupt inputs (forwarded to host on rising edge)
-    input  logic [N_IRQ-1:0]        irq_i
+    input  logic [N_IRQ-1:0]        irq_i,
+
+    // Finish input (triggers shutdown sequence)
+    input  logic                    finish_i,
+
+    // Shutdown output (high after SHUTDOWN message sent, testbench should call $finish)
+    output logic                    shutdown_o
 );
 
     // -------------------------------------------------------------------------
@@ -68,6 +74,8 @@ module loom_axil_socket_bfm #(
 
     state_e state_q, state_d;
     logic [N_IRQ-1:0] irq_prev_q;
+    logic finish_pending_q;
+    logic shutdown_sent_q;
 
     // Pending request fields (module-level for DPI access)
     byte unsigned  req_type;
@@ -84,6 +92,9 @@ module loom_axil_socket_bfm #(
     // IRQ edge detection
     logic [N_IRQ-1:0] irq_rising;
     assign irq_rising = irq_i & ~irq_prev_q;
+
+    // Shutdown output - high after SHUTDOWN message has been sent
+    assign shutdown_o = shutdown_sent_q;
 
     // -------------------------------------------------------------------------
     // Socket initialization
@@ -116,8 +127,8 @@ module loom_axil_socket_bfm #(
 
         case (state_q)
             StIdle: begin
-                // Transition when we have a pending request
-                if (pending_valid_q) begin
+                // Transition when we have a pending request (and not shutting down)
+                if (pending_valid_q && !shutdown_sent_q) begin
                     if (!pending_is_write_q) begin
                         state_d = StReadAddr;
                     end else begin
@@ -176,6 +187,8 @@ module loom_axil_socket_bfm #(
             pending_is_write_q <= 1'b0;
             pending_addr_q     <= '0;
             pending_wdata_q    <= '0;
+            finish_pending_q   <= 1'b0;
+            shutdown_sent_q    <= 1'b0;
         end else begin
             state_q <= state_d;
 
@@ -183,6 +196,18 @@ module loom_axil_socket_bfm #(
             irq_prev_q <= irq_i;
             if (|irq_rising) begin
                 loom_sock_send(8'd2, 32'd0, {{(32-N_IRQ){1'b0}}, irq_rising});
+            end
+
+            // --- Finish handling (runs every cycle) ---
+            if (finish_i && !finish_pending_q) begin
+                finish_pending_q <= 1'b1;
+            end
+
+            // Send SHUTDOWN message when finish is pending and we're idle
+            if (finish_pending_q && !shutdown_sent_q && state_q == StIdle && !pending_valid_q) begin
+                $display("[BFM] Sending SHUTDOWN message");
+                loom_sock_send(8'd3, 32'd0, 32'd0);  // Type 3 = SHUTDOWN
+                shutdown_sent_q <= 1'b1;
             end
 
             // --- State machine actions ---
@@ -204,8 +229,8 @@ module loom_axil_socket_bfm #(
                             m_axil_wdata_o   <= pending_wdata_q;
                             m_axil_wvalid_o  <= 1'b1;
                         end
-                    end else begin
-                        // Poll for socket messages (only if socket is initialized)
+                    end else if (!finish_pending_q) begin
+                        // Poll for socket messages (only if socket is initialized and not shutting down)
                         if (socket_initialized) begin
                             recv_rv = loom_sock_try_recv(req_type, req_offset, req_wdata);
                             // If we received a message, capture it into pending registers

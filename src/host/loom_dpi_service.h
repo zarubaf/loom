@@ -43,10 +43,11 @@ typedef struct {
 
 // Service loop exit codes
 typedef enum {
-    LOOM_DPI_EXIT_COMPLETE = 0,     // Test completed normally
+    LOOM_DPI_EXIT_COMPLETE = 0,     // Test completed normally (shutdown received)
     LOOM_DPI_EXIT_ERROR = -1,       // Error during service
     LOOM_DPI_EXIT_TIMEOUT = -2,     // Timeout waiting for calls
     LOOM_DPI_EXIT_EMU_ERROR = -3,   // Emulation error state
+    LOOM_DPI_EXIT_SHUTDOWN = 1,     // Explicit shutdown from simulation
 } loom_dpi_exit_t;
 
 // Initialize DPI service with function table
@@ -66,9 +67,6 @@ int loom_dpi_service_once(loom_ctx_t *ctx);
 
 // Get the number of DPI calls serviced since init
 uint64_t loom_dpi_service_get_call_count(void);
-
-// Request service loop exit (call from DPI callback to signal test completion)
-void loom_dpi_service_request_exit(void);
 
 // Print service statistics
 void loom_dpi_service_print_stats(void);

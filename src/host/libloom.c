@@ -140,6 +140,14 @@ int loom_dut_reset(loom_ctx_t *ctx, int assert_reset) {
     return loom_write32(ctx, LOOM_ADDR_EMU_CTRL + LOOM_EMU_DUT_RESET, val);
 }
 
+int loom_finish(loom_ctx_t *ctx, int exit_code) {
+    if (!ctx) return LOOM_ERR_INVALID_ARG;
+
+    // [0] = finish_req (1), [15:8] = exit_code
+    uint32_t val = 0x01 | ((exit_code & 0xFF) << 8);
+    return loom_write32(ctx, LOOM_ADDR_EMU_CTRL + LOOM_EMU_FINISH, val);
+}
+
 // ============================================================================
 // DPI function handling
 // ============================================================================

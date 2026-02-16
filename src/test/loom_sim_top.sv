@@ -60,6 +60,8 @@ module loom_sim_top;
     logic                  axil_bready;
 
     logic [N_IRQ-1:0]      irq;
+    logic                  finish;
+    logic                  shutdown;
 
     // =========================================================================
     // Socket BFM
@@ -90,7 +92,10 @@ module loom_sim_top;
         .m_axil_bvalid_i(axil_bvalid),
         .m_axil_bready_o(axil_bready),
         // IRQ inputs
-        .irq_i(irq)
+        .irq_i(irq),
+        // Finish/shutdown interface
+        .finish_i(finish),
+        .shutdown_o(shutdown)
     );
 
     // =========================================================================
@@ -120,7 +125,9 @@ module loom_sim_top;
         .s_axil_bvalid_o(axil_bvalid),
         .s_axil_bready_i(axil_bready),
         // IRQ output
-        .irq_o(irq)
+        .irq_o(irq),
+        // Finish output (to BFM for simulation shutdown)
+        .finish_o(finish)
     );
 
     // =========================================================================
@@ -132,6 +139,17 @@ module loom_sim_top;
         $dumpvars();
     end
 `endif
+
+    // =========================================================================
+    // Shutdown handling
+    // =========================================================================
+    // Monitor BFM shutdown signal and terminate simulation cleanly
+    always @(posedge clk) begin
+        if (shutdown) begin
+            $display("[sim] Shutdown complete, ending simulation");
+            $finish;
+        end
+    end
 
     // =========================================================================
     // Simulation timeout
