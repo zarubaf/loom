@@ -12,6 +12,9 @@ static int g_n_funcs = 0;
 static uint64_t g_call_count = 0;
 static uint64_t g_error_count = 0;
 
+// Context for loom_service_finish() - set during service_run
+static loom_ctx_t *g_service_ctx = NULL;
+
 void loom_dpi_service_init(const loom_dpi_func_t *funcs, int n_funcs) {
     g_funcs = funcs;
     g_n_funcs = n_funcs;
@@ -107,6 +110,9 @@ loom_dpi_exit_t loom_dpi_service_run(loom_ctx_t *ctx, int timeout_ms) {
     int no_activity_count = 0;
     const int max_no_activity = timeout_ms > 0 ? (timeout_ms / 10) : 1000;
 
+    // Store context for loom_service_finish()
+    g_service_ctx = ctx;
+
     printf("[dpi_service] Entering service loop (n_funcs=%d)\n", g_n_funcs);
 
     while (1) {
@@ -174,5 +180,11 @@ void loom_dpi_service_print_stats(void) {
         printf("    [%d] %s (%d args, %d-bit return)\n",
                g_funcs[i].func_id, g_funcs[i].name,
                g_funcs[i].n_args, g_funcs[i].ret_width);
+    }
+}
+
+void loom_service_finish(int exit_code) {
+    if (g_service_ctx) {
+        loom_finish(g_service_ctx, exit_code);
     }
 }

@@ -683,6 +683,62 @@ struct DpiBridgePass : public Pass {
         }
         ofs << "\n";
 
+        // Generate DPI function table (inline in header)
+        // This allows compilation without separate wrapper source file
+        ofs << "#ifdef LOOM_DPI_IMPL\n";
+        ofs << "\n";
+        ofs << "#include \"loom_dpi_service.h\"\n";
+        ofs << "\n";
+
+        // Generate wrapper functions for uniform callback interface
+        ofs << "// Wrapper functions for uniform callback interface\n";
+        for (const auto &func : functions) {
+            std::string upper_name = func.name;
+            for (auto &c : upper_name) c = toupper(c);
+
+            ofs << "static uint64_t _loom_wrap_" << func.name << "(const uint32_t *args) {\n";
+
+            // Build argument list with proper type casting
+            std::string call_args;
+            int arg_offset = 0;
+            for (size_t i = 0; i < func.args.size(); i++) {
+                const auto &arg = func.args[i];
+                std::string c_type = sv_type_to_c(arg.type, arg.width);
+                if (i > 0) call_args += ", ";
+                call_args += "(" + c_type + ")args[" + std::to_string(arg_offset) + "]";
+                // Each 32-bit word is one args[] element
+                arg_offset += (arg.width + 31) / 32;
+            }
+
+            if (func.ret_width > 0) {
+                ofs << "    return (uint64_t)" << func.name << "(" << call_args << ");\n";
+            } else {
+                ofs << "    " << func.name << "(" << call_args << ");\n";
+                ofs << "    return 0;\n";
+            }
+            ofs << "}\n\n";
+        }
+
+        // Generate the function table
+        ofs << "// DPI function table for loom_sim_main\n";
+        ofs << "const loom_dpi_func_t loom_dpi_funcs[] = {\n";
+        for (size_t i = 0; i < functions.size(); i++) {
+            const auto &func = functions[i];
+            std::string upper_name = func.name;
+            for (auto &c : upper_name) c = toupper(c);
+
+            ofs << "    { DPI_FUNC_" << upper_name << ", \"" << func.name << "\", "
+                << func.args.size() << ", " << func.ret_width << ", _loom_wrap_" << func.name << " }";
+            if (i + 1 < functions.size()) ofs << ",";
+            ofs << "\n";
+        }
+        ofs << "};\n\n";
+
+        ofs << "const int loom_dpi_n_funcs = DPI_N_FUNCS;\n";
+        ofs << "\n";
+        ofs << "#endif // LOOM_DPI_IMPL\n";
+        ofs << "\n";
+
         ofs << "#ifdef __cplusplus\n";
         ofs << "}\n";
         ofs << "#endif\n";

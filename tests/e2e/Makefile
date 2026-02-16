@@ -45,13 +45,15 @@ RTL_SRCS := \
 
 DPI_SRCS := $(BFM_DIR)/loom_sock_dpi.c
 
-# Host sources
+# Host sources (from loom src/host)
 HOST_LIB_SRCS := \
     $(HOST_DIR)/libloom.c \
     $(HOST_DIR)/loom_transport_socket.c \
-    $(HOST_DIR)/loom_dpi_service.c
+    $(HOST_DIR)/loom_dpi_service.c \
+    $(HOST_DIR)/loom_sim_main.c
 
-HOST_SRCS := test_main.c dpi_impl.c
+# User DPI implementations (test-specific)
+HOST_SRCS := dpi_impl.c
 
 .PHONY: all clean transform sim host run
 
