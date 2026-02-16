@@ -1,29 +1,37 @@
 // SPDX-License-Identifier: Apache-2.0
 // DPI function implementations for dpi_test e2e test
+//
+// These functions implement the DPI interface defined in dpi_test.sv.
+// Function names match exactly what the generated header expects.
 
 #include <stdio.h>
 #include <stdint.h>
+#include "dpi_test_dpi.h"
+#include "loom_dpi_service.h"
 
-// Global tracking for test harness
-static int g_test_passed = -1;  // -1 = not called, 0 = fail, 1 = pass
-static uint32_t g_test_result = 0;
+// ============================================================================
+// DPI function implementations
+// ============================================================================
 
-// Accessors for test harness
-int dpi_get_test_passed(void) { return g_test_passed; }
-uint32_t dpi_get_test_result(void) { return g_test_result; }
-
-// DPI function: dpi_add (func_id=0)
-uint32_t impl_dpi_add(uint32_t a, uint32_t b) {
-    uint32_t result = a + b;
-    printf("[dpi] dpi_add(%u, %u) = %u\n", a, b, result);
+// dpi_add: Add two integers
+// Called from StCallAdd state in dpi_test.sv
+int32_t dpi_add(int32_t a, int32_t b) {
+    int32_t result = a + b;
+    printf("[dpi] dpi_add(%d, %d) = %d\n", a, b, result);
     return result;
 }
 
-// DPI function: dpi_report_result (func_id=1)
-uint32_t impl_dpi_report_result(uint32_t passed, uint32_t result) {
-    printf("[dpi] dpi_report_result(passed=%u, result=%u)\n", passed, result);
-    g_test_passed = passed ? 1 : 0;
-    g_test_result = result;
-    // Return 0 to indicate success
+// dpi_report_result: Report test result to host
+// Called from StReport state in dpi_test.sv
+// Args: passed (0 or 1), result (the computed value)
+int32_t dpi_report_result(int32_t passed, int32_t result) {
+    printf("[dpi] dpi_report_result(passed=%d, result=%d)\n", passed, result);
+    if (passed) {
+        printf("[dpi] TEST PASSED: result=%d\n", result);
+    } else {
+        printf("[dpi] TEST FAILED: result=%d\n", result);
+    }
+    // Signal test completion to the service loop
+    loom_dpi_service_request_exit();
     return 0;
 }
