@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // DPI function implementations for dpi_test e2e test
+//
+// These are pure user functions - no Loom-specific includes needed.
+// The hardware controls simulation termination via $finish.
 
 #include <stdio.h>
 #include <stdint.h>
-#include <vpi_user.h>
 
 // dpi_add: Add two integers
 int32_t dpi_add(int32_t a, int32_t b) {
@@ -20,6 +22,6 @@ int32_t dpi_report_result(int32_t passed, int32_t result) {
     } else {
         printf("[dpi] TEST FAILED: result=%d\n", result);
     }
-    vpi_control(vpiFinish, passed ? 0 : 1);
-    return 0;
+    // Simulation termination is handled by $finish in the hardware
+    return passed ? 0 : 1;
 }

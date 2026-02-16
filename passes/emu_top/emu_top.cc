@@ -239,6 +239,7 @@ struct EmuTopPass : public Pass {
         RTLIL::Wire *cycle_count = wrapper->addWire(ID(cycle_count), 64);
         RTLIL::Wire *irq_state_change = wrapper->addWire(ID(irq_state_change), 1);
         RTLIL::Wire *emu_finish = wrapper->addWire(ID(emu_finish), 1);
+        RTLIL::Wire *dut_finish = wrapper->addWire(ID(dut_finish), 1);
 
         // DPI regfile <-> wrapper signals
         int max_args = 8;
@@ -483,6 +484,12 @@ struct EmuTopPass : public Pass {
                 continue;
             }
 
+            // Handle finish signal from DUT
+            if (wire_name.find("loom_finish_o") != std::string::npos) {
+                dut_inst->setPort(wire->name, RTLIL::SigSpec(dut_finish));
+                continue;
+            }
+
             // Handle scan signals (if present) - tie off for now
             if (wire_name.find("loom_scan") != std::string::npos) {
                 if (wire->port_input) {
@@ -524,7 +531,12 @@ struct EmuTopPass : public Pass {
         // =========================================================================
         // Finish wiring
         // =========================================================================
-        wrapper->connect(RTLIL::SigSpec(finish_o), RTLIL::SigSpec(emu_finish));
+        // Finish can be triggered by:
+        // 1. emu_ctrl (software-initiated via register write)
+        // 2. DUT ($finish from hardware)
+        RTLIL::Wire *combined_finish = wrapper->addWire(NEW_ID, 1);
+        wrapper->addOr(NEW_ID, RTLIL::SigSpec(emu_finish), RTLIL::SigSpec(dut_finish), RTLIL::SigSpec(combined_finish));
+        wrapper->connect(RTLIL::SigSpec(finish_o), RTLIL::SigSpec(combined_finish));
 
         wrapper->fixup_ports();
 

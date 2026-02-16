@@ -68,6 +68,7 @@ module dpi_test (
                 StDone: begin
                     // Stay in done state
                     state_q <= StDone;
+                    $finish;
                 end
 
                 default: state_q <= StIdle;

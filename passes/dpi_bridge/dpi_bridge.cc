@@ -231,6 +231,9 @@ struct DpiBridgePass : public Pass {
             if (!module_functions.empty()) {
                 create_bridge_interface(module, module_functions);
             }
+
+            // Process $__loom_finish cells - transform to hardware output
+            process_finish_cells(module);
         }
 
         if (gen_wrapper && !dpi_functions.empty()) {
@@ -353,6 +356,73 @@ struct DpiBridgePass : public Pass {
         log_warning("    Could not derive valid condition for DPI call '%s'\n", func.name.c_str());
         log_warning("    DPI calls should only be in clocked (always_ff) blocks\n");
         return RTLIL::SigSpec(RTLIL::State::S1);
+    }
+
+    // Process $__loom_finish cells and convert to hardware output signal.
+    // The $__loom_finish cell has EN and TRG ports that indicate when $finish is called.
+    // We create a loom_finish_o output port and connect the EN signal to it.
+    void process_finish_cells(RTLIL::Module *module) {
+        std::vector<RTLIL::Cell*> finish_cells;
+
+        for (auto cell : module->cells()) {
+            if (cell->type == ID($__loom_finish)) {
+                finish_cells.push_back(cell);
+            }
+        }
+
+        if (finish_cells.empty()) {
+            return;
+        }
+
+        log("  Found %zu $finish cell(s)\n", finish_cells.size());
+
+        // Create the finish output port
+        RTLIL::Wire *finish_out = module->addWire(ID(loom_finish_o), 1);
+        finish_out->port_output = true;
+
+        // If multiple $finish cells, OR their enable signals together
+        RTLIL::SigSpec combined_en;
+
+        for (auto cell : finish_cells) {
+            log("    Processing $finish cell %s\n", log_id(cell));
+
+            // Get the enable signal from the cell
+            if (!cell->hasPort(ID::EN)) {
+                log_warning("    $__loom_finish cell %s has no EN port, using const 1\n", log_id(cell));
+                combined_en.append(RTLIL::State::S1);
+            } else {
+                RTLIL::SigSpec en_sig = cell->getPort(ID::EN);
+                log("      EN signal: %s\n", log_signal(en_sig));
+                combined_en.append(en_sig);
+            }
+
+            // Log exit code info
+            if (cell->hasParam(ID(EXIT_CODE))) {
+                int exit_code = cell->getParam(ID(EXIT_CODE)).as_int();
+                log("      Exit code: %d\n", exit_code);
+            }
+
+            // Remove the cell - it's been transformed to hardware
+            module->remove(cell);
+        }
+
+        // Connect to output port
+        if (GetSize(combined_en) == 1) {
+            // Single $finish - direct connection
+            module->connect(finish_out, combined_en);
+        } else {
+            // Multiple $finish cells - OR them together
+            RTLIL::SigSpec or_result = combined_en[0];
+            for (int i = 1; i < GetSize(combined_en); i++) {
+                RTLIL::Wire *or_wire = module->addWire(NEW_ID, 1);
+                module->addOr(NEW_ID, or_result, combined_en[i], or_wire);
+                or_result = or_wire;
+            }
+            module->connect(finish_out, or_result);
+        }
+
+        module->fixup_ports();
+        log("  Created loom_finish_o output port\n");
     }
 
     // Create bridge interface with proper multiplexing for multiple DPI functions.
