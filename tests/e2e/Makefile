@@ -29,7 +29,7 @@ VERILATOR_FLAGS := \
     -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-BLKSEQ -Wno-TIMESCALEMOD \
     --trace-fst -CFLAGS "-g -O0" -LDFLAGS "-lpthread"
 
-CFLAGS := -g -O0 -Wall -I$(HOST_DIR) -I$(BUILD_DIR)
+CFLAGS := -g -O0 -Wall -I$(HOST_DIR)
 LDFLAGS := -lpthread
 
 # RTL sources (absolute paths)
@@ -50,26 +50,27 @@ HOST_LIB_SRCS := \
     $(HOST_DIR)/libloom.c \
     $(HOST_DIR)/loom_transport_socket.c \
     $(HOST_DIR)/loom_dpi_service.c \
-    $(HOST_DIR)/loom_sim_main.c
+    $(HOST_DIR)/loom_sim_main.c \
+    $(HOST_DIR)/vpi_user.c
 
-# User DPI implementations (test-specific)
-HOST_SRCS := dpi_impl.c
+# User DPI implementations + generated dispatch table
+HOST_SRCS := dpi_impl.c $(BUILD_DIR)/loom_dpi_dispatch.c
 
 .PHONY: all clean transform sim host run
 
 all: run
 
 # Step 1: Transform SV to Verilog using Yosys
-transform: $(BUILD_DIR)/transformed_dpi_test.v $(BUILD_DIR)/dpi_test_dpi.h
+transform: $(BUILD_DIR)/transformed_dpi_test.v $(BUILD_DIR)/loom_dpi_dispatch.c
 
 $(BUILD_DIR)/run.ys: | $(BUILD_DIR)
 	@echo "read_slang ../dpi_test.sv -top dpi_test" > $@
 	@echo "proc" >> $@
-	@echo "dpi_bridge -json_out dpi_meta.json -header_out dpi_test_dpi.h" >> $@
+	@echo "dpi_bridge -json_out dpi_meta.json -header_out loom_dpi_dispatch.c" >> $@
 	@echo "emu_top -top dpi_test -n_dpi_funcs 2" >> $@
 	@echo "write_verilog -noattr transformed_dpi_test.v" >> $@
 
-$(BUILD_DIR)/transformed_dpi_test.v $(BUILD_DIR)/dpi_test_dpi.h: dpi_test.sv $(BUILD_DIR)/run.ys
+$(BUILD_DIR)/transformed_dpi_test.v $(BUILD_DIR)/loom_dpi_dispatch.c: dpi_test.sv $(BUILD_DIR)/run.ys
 	cd $(BUILD_DIR) && $(YOSYS) $(YOSYS_PLUGINS) -s run.ys
 
 $(BUILD_DIR):
@@ -85,7 +86,7 @@ $(OBJ_DIR)/Vloom_sim_top: $(RTL_SRCS) $(DPI_SRCS) transform
 # Step 3: Build host binary
 host: $(OBJ_DIR)/loom_host
 
-$(OBJ_DIR)/loom_host: $(HOST_SRCS) $(HOST_LIB_SRCS) $(BUILD_DIR)/dpi_test_dpi.h
+$(OBJ_DIR)/loom_host: $(HOST_SRCS) $(HOST_LIB_SRCS) transform
 	@mkdir -p $(OBJ_DIR)
 	$(CC) $(CFLAGS) -o $@ $(HOST_SRCS) $(HOST_LIB_SRCS) $(LDFLAGS)
 

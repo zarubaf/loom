@@ -71,11 +71,6 @@ uint64_t loom_dpi_service_get_call_count(void);
 // Print service statistics
 void loom_dpi_service_print_stats(void);
 
-// Trigger simulation finish from within a DPI callback
-// This can be called by user DPI implementations to signal test completion.
-// exit_code: 0 for success, non-zero for failure
-void loom_service_finish(int exit_code);
-
 #ifdef __cplusplus
 }
 #endif

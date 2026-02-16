@@ -1,18 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // DPI function implementations for dpi_test e2e test
-//
-// This file implements the DPI functions declared in the generated header.
-// Define LOOM_DPI_IMPL before including to get the function table.
 
 #include <stdio.h>
-#include "loom_dpi_service.h"
-
-#define LOOM_DPI_IMPL
-#include "dpi_test_dpi.h"
-
-// ============================================================================
-// DPI function implementations
-// ============================================================================
+#include <stdint.h>
+#include <vpi_user.h>
 
 // dpi_add: Add two integers
 int32_t dpi_add(int32_t a, int32_t b) {
@@ -29,7 +20,6 @@ int32_t dpi_report_result(int32_t passed, int32_t result) {
     } else {
         printf("[dpi] TEST FAILED: result=%d\n", result);
     }
-    // Signal test completion
-    loom_service_finish(passed ? 0 : 1);
+    vpi_control(vpiFinish, passed ? 0 : 1);
     return 0;
 }
