@@ -5,10 +5,10 @@
 // into $__loom_dpi_call cells, which dpi_bridge then converts to
 // hardware interfaces.
 //
-// Ports: Only clk_i and rst_ni - all test values are internal constants.
-// Tests multiple DPI functions to verify proper multiplexing.
+// IMPORTANT: DPI calls must be in clocked (always_ff) blocks only.
+// This ensures deterministic clock gating behavior.
 
-// DPI function declarations - multiple functions test proper muxing
+// DPI function declarations
 import "DPI-C" function int dpi_add(input int a, input int b);
 import "DPI-C" function int dpi_report_result(input int passed, input int result);
 
@@ -31,61 +31,48 @@ module dpi_test (
         StDone
     } state_e;
 
-    state_e state_q, state_d;
-    logic [31:0] result_q, result_d;
-    logic test_passed_q, test_passed_d;
+    state_e state_q;
+    logic [31:0] result_q;
+    logic test_passed_q;
 
-    // Sequential logic
+    // Sequential logic with DPI calls in clocked block
     always_ff @(posedge clk_i or negedge rst_ni) begin
         if (!rst_ni) begin
             state_q       <= StIdle;
             result_q      <= 32'd0;
             test_passed_q <= 1'b0;
         end else begin
-            state_q       <= state_d;
-            result_q      <= result_d;
-            test_passed_q <= test_passed_d;
+            unique case (state_q)
+                StIdle: begin
+                    state_q <= StCallAdd;
+                end
+
+                StCallAdd: begin
+                    // DPI call in clocked block - triggers clock gating
+                    result_q <= dpi_add(TEST_ARG_A, TEST_ARG_B);
+                    state_q <= StCheckResult;
+                end
+
+                StCheckResult: begin
+                    // Check result
+                    test_passed_q <= (result_q == EXPECTED_RESULT);
+                    state_q <= StReport;
+                end
+
+                StReport: begin
+                    // DPI call to report result
+                    result_q <= dpi_report_result({31'b0, test_passed_q}, result_q);
+                    state_q <= StDone;
+                end
+
+                StDone: begin
+                    // Stay in done state
+                    state_q <= StDone;
+                end
+
+                default: state_q <= StIdle;
+            endcase
         end
-    end
-
-    // Combinational next-state logic
-    always_comb begin
-        // Defaults
-        state_d       = state_q;
-        result_d      = result_q;
-        test_passed_d = test_passed_q;
-
-        unique case (state_q)
-            StIdle: begin
-                state_d = StCallAdd;
-            end
-
-            StCallAdd: begin
-                // Call DPI function - yosys-slang creates $__loom_dpi_call cell here
-                result_d = dpi_add(TEST_ARG_A, TEST_ARG_B);
-                state_d = StCheckResult;
-            end
-
-            StCheckResult: begin
-                // Check result
-                test_passed_d = (result_q == EXPECTED_RESULT);
-                state_d = StReport;
-            end
-
-            StReport: begin
-                // Report result via DPI - allows host to verify correctness
-                // This is a second DPI call to test multiple function support
-                result_d = dpi_report_result({31'b0, test_passed_q}, result_q);
-                state_d = StDone;
-            end
-
-            StDone: begin
-                // Stay in done state
-                state_d = StDone;
-            end
-
-            default: state_d = StIdle;
-        endcase
     end
 
 endmodule

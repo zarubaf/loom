@@ -5,22 +5,28 @@
  * This pass converts DPI function call cells ($__loom_dpi_call) into hardware
  * interfaces that enable FPGA<->host communication for emulation.
  *
- * DPI functions cannot be synthesized directly. The yosys-slang frontend
- * automatically creates $__loom_dpi_call cells for DPI import calls, which
- * this pass then converts to hardware bridges.
+ * IMPORTANT: DPI calls must only appear in clocked (always_ff) blocks.
+ * This ensures deterministic clock gating behavior and simplifies the
+ * valid condition derivation.
  *
- * DUT bridge interface (directly connects to emu_top wrapper):
+ * Example valid usage:
+ *   always_ff @(posedge clk_i or negedge rst_ni) begin
+ *     if (!rst_ni) begin
+ *       result_q <= '0;
+ *     end else if (state_q == StCallDpi) begin
+ *       result_q <= dpi_function(arg1, arg2);  // OK: in clocked block
+ *     end
+ *   end
+ *
+ * DUT bridge interface (connects to emu_top wrapper):
  *   - loom_dpi_valid:   DPI call pending (output, triggers clock gating)
  *   - loom_dpi_func_id: Function identifier (output)
  *   - loom_dpi_args:    Packed function arguments (output)
  *   - loom_dpi_result:  Return value from host (input)
  *
- * Note: loom_dpi_ack is NOT part of the DUT interface. It's added by emu_top
- * for clock gating control. The DUT is clock-gated and transparent to the
- * handshaking - it just sees the result when the clock resumes.
- *
- * The pass also outputs JSON metadata that can be consumed by
- * scripts/loom_dpi_codegen.py to generate host-side dispatch code.
+ * The pass also outputs:
+ *   - JSON metadata for host-side integration
+ *   - C header with function prototypes for user implementation
  */
 
 #include "kernel/yosys.h"
@@ -66,9 +72,10 @@ struct DpiBridgePass : public Pass {
         log("\n");
         log("Convert DPI function call cells to hardware bridge interfaces.\n");
         log("\n");
-        log("This pass processes $__loom_dpi_call cells created by yosys-slang\n");
-        log("when it encounters DPI import function calls in SystemVerilog.\n");
+        log("IMPORTANT: DPI calls must only appear in clocked (always_ff) blocks.\n");
+        log("This ensures deterministic clock gating and correct valid derivation.\n");
         log("\n");
+        log("Options:\n");
         log("    -json_out <file>\n");
         log("        Write DPI metadata to JSON file.\n");
         log("\n");
@@ -76,27 +83,11 @@ struct DpiBridgePass : public Pass {
         log("        Write C header file with DPI function prototypes.\n");
         log("        Users implement these functions for host-side dispatch.\n");
         log("\n");
-        log("    -gen_wrapper\n");
-        log("        Print DPI interface summary to log (legacy)\n");
-        log("\n");
-        log("The $__loom_dpi_call cells have:\n");
-        log("  - Attribute 'loom_dpi_func': DPI function name\n");
-        log("  - Attribute 'loom_dpi_ret_type': Return type (optional)\n");
-        log("  - Attribute 'loom_dpi_arg_names': Comma-separated arg names (optional)\n");
-        log("  - Attribute 'loom_dpi_arg_types': Comma-separated arg types (optional)\n");
-        log("  - Parameter ARG_WIDTH: Total width of packed arguments\n");
-        log("  - Parameter RET_WIDTH: Width of return value\n");
-        log("  - Port ARGS: Packed function arguments\n");
-        log("  - Port RESULT: Return value wire\n");
-        log("\n");
         log("DUT ports created:\n");
-        log("  - loom_dpi_valid:   DPI call pending (output, gates clock at emu_top)\n");
+        log("  - loom_dpi_valid:   DPI call pending (output, gates clock)\n");
         log("  - loom_dpi_func_id: Function identifier (output, 8-bit)\n");
         log("  - loom_dpi_args:    Packed function arguments (output)\n");
         log("  - loom_dpi_result:  Return value from host (input)\n");
-        log("\n");
-        log("Note: loom_dpi_ack is added by emu_top wrapper, not the DUT.\n");
-        log("The DUT is clock-gated and transparent to the handshaking.\n");
         log("\n");
     }
 
@@ -286,15 +277,15 @@ struct DpiBridgePass : public Pass {
 
     // Derive the execution condition for a DPI call.
     //
-    // After proc, DPI calls become combinational logic feeding into FFs through muxes.
-    // The mux select signal indicates when the DPI result is being used.
+    // DPI calls must be in clocked (always_ff) blocks. After proc, the DPI result
+    // feeds into FFs through muxes. The mux select signal indicates when the
+    // DPI call is active (e.g., state == StCallAdd).
     //
-    // For $pmux cells (multi-input muxes), we need to find which specific input
-    // the DPI result connects to, and return only that select bit.
+    // This function traces the DPI result signal to find the $pmux select bit
+    // that gates when this specific DPI call is executed.
     RTLIL::SigSpec derive_valid_condition(RTLIL::Module *module, const DpiFunction &func) {
         SigMap sigmap(module);
 
-        // Get the DPI result signal (canonicalized)
         RTLIL::SigSpec result_sig = sigmap(func.result_sig);
         if (GetSize(result_sig) == 0) {
             log("    No result signal, defaulting to valid=1\n");
@@ -303,14 +294,46 @@ struct DpiBridgePass : public Pass {
 
         log("    Tracing result signal: %s\n", log_signal(result_sig));
 
-        // Strategy 1: Look for 2:1 muxes where DPI result feeds port B
+        // Find the $pmux that uses this DPI result and extract the specific select bit.
+        // DPI calls in clocked blocks produce: DPI_result -> $pmux input -> FF
+        for (auto cell : module->cells()) {
+            if (cell->type != ID($pmux))
+                continue;
+
+            // $pmux has: A (default), B (concatenated cases), S (one-hot select)
+            RTLIL::SigSpec port_b = sigmap(cell->getPort(ID::B));
+            RTLIL::SigSpec port_s = cell->getPort(ID::S);
+            int width = GetSize(cell->getPort(ID::A));
+            int n_cases = GetSize(port_s);
+
+            // Check each case input for the DPI result
+            for (int case_idx = 0; case_idx < n_cases; case_idx++) {
+                RTLIL::SigSpec case_input = sigmap(port_b.extract(case_idx * width, width));
+
+                // Check if any bit of result_sig matches this case input
+                bool matches = false;
+                for (int i = 0; i < GetSize(case_input) && i < GetSize(result_sig); i++) {
+                    if (case_input[i] == result_sig[i]) {
+                        matches = true;
+                        break;
+                    }
+                }
+
+                if (matches) {
+                    RTLIL::SigBit sel_bit = port_s[case_idx];
+                    log("    Found valid condition: %s (case %d of %s)\n",
+                        log_signal(sel_bit), case_idx, log_id(cell));
+                    return RTLIL::SigSpec(sel_bit);
+                }
+            }
+        }
+
+        // Fallback: check for simple 2:1 $mux (single DPI call case)
         for (auto cell : module->cells()) {
             if (cell->type != ID($mux))
                 continue;
 
             RTLIL::SigSpec port_b = sigmap(cell->getPort(ID::B));
-
-            // Check if result_sig bits match port_b
             bool matches = false;
             for (int i = 0; i < GetSize(port_b) && i < GetSize(result_sig); i++) {
                 if (port_b[i] == result_sig[i]) {
@@ -321,82 +344,14 @@ struct DpiBridgePass : public Pass {
 
             if (matches) {
                 RTLIL::SigSpec sel = cell->getPort(ID::S);
-                log("    Found $mux selecting DPI result: %s, select=%s\n",
-                    log_id(cell), log_signal(sel));
+                log("    Found valid condition: %s (from $mux %s)\n",
+                    log_signal(sel), log_id(cell));
                 return sel;
             }
         }
 
-        // Strategy 2: Look for $pmux (multi-input mux) and find which input
-        // the DPI result connects to, then extract that specific select bit
-        for (auto cell : module->cells()) {
-            if (cell->type != ID($pmux))
-                continue;
-
-            // $pmux has: A (default), B (concatenated alternatives), S (one-hot select)
-            RTLIL::SigSpec port_a = sigmap(cell->getPort(ID::A));
-            RTLIL::SigSpec port_b = sigmap(cell->getPort(ID::B));
-            RTLIL::SigSpec port_s = cell->getPort(ID::S);
-
-            int width = GetSize(port_a);
-            int n_cases = GetSize(port_s);
-
-            // Check if result_sig matches any of the B alternatives
-            for (int case_idx = 0; case_idx < n_cases; case_idx++) {
-                // Extract this case's input from port_b
-                RTLIL::SigSpec case_input = port_b.extract(case_idx * width, width);
-                RTLIL::SigSpec case_input_mapped = sigmap(case_input);
-
-                // Check if DPI result matches this case
-                bool matches = false;
-                for (int i = 0; i < GetSize(case_input_mapped) && i < GetSize(result_sig); i++) {
-                    if (case_input_mapped[i] == result_sig[i]) {
-                        matches = true;
-                        break;
-                    }
-                }
-
-                if (matches) {
-                    // Return just this select bit
-                    RTLIL::SigBit sel_bit = port_s[case_idx];
-                    log("    Found $pmux with DPI result at case %d: %s, select_bit=%s\n",
-                        case_idx, log_id(cell), log_signal(sel_bit));
-                    return RTLIL::SigSpec(sel_bit);
-                }
-            }
-        }
-
-        // Strategy 3: Look for cells with "procmux" in name (Yosys naming convention)
-        // and try to find specific select bits
-        for (auto cell : module->cells()) {
-            std::string cell_name = cell->name.str();
-            if (cell_name.find("procmux") == std::string::npos)
-                continue;
-
-            // For $mux cells, check if this specific mux has result in B
-            if (cell->type == ID($mux)) {
-                RTLIL::SigSpec port_b = sigmap(cell->getPort(ID::B));
-                bool matches = false;
-                for (auto pb : port_b.bits()) {
-                    for (auto rsb : result_sig.bits()) {
-                        if (pb == rsb) {
-                            matches = true;
-                            break;
-                        }
-                    }
-                    if (matches) break;
-                }
-
-                if (matches) {
-                    RTLIL::SigSpec sel = cell->getPort(ID::S);
-                    log("    Found procmux $mux with DPI result: %s, select=%s\n",
-                        log_id(cell), log_signal(sel));
-                    return sel;
-                }
-            }
-        }
-
-        log("    No enable/select condition found, defaulting to valid=1\n");
+        log_warning("    Could not derive valid condition for DPI call '%s'\n", func.name.c_str());
+        log_warning("    DPI calls should only be in clocked (always_ff) blocks\n");
         return RTLIL::SigSpec(RTLIL::State::S1);
     }
 
