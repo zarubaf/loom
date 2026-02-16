@@ -6,10 +6,11 @@
 // hardware interfaces.
 //
 // Ports: Only clk_i and rst_ni - all test values are internal constants.
-// Simplified to single DPI function for debugging.
+// Tests multiple DPI functions to verify proper multiplexing.
 
-// DPI function declaration - single function to avoid multi-driver issues
+// DPI function declarations - multiple functions test proper muxing
 import "DPI-C" function int dpi_add(input int a, input int b);
+import "DPI-C" function int dpi_report_result(input int passed, input int result);
 
 module dpi_test (
     input  logic clk_i,
@@ -22,10 +23,11 @@ module dpi_test (
     localparam logic [31:0] EXPECTED_RESULT = TEST_ARG_A + TEST_ARG_B;  // 59
 
     // State machine
-    typedef enum logic [1:0] {
+    typedef enum logic [2:0] {
         StIdle,
         StCallAdd,
         StCheckResult,
+        StReport,
         StDone
     } state_e;
 
@@ -65,8 +67,15 @@ module dpi_test (
             end
 
             StCheckResult: begin
-                // Check result and mark done
+                // Check result
                 test_passed_d = (result_q == EXPECTED_RESULT);
+                state_d = StReport;
+            end
+
+            StReport: begin
+                // Report result via DPI - allows host to verify correctness
+                // This is a second DPI call to test multiple function support
+                result_d = dpi_report_result({31'b0, test_passed_q}, result_q);
                 state_d = StDone;
             end
 

@@ -54,7 +54,7 @@ struct DpiFunction {
     RTLIL::Cell *cell;
     RTLIL::SigSpec args_sig;
     RTLIL::SigSpec result_sig;
-    RTLIL::SigSpec valid_condition;  // Derived execution condition
+    RTLIL::SigSpec valid_condition;  // Derived execution condition (populated after derive)
 };
 
 struct DpiBridgePass : public Pass {
@@ -124,6 +124,7 @@ struct DpiBridgePass : public Pass {
             log("Processing module %s\n", log_id(module));
 
             std::vector<RTLIL::Cell*> cells_to_process;
+            std::vector<DpiFunction> module_functions;
 
             // Find $__loom_dpi_call cells created by yosys-slang
             for (auto cell : module->cells()) {
@@ -139,6 +140,7 @@ struct DpiBridgePass : public Pass {
 
             log("  Found %zu DPI call cell(s)\n", cells_to_process.size());
 
+            // First pass: collect all DPI function info
             for (auto cell : cells_to_process) {
                 // Get function name from attribute
                 std::string dpi_name = cell->get_string_attribute(ID(loom_dpi_func));
@@ -219,10 +221,16 @@ struct DpiBridgePass : public Pass {
                     func.result_sig = cell->getPort(ID(RESULT));
                 }
 
-                dpi_functions.push_back(func);
+                // Derive valid condition before removing the cell
+                func.valid_condition = derive_valid_condition(module, func);
 
-                // Convert DPI call to bridge interface
-                convert_to_bridge(module, func);
+                module_functions.push_back(func);
+                dpi_functions.push_back(func);
+            }
+
+            // Second pass: create bridge interface with proper multiplexing
+            if (!module_functions.empty()) {
+                create_bridge_interface(module, module_functions);
             }
         }
 
@@ -264,72 +272,115 @@ struct DpiBridgePass : public Pass {
         return result;
     }
 
-    // Derive the execution condition for a DPI call by finding how the result is used.
+    // Derive the execution condition for a DPI call.
     //
-    // Strategy: Look for flip-flops (adffe, dffe, etc.) that capture the DPI result.
-    // The enable condition of such FFs represents when the DPI call is active.
+    // After proc, DPI calls become combinational logic feeding into FFs through muxes.
+    // The mux select signal indicates when the DPI result is being used.
     //
-    // After proc, the design will have FFs like:
-    //   always @(posedge clk) if (enable) result_q <= dpi_result;
-    // The 'enable' signal is what we want as the valid condition.
+    // For $pmux cells (multi-input muxes), we need to find which specific input
+    // the DPI result connects to, and return only that select bit.
     RTLIL::SigSpec derive_valid_condition(RTLIL::Module *module, const DpiFunction &func) {
         SigMap sigmap(module);
 
-        // Get the DPI result signal
+        // Get the DPI result signal (canonicalized)
         RTLIL::SigSpec result_sig = sigmap(func.result_sig);
         if (GetSize(result_sig) == 0) {
             log("    No result signal, defaulting to valid=1\n");
             return RTLIL::SigSpec(RTLIL::State::S1);
         }
 
-        // Look for FFs (with enable) that use the DPI result as their D input
+        log("    Tracing result signal: %s\n", log_signal(result_sig));
+
+        // Strategy 1: Look for 2:1 muxes where DPI result feeds port B
         for (auto cell : module->cells()) {
-            // Check for various FF types with enable
-            if (!cell->type.in(ID($dffe), ID($adffe), ID($sdffe), ID($sdffce), ID($dffsre), ID($aldffe)))
+            if (cell->type != ID($mux))
                 continue;
 
-            RTLIL::SigSpec ff_d = sigmap(cell->getPort(ID::D));
+            RTLIL::SigSpec port_b = sigmap(cell->getPort(ID::B));
 
-            // Check if FF's D input matches the DPI result
+            // Check if result_sig bits match port_b
             bool matches = false;
-            for (int i = 0; i < GetSize(ff_d) && i < GetSize(result_sig); i++) {
-                if (ff_d[i] == result_sig[i]) {
+            for (int i = 0; i < GetSize(port_b) && i < GetSize(result_sig); i++) {
+                if (port_b[i] == result_sig[i]) {
                     matches = true;
                     break;
                 }
             }
 
-            if (matches && cell->hasPort(ID::EN)) {
-                RTLIL::SigSpec enable = cell->getPort(ID::EN);
-                log("    Found FF with enable capturing DPI result: %s, EN=%s\n",
-                    log_id(cell), log_signal(enable));
-                return enable;
+            if (matches) {
+                RTLIL::SigSpec sel = cell->getPort(ID::S);
+                log("    Found $mux selecting DPI result: %s, select=%s\n",
+                    log_id(cell), log_signal(sel));
+                return sel;
             }
         }
 
-        // Fallback: Look for muxes that select the DPI result vs feedback
-        // This handles patterns like: result_d = enable ? dpi_result : result_q;
+        // Strategy 2: Look for $pmux (multi-input mux) and find which input
+        // the DPI result connects to, then extract that specific select bit
         for (auto cell : module->cells()) {
-            if (cell->type != ID($mux))
+            if (cell->type != ID($pmux))
                 continue;
 
+            // $pmux has: A (default), B (concatenated alternatives), S (one-hot select)
             RTLIL::SigSpec port_a = sigmap(cell->getPort(ID::A));
             RTLIL::SigSpec port_b = sigmap(cell->getPort(ID::B));
+            RTLIL::SigSpec port_s = cell->getPort(ID::S);
 
-            // Check if port B is the DPI result (selected when S=1)
-            bool b_matches = false;
-            for (int i = 0; i < GetSize(port_b) && i < GetSize(result_sig); i++) {
-                if (port_b[i] == result_sig[i]) {
-                    b_matches = true;
-                    break;
+            int width = GetSize(port_a);
+            int n_cases = GetSize(port_s);
+
+            // Check if result_sig matches any of the B alternatives
+            for (int case_idx = 0; case_idx < n_cases; case_idx++) {
+                // Extract this case's input from port_b
+                RTLIL::SigSpec case_input = port_b.extract(case_idx * width, width);
+                RTLIL::SigSpec case_input_mapped = sigmap(case_input);
+
+                // Check if DPI result matches this case
+                bool matches = false;
+                for (int i = 0; i < GetSize(case_input_mapped) && i < GetSize(result_sig); i++) {
+                    if (case_input_mapped[i] == result_sig[i]) {
+                        matches = true;
+                        break;
+                    }
+                }
+
+                if (matches) {
+                    // Return just this select bit
+                    RTLIL::SigBit sel_bit = port_s[case_idx];
+                    log("    Found $pmux with DPI result at case %d: %s, select_bit=%s\n",
+                        case_idx, log_id(cell), log_signal(sel_bit));
+                    return RTLIL::SigSpec(sel_bit);
                 }
             }
+        }
 
-            if (b_matches) {
-                RTLIL::SigSpec sel = cell->getPort(ID::S);
-                log("    Found mux selecting DPI result: %s, select=%s\n",
-                    log_id(cell), log_signal(sel));
-                return sel;
+        // Strategy 3: Look for cells with "procmux" in name (Yosys naming convention)
+        // and try to find specific select bits
+        for (auto cell : module->cells()) {
+            std::string cell_name = cell->name.str();
+            if (cell_name.find("procmux") == std::string::npos)
+                continue;
+
+            // For $mux cells, check if this specific mux has result in B
+            if (cell->type == ID($mux)) {
+                RTLIL::SigSpec port_b = sigmap(cell->getPort(ID::B));
+                bool matches = false;
+                for (auto pb : port_b.bits()) {
+                    for (auto rsb : result_sig.bits()) {
+                        if (pb == rsb) {
+                            matches = true;
+                            break;
+                        }
+                    }
+                    if (matches) break;
+                }
+
+                if (matches) {
+                    RTLIL::SigSpec sel = cell->getPort(ID::S);
+                    log("    Found procmux $mux with DPI result: %s, select=%s\n",
+                        log_id(cell), log_signal(sel));
+                    return sel;
+                }
             }
         }
 
@@ -337,103 +388,140 @@ struct DpiBridgePass : public Pass {
         return RTLIL::SigSpec(RTLIL::State::S1);
     }
 
-    void convert_to_bridge(RTLIL::Module *module, const DpiFunction &func) {
-        RTLIL::Cell *cell = func.cell;
-
-        // Create bridge interface ports if they don't exist
-        // Use loom_ prefix to avoid name conflicts with user signals
-
-        // loom_dpi_valid: indicates a DPI call is pending
-        // This signal triggers clock gating at the emu_top level
-        RTLIL::Wire *dpi_valid = module->wire(ID(loom_dpi_valid));
-        if (!dpi_valid) {
-            dpi_valid = module->addWire(ID(loom_dpi_valid), 1);
-            dpi_valid->port_output = true;
+    // Create bridge interface with proper multiplexing for multiple DPI functions.
+    // This is called once per module after all DPI functions are collected.
+    void create_bridge_interface(RTLIL::Module *module, std::vector<DpiFunction> &functions) {
+        // Calculate maximum widths across all functions
+        int max_arg_width = 0;
+        int max_ret_width = 0;
+        for (const auto &func : functions) {
+            max_arg_width = std::max(max_arg_width, func.arg_width);
+            max_ret_width = std::max(max_ret_width, func.ret_width);
         }
 
-        // Note: loom_dpi_ack is NOT added to the DUT - it's only used by emu_top
-        // for clock gating. The DUT is transparent to the handshaking since
-        // its clock is gated while waiting for the host response.
+        // Create bridge interface ports
+        RTLIL::Wire *dpi_valid = module->addWire(ID(loom_dpi_valid), 1);
+        dpi_valid->port_output = true;
 
-        // loom_dpi_func_id: identifies which DPI function is being called
-        RTLIL::Wire *dpi_func_id = module->wire(ID(loom_dpi_func_id));
-        if (!dpi_func_id) {
-            dpi_func_id = module->addWire(ID(loom_dpi_func_id), 8);
-            dpi_func_id->port_output = true;
-        }
+        RTLIL::Wire *dpi_func_id = module->addWire(ID(loom_dpi_func_id), 8);
+        dpi_func_id->port_output = true;
 
-        // Create or extend args output port
-        RTLIL::Wire *dpi_args_out = module->wire(ID(loom_dpi_args));
-        if (!dpi_args_out) {
-            dpi_args_out = module->addWire(ID(loom_dpi_args), func.arg_width);
-            dpi_args_out->port_output = true;
-        } else if (GetSize(dpi_args_out) < func.arg_width) {
-            // Extend width if needed for this function
-            dpi_args_out->width = func.arg_width;
-        }
+        RTLIL::Wire *dpi_args_out = module->addWire(ID(loom_dpi_args), max_arg_width);
+        dpi_args_out->port_output = true;
 
-        // Create or extend result input port
-        RTLIL::Wire *dpi_result_in = module->wire(ID(loom_dpi_result));
-        if (!dpi_result_in) {
-            dpi_result_in = module->addWire(ID(loom_dpi_result), func.ret_width);
-            dpi_result_in->port_input = true;
-        } else if (GetSize(dpi_result_in) < func.ret_width) {
-            dpi_result_in->width = func.ret_width;
-        }
+        RTLIL::Wire *dpi_result_in = module->addWire(ID(loom_dpi_result), max_ret_width);
+        dpi_result_in->port_input = true;
 
-        // Derive the valid condition from the DPI call's execution context
-        // This traces how the result is used through mux chains to find when
-        // the DPI result is actually needed (e.g., state==IDLE && start)
-        RTLIL::SigSpec valid_condition = derive_valid_condition(module, func);
+        // For single function case, no muxing needed
+        if (functions.size() == 1) {
+            const DpiFunction &func = functions[0];
 
-        // Connect dpi_valid to the derived condition
-        // The clock gating logic at emu_top uses: CE = !dpi_valid | dpi_ack
-        // This means: clock runs when no DPI call OR when host has acked
-        module->connect(RTLIL::SigSpec(dpi_valid), valid_condition);
+            // Connect valid
+            module->connect(RTLIL::SigSpec(dpi_valid), func.valid_condition);
 
-        // Connect args to dpi_args port
-        if (GetSize(func.args_sig) > 0) {
-            if (GetSize(func.args_sig) <= GetSize(dpi_args_out)) {
-                RTLIL::SigSpec padded_args = func.args_sig;
-                if (GetSize(func.args_sig) < GetSize(dpi_args_out)) {
-                    padded_args.append(RTLIL::SigSpec(RTLIL::State::S0,
-                        GetSize(dpi_args_out) - GetSize(func.args_sig)));
-                }
-                module->connect(RTLIL::SigSpec(dpi_args_out), padded_args);
-            } else {
-                module->connect(RTLIL::SigSpec(dpi_args_out),
-                    func.args_sig.extract(0, GetSize(dpi_args_out)));
+            // Connect func_id
+            module->connect(RTLIL::SigSpec(dpi_func_id), RTLIL::SigSpec(func.func_id, 8));
+
+            // Connect args (pad to max width)
+            RTLIL::SigSpec padded_args = func.args_sig;
+            if (GetSize(func.args_sig) < max_arg_width) {
+                padded_args.append(RTLIL::SigSpec(RTLIL::State::S0,
+                    max_arg_width - GetSize(func.args_sig)));
             }
-        }
+            module->connect(RTLIL::SigSpec(dpi_args_out), padded_args);
 
-        // Connect dpi_result to the result signal
-        if (GetSize(func.result_sig) > 0) {
-            if (GetSize(func.result_sig) <= GetSize(dpi_result_in)) {
+            // Connect result to DPI result port
+            if (GetSize(func.result_sig) > 0) {
                 module->connect(func.result_sig,
                     RTLIL::SigSpec(dpi_result_in).extract(0, GetSize(func.result_sig)));
-            } else {
-                RTLIL::SigSpec padded_result = RTLIL::SigSpec(dpi_result_in);
-                padded_result.append(RTLIL::SigSpec(RTLIL::State::S0,
-                    GetSize(func.result_sig) - GetSize(dpi_result_in)));
-                module->connect(func.result_sig, padded_result);
+            }
+
+            // Remove placeholder cell
+            module->remove(func.cell);
+
+            log("    Converted to bridge: func_id=%d, arg_width=%d, ret_width=%d\n",
+                func.func_id, func.arg_width, func.ret_width);
+            log("    Base address: 0x%04x\n", LOOM_DPI_BASE + func.func_id * FUNC_BLOCK_ALIGN);
+        } else {
+            // Multiple functions: need to multiplex outputs
+            // dpi_valid = valid_0 | valid_1 | ... | valid_n
+            // dpi_args = valid_0 ? args_0 : (valid_1 ? args_1 : ... : 0)
+            // dpi_func_id = valid_0 ? id_0 : (valid_1 ? id_1 : ... : 0)
+
+            log("  Creating multiplexed bridge for %zu DPI functions\n", functions.size());
+
+            // Helper to reduce multi-bit valid to single bit (OR all bits)
+            auto reduce_to_1bit = [&](RTLIL::SigSpec sig) -> RTLIL::SigSpec {
+                if (GetSize(sig) == 1)
+                    return sig;
+                // OR all bits together to get single-bit valid
+                RTLIL::Wire *reduced = module->addWire(NEW_ID, 1);
+                module->addReduceOr(NEW_ID, sig, reduced);
+                log("    Reduced %d-bit valid to 1-bit\n", GetSize(sig));
+                return RTLIL::SigSpec(reduced);
+            };
+
+            // Reduce all valid conditions to 1 bit
+            std::vector<RTLIL::SigSpec> valid_1bit;
+            for (auto &func : functions) {
+                valid_1bit.push_back(reduce_to_1bit(func.valid_condition));
+            }
+
+            // Build OR tree for valid signal
+            RTLIL::SigSpec valid_or = valid_1bit[0];
+            for (size_t i = 1; i < functions.size(); i++) {
+                RTLIL::Wire *or_out = module->addWire(NEW_ID, 1);
+                module->addOr(NEW_ID, valid_or, valid_1bit[i], or_out);
+                valid_or = RTLIL::SigSpec(or_out);
+            }
+            module->connect(RTLIL::SigSpec(dpi_valid), valid_or);
+
+            // Build priority mux tree for func_id (from last to first)
+            // Start with default value of 0
+            RTLIL::SigSpec func_id_mux = RTLIL::SigSpec(RTLIL::State::S0, 8);
+            for (int i = (int)functions.size() - 1; i >= 0; i--) {
+                RTLIL::Wire *mux_out = module->addWire(NEW_ID, 8);
+                RTLIL::SigSpec func_id_const = RTLIL::SigSpec(functions[i].func_id, 8);
+                module->addMux(NEW_ID, func_id_mux, func_id_const,
+                    valid_1bit[i], mux_out);
+                func_id_mux = RTLIL::SigSpec(mux_out);
+            }
+            module->connect(RTLIL::SigSpec(dpi_func_id), func_id_mux);
+
+            // Build priority mux tree for args (from last to first)
+            RTLIL::SigSpec args_mux = RTLIL::SigSpec(RTLIL::State::S0, max_arg_width);
+            for (int i = (int)functions.size() - 1; i >= 0; i--) {
+                RTLIL::Wire *mux_out = module->addWire(NEW_ID, max_arg_width);
+                // Pad this function's args to max width
+                RTLIL::SigSpec padded_args = functions[i].args_sig;
+                if (GetSize(functions[i].args_sig) < max_arg_width) {
+                    padded_args.append(RTLIL::SigSpec(RTLIL::State::S0,
+                        max_arg_width - GetSize(functions[i].args_sig)));
+                }
+                module->addMux(NEW_ID, args_mux, padded_args,
+                    valid_1bit[i], mux_out);
+                args_mux = RTLIL::SigSpec(mux_out);
+            }
+            module->connect(RTLIL::SigSpec(dpi_args_out), args_mux);
+
+            // All functions share the same result port - connect each result signal
+            // The result is only meaningful when that function's call completes
+            for (const auto &func : functions) {
+                if (GetSize(func.result_sig) > 0) {
+                    module->connect(func.result_sig,
+                        RTLIL::SigSpec(dpi_result_in).extract(0, GetSize(func.result_sig)));
+                }
+
+                // Remove placeholder cell
+                module->remove(func.cell);
+
+                log("    Converted to bridge: func_id=%d, arg_width=%d, ret_width=%d\n",
+                    func.func_id, func.arg_width, func.ret_width);
+                log("    Base address: 0x%04x\n", LOOM_DPI_BASE + func.func_id * FUNC_BLOCK_ALIGN);
             }
         }
 
-        // Connect function ID constant
-        module->connect(RTLIL::SigSpec(dpi_func_id), RTLIL::SigSpec(func.func_id, 8));
-
-        // Mark the cell as bridged and remove it
-        cell->set_string_attribute(ID(loom_dpi_bridged), func.name);
-
-        // Remove the placeholder cell since we've created the bridge
-        module->remove(cell);
-
         module->fixup_ports();
-
-        int base_addr = LOOM_DPI_BASE + func.func_id * FUNC_BLOCK_ALIGN;
-        log("    Converted to bridge: func_id=%d, arg_width=%d, ret_width=%d\n",
-            func.func_id, func.arg_width, func.ret_width);
-        log("    Base address: 0x%04x\n", base_addr);
     }
 
     void generate_host_wrapper(const std::vector<DpiFunction> &functions) {
