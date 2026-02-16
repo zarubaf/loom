@@ -1,3 +1,5 @@
+![Loom Logo](doc/fig/logo.png)
+
 # Loom
 
 Open-source FPGA emulation toolchain. Transforms simulation-grade SystemVerilog (including DPI-C calls) into FPGA-synthesizable RTL with scan chain instrumentation.
