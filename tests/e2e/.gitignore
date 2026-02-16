@@ -1,0 +1,6 @@
+# Generated build directory (contains all generated simulation files)
+build/
+obj_dir/
+
+# VCD traces
+*.vcd

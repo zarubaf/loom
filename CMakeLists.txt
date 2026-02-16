@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 cmake_minimum_required(VERSION 3.20)
-project(loom LANGUAGES CXX)
+project(loom LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,6 +22,9 @@ include(cmake/FetchGoogleTest.cmake)
 # ---------- Plugins ----------
 add_subdirectory(passes)
 add_subdirectory(frontend)
+
+# ---------- Host tools ----------
+# add_subdirectory(host)  # Not yet implemented
 
 # ---------- Tests ----------
 enable_testing()
@@ -55,5 +58,16 @@ install(FILES ${YOSYS_SLANG_PLUGIN}
 
 # Install CLI wrapper
 install(PROGRAMS ${CMAKE_SOURCE_DIR}/bin/loom
+    DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+# Install RTL files
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/rtl/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/loom/rtl
+    FILES_MATCHING PATTERN "*.sv"
+)
+
+# Install code generator scripts
+install(PROGRAMS ${CMAKE_SOURCE_DIR}/scripts/loom_dpi_codegen.py
     DESTINATION ${CMAKE_INSTALL_BINDIR}
 )

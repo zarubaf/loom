@@ -18,20 +18,39 @@
  * Note: loom_dpi_ack is NOT part of the DUT interface. It's added by emu_top
  * for clock gating control. The DUT is clock-gated and transparent to the
  * handshaking - it just sees the result when the clock resumes.
+ *
+ * The pass also outputs JSON metadata that can be consumed by
+ * scripts/loom_dpi_codegen.py to generate host-side dispatch code.
  */
 
 #include "kernel/yosys.h"
 #include "kernel/sigtools.h"
+#include <fstream>
 
 USING_YOSYS_NAMESPACE
 PRIVATE_NAMESPACE_BEGIN
+
+// Address map constants (per DPI bridge spec)
+constexpr int LOOM_MAILBOX_BASE = 0x00000;
+constexpr int LOOM_DPI_BASE = 0x00100;
+constexpr int FUNC_BLOCK_ALIGN = 64;  // Bytes per function block
+
+// Argument descriptor
+struct DpiArg {
+    std::string name;
+    std::string type;      // SV type name
+    std::string direction; // input, output, inout
+    int width;
+};
 
 // DPI function descriptor extracted from cells
 struct DpiFunction {
     std::string name;
     int func_id;
-    int arg_width;
+    int arg_width;      // Total packed width
     int ret_width;
+    std::string ret_type;
+    std::vector<DpiArg> args;
     RTLIL::Cell *cell;
     RTLIL::SigSpec args_sig;
     RTLIL::SigSpec result_sig;
@@ -50,14 +69,18 @@ struct DpiBridgePass : public Pass {
         log("This pass processes $__loom_dpi_call cells created by yosys-slang\n");
         log("when it encounters DPI import function calls in SystemVerilog.\n");
         log("\n");
-        log("    -gen_wrapper\n");
-        log("        Generate info about host software interface\n");
+        log("    -json_out <file>\n");
+        log("        Write DPI metadata to JSON file for host code generation.\n");
+        log("        This file is consumed by scripts/loom_dpi_codegen.py.\n");
         log("\n");
-        log("    -base_addr N\n");
-        log("        Base address for mailbox registers (default: 0x1000)\n");
+        log("    -gen_wrapper\n");
+        log("        Print DPI interface summary to log (legacy)\n");
         log("\n");
         log("The $__loom_dpi_call cells have:\n");
         log("  - Attribute 'loom_dpi_func': DPI function name\n");
+        log("  - Attribute 'loom_dpi_ret_type': Return type (optional)\n");
+        log("  - Attribute 'loom_dpi_arg_names': Comma-separated arg names (optional)\n");
+        log("  - Attribute 'loom_dpi_arg_types': Comma-separated arg types (optional)\n");
         log("  - Parameter ARG_WIDTH: Total width of packed arguments\n");
         log("  - Parameter RET_WIDTH: Width of return value\n");
         log("  - Port ARGS: Packed function arguments\n");
@@ -78,7 +101,7 @@ struct DpiBridgePass : public Pass {
         log_header(design, "Executing DPI_BRIDGE pass.\n");
 
         bool gen_wrapper = false;
-        int base_addr = 0x1000;
+        std::string json_out_path;
 
         size_t argidx;
         for (argidx = 1; argidx < args.size(); argidx++) {
@@ -86,8 +109,8 @@ struct DpiBridgePass : public Pass {
                 gen_wrapper = true;
                 continue;
             }
-            if (args[argidx] == "-base_addr" && argidx + 1 < args.size()) {
-                base_addr = atoi(args[++argidx].c_str());
+            if (args[argidx] == "-json_out" && argidx + 1 < args.size()) {
+                json_out_path = args[++argidx];
                 continue;
             }
             break;
@@ -144,6 +167,50 @@ struct DpiBridgePass : public Pass {
                     func.ret_width = 32; // default
                 }
 
+                // Get return type from attribute
+                func.ret_type = cell->get_string_attribute(ID(loom_dpi_ret_type));
+                if (func.ret_type.empty()) {
+                    func.ret_type = (func.ret_width > 0) ? "int" : "void";
+                }
+
+                // Get argument names and types from attributes
+                std::string arg_names_str = cell->get_string_attribute(ID(loom_dpi_arg_names));
+                std::string arg_types_str = cell->get_string_attribute(ID(loom_dpi_arg_types));
+                std::string arg_widths_str = cell->get_string_attribute(ID(loom_dpi_arg_widths));
+                std::string arg_dirs_str = cell->get_string_attribute(ID(loom_dpi_arg_dirs));
+
+                // Parse comma-separated argument info
+                std::vector<std::string> arg_names = split_string(arg_names_str);
+                std::vector<std::string> arg_types = split_string(arg_types_str);
+                std::vector<std::string> arg_widths = split_string(arg_widths_str);
+                std::vector<std::string> arg_dirs = split_string(arg_dirs_str);
+
+                // Build argument list
+                int num_args = (int)arg_names.size();
+                if (num_args == 0 && func.arg_width > 0) {
+                    // No detailed info, create generic args based on total width
+                    num_args = (func.arg_width + 31) / 32;
+                    for (int i = 0; i < num_args; i++) {
+                        DpiArg arg;
+                        arg.name = "arg" + std::to_string(i);
+                        arg.type = "int";
+                        arg.direction = "input";
+                        arg.width = (i == num_args - 1) ?
+                            (func.arg_width - i * 32) : 32;
+                        func.args.push_back(arg);
+                    }
+                } else {
+                    for (int i = 0; i < num_args; i++) {
+                        DpiArg arg;
+                        arg.name = arg_names[i];
+                        arg.type = (i < (int)arg_types.size()) ? arg_types[i] : "int";
+                        arg.direction = (i < (int)arg_dirs.size()) ? arg_dirs[i] : "input";
+                        arg.width = (i < (int)arg_widths.size()) ?
+                            std::stoi(arg_widths[i]) : 32;
+                        func.args.push_back(arg);
+                    }
+                }
+
                 // Get the argument and result signals
                 if (cell->hasPort(ID(ARGS))) {
                     func.args_sig = cell->getPort(ID(ARGS));
@@ -155,26 +222,56 @@ struct DpiBridgePass : public Pass {
                 dpi_functions.push_back(func);
 
                 // Convert DPI call to bridge interface
-                convert_to_bridge(module, func, base_addr);
+                convert_to_bridge(module, func);
             }
         }
 
         if (gen_wrapper && !dpi_functions.empty()) {
-            generate_host_wrapper(dpi_functions, base_addr);
+            generate_host_wrapper(dpi_functions);
+        }
+
+        if (!json_out_path.empty() && !dpi_functions.empty()) {
+            write_json_metadata(dpi_functions, json_out_path);
         }
 
         log("Processed %zu DPI function(s)\n", dpi_functions.size());
     }
 
-    // Derive the execution condition for a DPI call by tracing how its result is used.
-    // The DPI result typically flows through mux chains where the select signals
-    // represent the conditions under which the result is actually needed.
+    // Split a comma-separated string into a vector
+    std::vector<std::string> split_string(const std::string &s) {
+        std::vector<std::string> result;
+        if (s.empty()) return result;
+
+        size_t start = 0;
+        size_t end = s.find(',');
+        while (end != std::string::npos) {
+            std::string token = s.substr(start, end - start);
+            // Trim whitespace
+            size_t first = token.find_first_not_of(" \t");
+            size_t last = token.find_last_not_of(" \t");
+            if (first != std::string::npos) {
+                result.push_back(token.substr(first, last - first + 1));
+            }
+            start = end + 1;
+            end = s.find(',', start);
+        }
+        std::string token = s.substr(start);
+        size_t first = token.find_first_not_of(" \t");
+        size_t last = token.find_last_not_of(" \t");
+        if (first != std::string::npos) {
+            result.push_back(token.substr(first, last - first + 1));
+        }
+        return result;
+    }
+
+    // Derive the execution condition for a DPI call by finding how the result is used.
     //
-    // For example, if the DPI call is in: if (start && state==IDLE) sum <= dpi_func(a,b);
-    // After proc, this becomes muxes:
-    //   _18_ = start ? dpi_result : sum       (select = start)
-    //   _20_ = !state ? _18_ : xxx            (select = !state, i.e., state==IDLE)
-    // The select signals (start, !state) are ANDed to form the valid condition.
+    // Strategy: Look for flip-flops (adffe, dffe, etc.) that capture the DPI result.
+    // The enable condition of such FFs represents when the DPI call is active.
+    //
+    // After proc, the design will have FFs like:
+    //   always @(posedge clk) if (enable) result_q <= dpi_result;
+    // The 'enable' signal is what we want as the valid condition.
     RTLIL::SigSpec derive_valid_condition(RTLIL::Module *module, const DpiFunction &func) {
         SigMap sigmap(module);
 
@@ -185,93 +282,62 @@ struct DpiBridgePass : public Pass {
             return RTLIL::SigSpec(RTLIL::State::S1);
         }
 
-        // Collect select conditions by tracing through the mux chain
-        std::vector<RTLIL::SigSpec> select_conditions;
-        pool<RTLIL::SigBit> signals_to_trace;
-        pool<RTLIL::SigBit> traced_signals;
+        // Look for FFs (with enable) that use the DPI result as their D input
+        for (auto cell : module->cells()) {
+            // Check for various FF types with enable
+            if (!cell->type.in(ID($dffe), ID($adffe), ID($sdffe), ID($sdffce), ID($dffsre), ID($aldffe)))
+                continue;
 
-        // Start with the DPI result signal bits
-        for (auto bit : result_sig.bits()) {
-            signals_to_trace.insert(bit);
-        }
+            RTLIL::SigSpec ff_d = sigmap(cell->getPort(ID::D));
 
-        // Trace through mux chain - find all muxes that gate the DPI result
-        // and collect their select signals
-        while (!signals_to_trace.empty()) {
-            pool<RTLIL::SigBit> next_signals;
-
-            for (auto cell : module->cells()) {
-                if (cell->type != ID($mux))
-                    continue;
-
-                RTLIL::SigSpec port_b = sigmap(cell->getPort(ID::B));
-                RTLIL::SigSpec port_y = sigmap(cell->getPort(ID::Y));
-
-                // Check if any signal we're tracing is used in port B (selected when S=1)
-                bool uses_traced_signal = false;
-                for (auto bit : port_b.bits()) {
-                    if (signals_to_trace.count(bit)) {
-                        uses_traced_signal = true;
-                        break;
-                    }
-                }
-
-                if (uses_traced_signal) {
-                    RTLIL::SigSpec sel = cell->getPort(ID::S);
-
-                    // Only add if we haven't seen this select before
-                    bool already_have = false;
-                    RTLIL::SigSpec mapped_sel = sigmap(sel);
-                    for (auto &existing : select_conditions) {
-                        if (sigmap(existing) == mapped_sel) {
-                            already_have = true;
-                            break;
-                        }
-                    }
-
-                    if (!already_have) {
-                        log("    Found mux in chain: %s, select=%s\n",
-                            log_id(cell), log_signal(sel));
-                        select_conditions.push_back(sel);
-                    }
-
-                    // Add mux output to signals to trace (follow the chain)
-                    for (auto bit : port_y.bits()) {
-                        if (!traced_signals.count(bit)) {
-                            next_signals.insert(bit);
-                        }
-                    }
+            // Check if FF's D input matches the DPI result
+            bool matches = false;
+            for (int i = 0; i < GetSize(ff_d) && i < GetSize(result_sig); i++) {
+                if (ff_d[i] == result_sig[i]) {
+                    matches = true;
+                    break;
                 }
             }
 
-            // Mark current signals as traced
-            for (auto bit : signals_to_trace) {
-                traced_signals.insert(bit);
+            if (matches && cell->hasPort(ID::EN)) {
+                RTLIL::SigSpec enable = cell->getPort(ID::EN);
+                log("    Found FF with enable capturing DPI result: %s, EN=%s\n",
+                    log_id(cell), log_signal(enable));
+                return enable;
+            }
+        }
+
+        // Fallback: Look for muxes that select the DPI result vs feedback
+        // This handles patterns like: result_d = enable ? dpi_result : result_q;
+        for (auto cell : module->cells()) {
+            if (cell->type != ID($mux))
+                continue;
+
+            RTLIL::SigSpec port_a = sigmap(cell->getPort(ID::A));
+            RTLIL::SigSpec port_b = sigmap(cell->getPort(ID::B));
+
+            // Check if port B is the DPI result (selected when S=1)
+            bool b_matches = false;
+            for (int i = 0; i < GetSize(port_b) && i < GetSize(result_sig); i++) {
+                if (port_b[i] == result_sig[i]) {
+                    b_matches = true;
+                    break;
+                }
             }
 
-            signals_to_trace = next_signals;
+            if (b_matches) {
+                RTLIL::SigSpec sel = cell->getPort(ID::S);
+                log("    Found mux selecting DPI result: %s, select=%s\n",
+                    log_id(cell), log_signal(sel));
+                return sel;
+            }
         }
 
-        if (select_conditions.empty()) {
-            log("    No mux conditions found, defaulting to valid=1\n");
-            return RTLIL::SigSpec(RTLIL::State::S1);
-        }
-
-        // Combine all select conditions with AND
-        // valid = sel1 & sel2 & sel3 & ...
-        RTLIL::SigSpec valid = select_conditions[0];
-
-        for (size_t i = 1; i < select_conditions.size(); i++) {
-            RTLIL::Wire *and_out = module->addWire(NEW_ID, 1);
-            module->addAnd(NEW_ID, valid, select_conditions[i], and_out);
-            valid = RTLIL::SigSpec(and_out);
-        }
-
-        log("    Derived valid condition from %zu mux select(s)\n", select_conditions.size());
-        return valid;
+        log("    No enable/select condition found, defaulting to valid=1\n");
+        return RTLIL::SigSpec(RTLIL::State::S1);
     }
 
-    void convert_to_bridge(RTLIL::Module *module, const DpiFunction &func, int base_addr) {
+    void convert_to_bridge(RTLIL::Module *module, const DpiFunction &func) {
         RTLIL::Cell *cell = func.cell;
 
         // Create bridge interface ports if they don't exist
@@ -364,24 +430,88 @@ struct DpiBridgePass : public Pass {
 
         module->fixup_ports();
 
+        int base_addr = LOOM_DPI_BASE + func.func_id * FUNC_BLOCK_ALIGN;
         log("    Converted to bridge: func_id=%d, arg_width=%d, ret_width=%d\n",
             func.func_id, func.arg_width, func.ret_width);
-        log("    Base address: 0x%x\n", base_addr + func.func_id * 0x100);
+        log("    Base address: 0x%04x\n", base_addr);
     }
 
-    void generate_host_wrapper(const std::vector<DpiFunction> &functions, int base_addr) {
+    void generate_host_wrapper(const std::vector<DpiFunction> &functions) {
         log("\nDPI Bridge Interface Summary:\n");
         log("// Clock gating: emu_top gates all clocks when loom_dpi_valid=1\n");
-        log("// Base address: 0x%x\n", base_addr);
+        log("// Mailbox base: 0x%04x\n", LOOM_MAILBOX_BASE);
+        log("// DPI base: 0x%04x\n", LOOM_DPI_BASE);
         log("\n");
 
         for (const auto &func : functions) {
-            int addr = base_addr + func.func_id * 0x100;
+            int addr = LOOM_DPI_BASE + func.func_id * FUNC_BLOCK_ALIGN;
             log("// Function: %s (ID: %d)\n", func.name.c_str(), func.func_id);
-            log("//   Args register:   0x%x (%d bits)\n", addr, func.arg_width);
-            log("//   Result register: 0x%x (%d bits)\n", addr + 0x10, func.ret_width);
+            log("//   Base address:    0x%04x\n", addr);
+            log("//   Status register: 0x%04x\n", addr);
+            log("//   Arg registers:   0x%04x (%d bits total)\n", addr + 0x04, func.arg_width);
+            log("//   Ret registers:   0x%04x (%d bits)\n",
+                addr + 0x04 + ((func.arg_width + 31) / 32) * 4, func.ret_width);
             log("\n");
         }
+    }
+
+    void write_json_metadata(const std::vector<DpiFunction> &functions, const std::string &path) {
+        std::ofstream ofs(path);
+        if (!ofs.is_open()) {
+            log_error("Cannot open JSON output file: %s\n", path.c_str());
+            return;
+        }
+
+        ofs << "{\n";
+        ofs << "  \"mailbox_base\": \"0x" << std::hex << LOOM_MAILBOX_BASE << "\",\n";
+        ofs << "  \"dpi_base\": \"0x" << LOOM_DPI_BASE << "\",\n";
+        ofs << "  \"func_block_size\": " << std::dec << FUNC_BLOCK_ALIGN << ",\n";
+        ofs << "  \"dpi_functions\": [\n";
+
+        for (size_t i = 0; i < functions.size(); i++) {
+            const auto &func = functions[i];
+            int base_addr = LOOM_DPI_BASE + func.func_id * FUNC_BLOCK_ALIGN;
+
+            ofs << "    {\n";
+            ofs << "      \"id\": " << func.func_id << ",\n";
+            ofs << "      \"name\": \"" << func.name << "\",\n";
+            ofs << "      \"base_addr\": \"0x" << std::hex << base_addr << std::dec << "\",\n";
+
+            // Return type
+            if (func.ret_width > 0) {
+                ofs << "      \"return\": {\n";
+                ofs << "        \"type\": \"" << func.ret_type << "\",\n";
+                ofs << "        \"width\": " << func.ret_width << "\n";
+                ofs << "      },\n";
+            } else {
+                ofs << "      \"return\": null,\n";
+            }
+
+            // Arguments
+            ofs << "      \"args\": [\n";
+            for (size_t j = 0; j < func.args.size(); j++) {
+                const auto &arg = func.args[j];
+                ofs << "        {\n";
+                ofs << "          \"name\": \"" << arg.name << "\",\n";
+                ofs << "          \"direction\": \"" << arg.direction << "\",\n";
+                ofs << "          \"type\": \"" << arg.type << "\",\n";
+                ofs << "          \"width\": " << arg.width << "\n";
+                ofs << "        }";
+                if (j + 1 < func.args.size()) ofs << ",";
+                ofs << "\n";
+            }
+            ofs << "      ]\n";
+
+            ofs << "    }";
+            if (i + 1 < functions.size()) ofs << ",";
+            ofs << "\n";
+        }
+
+        ofs << "  ]\n";
+        ofs << "}\n";
+
+        ofs.close();
+        log("Wrote DPI metadata to: %s\n", path.c_str());
     }
 };
 

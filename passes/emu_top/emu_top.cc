@@ -1,20 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /*
- * emu_top - Yosys pass for emulation wrapper generation
+ * emu_top - Yosys pass for complete emulation wrapper generation
  *
- * This pass generates a top-level wrapper module that:
- *   1. Instantiates the transformed DUT
- *   2. Gates all clocks when DPI call pending and host hasn't acked
- *   3. Exposes DPI and scan interfaces to external host
+ * This pass generates a complete emulation top-level module `loom_emu_top` that includes:
+ *   1. The transformed DUT (after dpi_bridge pass)
+ *   2. loom_clk_gate: gates clock when DPI call pending
+ *   3. loom_emu_ctrl: emulation controller
+ *   4. loom_axi_interconnect: routes AXI-Lite to ctrl and regfile
+ *   5. loom_dpi_regfile: DPI call registers
+ *   6. loom_emu_wrapper: bridges DUT DPI interface to regfile
  *
- * Architecture:
- *   clk_external -> [loom_clk_gate] -> clk_gated -> DUT
- *                         ^
- *                         | CE = !dpi_valid | dpi_ack
+ * The generated module exposes only:
+ *   - clk_i, rst_ni: clock and reset
+ *   - AXI-Lite slave interface: for host communication
+ *   - IRQ output
  *
- * When a DPI call is pending (dpi_valid=1) and the host hasn't
- * acknowledged (dpi_ack=0), the clock is gated. The host asserts
- * dpi_ack when the result is ready, releasing the clock.
+ * All DUT inputs (except clk/rst) are tied to '0.
+ * All DUT outputs (except loom_*) are left open.
+ * This makes the testbench completely independent of the DUT.
  */
 
 #include "kernel/yosys.h"
@@ -24,57 +27,55 @@ USING_YOSYS_NAMESPACE
 PRIVATE_NAMESPACE_BEGIN
 
 struct EmuTopPass : public Pass {
-    EmuTopPass() : Pass("emu_top", "Generate emulation wrapper with clock gating") {}
+    EmuTopPass() : Pass("emu_top", "Generate complete emulation wrapper with all infrastructure") {}
 
     void help() override {
         log("\n");
         log("    emu_top [options] [selection]\n");
         log("\n");
-        log("Generate a top-level emulation wrapper module.\n");
+        log("Generate a complete emulation top-level wrapper module.\n");
         log("\n");
         log("    -top <module>\n");
         log("        Specify the DUT module to wrap (required)\n");
         log("\n");
-        log("    -wrapper <name>\n");
-        log("        Name for the generated wrapper (default: emu_top_<dut>)\n");
-        log("\n");
         log("    -clk <signal>\n");
-        log("        Name of the clock signal in DUT (default: clk)\n");
+        log("        Name of the clock signal in DUT (default: clk_i)\n");
         log("\n");
         log("    -rst <signal>\n");
-        log("        Name of the reset signal in DUT (default: rst)\n");
+        log("        Name of the reset signal in DUT (default: rst_ni)\n");
         log("\n");
-        log("The wrapper instantiates:\n");
-        log("  - loom_clk_gate: gates clock when DPI call pending\n");
-        log("  - loom_host_stub: simulation model for host (optional)\n");
+        log("    -addr_width <bits>\n");
+        log("        AXI-Lite address width (default: 20)\n");
         log("\n");
-        log("Generated ports:\n");
-        log("  - clk:            External clock input\n");
-        log("  - rst:            External reset input\n");
-        log("  - All DUT ports (except clock, which is gated)\n");
-        log("  - loom_dpi_valid: DPI call pending (output)\n");
-        log("  - loom_dpi_ack:   Host acknowledges result ready (input)\n");
-        log("  - loom_dpi_*:     Other DPI interface signals\n");
-        log("  - loom_scan_*:    Scan interface (directly exposed)\n");
+        log("    -n_irq <count>\n");
+        log("        Number of IRQ lines (default: 16)\n");
+        log("\n");
+        log("    -n_dpi_funcs <count>\n");
+        log("        Number of DPI functions (default: auto-detect)\n");
+        log("\n");
+        log("Generated module: loom_emu_top\n");
+        log("Exposed ports:\n");
+        log("  - clk_i:      Clock input\n");
+        log("  - rst_ni:     Active-low reset\n");
+        log("  - s_axil_*:   AXI-Lite slave interface\n");
+        log("  - irq_o:      Interrupt output\n");
         log("\n");
     }
 
     void execute(std::vector<std::string> args, RTLIL::Design *design) override {
-        log_header(design, "Executing EMU_TOP pass.\n");
+        log_header(design, "Executing EMU_TOP pass (complete wrapper).\n");
 
         std::string top_name;
-        std::string wrapper_name;
-        std::string clk_name = "clk";
-        std::string rst_name = "rst";
+        std::string clk_name = "clk_i";
+        std::string rst_name = "rst_ni";
+        int addr_width = 20;
+        int n_irq = 16;
+        int n_dpi_funcs_override = -1;  // -1 means auto-detect
 
         size_t argidx;
         for (argidx = 1; argidx < args.size(); argidx++) {
             if (args[argidx] == "-top" && argidx + 1 < args.size()) {
                 top_name = args[++argidx];
-                continue;
-            }
-            if (args[argidx] == "-wrapper" && argidx + 1 < args.size()) {
-                wrapper_name = args[++argidx];
                 continue;
             }
             if (args[argidx] == "-clk" && argidx + 1 < args.size()) {
@@ -83,6 +84,18 @@ struct EmuTopPass : public Pass {
             }
             if (args[argidx] == "-rst" && argidx + 1 < args.size()) {
                 rst_name = args[++argidx];
+                continue;
+            }
+            if (args[argidx] == "-addr_width" && argidx + 1 < args.size()) {
+                addr_width = atoi(args[++argidx].c_str());
+                continue;
+            }
+            if (args[argidx] == "-n_irq" && argidx + 1 < args.size()) {
+                n_irq = atoi(args[++argidx].c_str());
+                continue;
+            }
+            if (args[argidx] == "-n_dpi_funcs" && argidx + 1 < args.size()) {
+                n_dpi_funcs_override = atoi(args[++argidx].c_str());
                 continue;
             }
             break;
@@ -99,187 +112,325 @@ struct EmuTopPass : public Pass {
             log_error("Module '%s' not found\n", top_name.c_str());
         }
 
-        if (wrapper_name.empty()) {
-            wrapper_name = "emu_top_" + top_name;
-        }
-
-        log("Creating wrapper '%s' for DUT '%s'\n", wrapper_name.c_str(), top_name.c_str());
+        log("Creating loom_emu_top wrapper for DUT '%s'\n", top_name.c_str());
         log("  Clock signal: %s\n", clk_name.c_str());
         log("  Reset signal: %s\n", rst_name.c_str());
+        log("  Address width: %d\n", addr_width);
+        log("  IRQ lines: %d\n", n_irq);
+
+        // Count DPI functions
+        int n_dpi_funcs;
+        if (n_dpi_funcs_override >= 0) {
+            // Use explicit count if provided
+            n_dpi_funcs = n_dpi_funcs_override;
+        } else {
+            // Auto-detect by looking for loom_dpi_valid port
+            RTLIL::Wire *dut_dpi_valid = dut->wire(ID(loom_dpi_valid));
+            if (!dut_dpi_valid) dut_dpi_valid = dut->wire(ID(\\loom_dpi_valid));
+            n_dpi_funcs = dut_dpi_valid ? 1 : 0;  // Default to 1 if present
+        }
+
+        log("  DPI functions: %d\n", n_dpi_funcs);
 
         // Create the wrapper module
-        RTLIL::Module *wrapper = design->addModule(RTLIL::escape_id(wrapper_name));
+        RTLIL::Module *wrapper = design->addModule(ID(loom_emu_top));
 
-        // Analyze DUT ports
-        RTLIL::Wire *dut_clk = dut->wire(RTLIL::escape_id(clk_name));
-        RTLIL::Wire *dut_rst = dut->wire(RTLIL::escape_id(rst_name));
-        // Check both escaped and non-escaped names for DPI valid
-        RTLIL::Wire *dut_dpi_valid = dut->wire(ID(loom_dpi_valid));
-        if (!dut_dpi_valid) dut_dpi_valid = dut->wire(ID(\\loom_dpi_valid));
-
-        if (!dut_clk) {
-            log_warning("Clock port '%s' not found in DUT\n", clk_name.c_str());
-        }
-
+        // =========================================================================
         // Create wrapper ports
-        RTLIL::Wire *ext_clk = wrapper->addWire(RTLIL::escape_id(clk_name), 1);
-        ext_clk->port_input = true;
+        // =========================================================================
 
-        RTLIL::Wire *ext_rst = nullptr;
-        if (dut_rst) {
-            ext_rst = wrapper->addWire(RTLIL::escape_id(rst_name), 1);
-            ext_rst->port_input = true;
-        }
+        // Clock and reset
+        RTLIL::Wire *clk_i = wrapper->addWire(ID(clk_i), 1);
+        clk_i->port_input = true;
 
-        // Create gated clock wire
-        RTLIL::Wire *clk_gated = wrapper->addWire(ID(clk_gated), 1);
+        RTLIL::Wire *rst_ni = wrapper->addWire(ID(rst_ni), 1);
+        rst_ni->port_input = true;
 
-        // Create clock enable wire (!dpi_valid)
-        RTLIL::Wire *clk_enable = wrapper->addWire(ID(clk_enable), 1);
+        // AXI-Lite slave interface (from BFM)
+        RTLIL::Wire *s_axil_araddr = wrapper->addWire(ID(s_axil_araddr_i), addr_width);
+        s_axil_araddr->port_input = true;
+        RTLIL::Wire *s_axil_arvalid = wrapper->addWire(ID(s_axil_arvalid_i), 1);
+        s_axil_arvalid->port_input = true;
+        RTLIL::Wire *s_axil_arready = wrapper->addWire(ID(s_axil_arready_o), 1);
+        s_axil_arready->port_output = true;
+        RTLIL::Wire *s_axil_rdata = wrapper->addWire(ID(s_axil_rdata_o), 32);
+        s_axil_rdata->port_output = true;
+        RTLIL::Wire *s_axil_rresp = wrapper->addWire(ID(s_axil_rresp_o), 2);
+        s_axil_rresp->port_output = true;
+        RTLIL::Wire *s_axil_rvalid = wrapper->addWire(ID(s_axil_rvalid_o), 1);
+        s_axil_rvalid->port_output = true;
+        RTLIL::Wire *s_axil_rready = wrapper->addWire(ID(s_axil_rready_i), 1);
+        s_axil_rready->port_input = true;
 
-        // Create DPI interface wires in wrapper (directly exposed)
-        RTLIL::Wire *w_dpi_valid = nullptr;
-        RTLIL::Wire *w_dpi_ack = nullptr;
-        RTLIL::Wire *w_dpi_func_id = nullptr;
-        RTLIL::Wire *w_dpi_args = nullptr;
-        RTLIL::Wire *w_dpi_result = nullptr;
+        RTLIL::Wire *s_axil_awaddr = wrapper->addWire(ID(s_axil_awaddr_i), addr_width);
+        s_axil_awaddr->port_input = true;
+        RTLIL::Wire *s_axil_awvalid = wrapper->addWire(ID(s_axil_awvalid_i), 1);
+        s_axil_awvalid->port_input = true;
+        RTLIL::Wire *s_axil_awready = wrapper->addWire(ID(s_axil_awready_o), 1);
+        s_axil_awready->port_output = true;
+        RTLIL::Wire *s_axil_wdata = wrapper->addWire(ID(s_axil_wdata_i), 32);
+        s_axil_wdata->port_input = true;
+        RTLIL::Wire *s_axil_wstrb = wrapper->addWire(ID(s_axil_wstrb_i), 4);
+        s_axil_wstrb->port_input = true;
+        RTLIL::Wire *s_axil_wvalid = wrapper->addWire(ID(s_axil_wvalid_i), 1);
+        s_axil_wvalid->port_input = true;
+        RTLIL::Wire *s_axil_wready = wrapper->addWire(ID(s_axil_wready_o), 1);
+        s_axil_wready->port_output = true;
+        RTLIL::Wire *s_axil_bresp = wrapper->addWire(ID(s_axil_bresp_o), 2);
+        s_axil_bresp->port_output = true;
+        RTLIL::Wire *s_axil_bvalid = wrapper->addWire(ID(s_axil_bvalid_o), 1);
+        s_axil_bvalid->port_output = true;
+        RTLIL::Wire *s_axil_bready = wrapper->addWire(ID(s_axil_bready_i), 1);
+        s_axil_bready->port_input = true;
 
-        if (dut_dpi_valid) {
-            // DPI interface present - create wrapper ports
-            // Check both escaped and non-escaped names for DUT ports
-            RTLIL::Wire *dut_func_id = dut->wire(ID(loom_dpi_func_id));
-            if (!dut_func_id) dut_func_id = dut->wire(ID(\\loom_dpi_func_id));
-            RTLIL::Wire *dut_args = dut->wire(ID(loom_dpi_args));
-            if (!dut_args) dut_args = dut->wire(ID(\\loom_dpi_args));
-            RTLIL::Wire *dut_result = dut->wire(ID(loom_dpi_result));
-            if (!dut_result) dut_result = dut->wire(ID(\\loom_dpi_result));
-
-            w_dpi_valid = wrapper->addWire(ID(loom_dpi_valid), 1);
-            w_dpi_valid->port_output = true;
-
-            // dpi_ack is an input to the wrapper (from host) - NOT connected to DUT
-            // It's only used for clock gating control in emu_top
-            w_dpi_ack = wrapper->addWire(ID(loom_dpi_ack), 1);
-            w_dpi_ack->port_input = true;
-
-            if (dut_func_id) {
-                w_dpi_func_id = wrapper->addWire(ID(loom_dpi_func_id), GetSize(dut_func_id));
-                w_dpi_func_id->port_output = true;
-            }
-
-            if (dut_args) {
-                w_dpi_args = wrapper->addWire(ID(loom_dpi_args), GetSize(dut_args));
-                w_dpi_args->port_output = true;
-            }
-
-            if (dut_result) {
-                w_dpi_result = wrapper->addWire(ID(loom_dpi_result), GetSize(dut_result));
-                w_dpi_result->port_input = true;
-            }
-
-            log("  DPI interface detected:\n");
-            log("    loom_dpi_valid:   output (1 bit)\n");
-            log("    loom_dpi_ack:     input (1 bit)\n");
-            if (dut_func_id) log("    loom_dpi_func_id: output (%d bits)\n", GetSize(dut_func_id));
-            if (dut_args) log("    loom_dpi_args:    output (%d bits)\n", GetSize(dut_args));
-            if (dut_result) log("    loom_dpi_result:  input (%d bits)\n", GetSize(dut_result));
-        } else {
-            log("  No DPI interface detected in DUT\n");
-        }
-
-        // Create scan interface wires in wrapper (if present in DUT)
-        // Check both escaped and non-escaped names
-        RTLIL::Wire *dut_scan_enable = dut->wire(ID(loom_scan_enable));
-        if (!dut_scan_enable) dut_scan_enable = dut->wire(ID(\\loom_scan_enable));
-        RTLIL::Wire *dut_scan_in = dut->wire(ID(loom_scan_in));
-        if (!dut_scan_in) dut_scan_in = dut->wire(ID(\\loom_scan_in));
-        RTLIL::Wire *dut_scan_out = dut->wire(ID(loom_scan_out));
-        if (!dut_scan_out) dut_scan_out = dut->wire(ID(\\loom_scan_out));
-
-        RTLIL::Wire *w_scan_enable = nullptr;
-        RTLIL::Wire *w_scan_in = nullptr;
-        RTLIL::Wire *w_scan_out = nullptr;
-
-        if (dut_scan_enable || dut_scan_in || dut_scan_out) {
-            log("  Scan interface detected:\n");
-
-            if (dut_scan_enable) {
-                w_scan_enable = wrapper->addWire(ID(loom_scan_enable), 1);
-                w_scan_enable->port_input = true;
-                log("    loom_scan_enable: input (1 bit)\n");
-            }
-
-            if (dut_scan_in) {
-                w_scan_in = wrapper->addWire(ID(loom_scan_in), 1);
-                w_scan_in->port_input = true;
-                log("    loom_scan_in:     input (1 bit)\n");
-            }
-
-            if (dut_scan_out) {
-                w_scan_out = wrapper->addWire(ID(loom_scan_out), 1);
-                w_scan_out->port_output = true;
-                log("    loom_scan_out:    output (1 bit)\n");
-            }
-        }
-
-        // Copy other DUT ports to wrapper (except clk, rst, loom_* which are handled specially)
-        for (auto wire : dut->wires()) {
-            if (!wire->port_input && !wire->port_output)
-                continue;
-
-            // Skip clock and reset (handled above)
-            if (wire->name == RTLIL::escape_id(clk_name) ||
-                wire->name == RTLIL::escape_id(rst_name)) {
-                continue;
-            }
-
-            // Skip loom_* signals (handled above)
-            // Check for "loom_" anywhere in name (covers escaped \loom_ and non-escaped loom_)
-            std::string wire_name = wire->name.str();
-            if (wire_name.find("loom_") != std::string::npos) {
-                continue;
-            }
-
-            // Skip if already exists in wrapper (safety check)
-            if (wrapper->wire(wire->name)) {
-                continue;
-            }
-
-            RTLIL::Wire *w = wrapper->addWire(wire->name, GetSize(wire));
-            w->port_input = wire->port_input;
-            w->port_output = wire->port_output;
-        }
+        // IRQ output
+        RTLIL::Wire *irq_o = wrapper->addWire(ID(irq_o), n_irq);
+        irq_o->port_output = true;
 
         wrapper->fixup_ports();
 
-        // === Instantiate loom_clk_gate ===
-        // Module: loom_clk_gate(clk_i, ce_i, clk_o) - lowRISC style
-        // CE = !dpi_valid | dpi_ack (clock runs when no call OR host has acked)
+        // =========================================================================
+        // Create internal wires
+        // =========================================================================
+
+        // Interconnect -> emu_ctrl (slave 0)
+        RTLIL::Wire *m0_araddr = wrapper->addWire(ID(m0_araddr), 8);
+        RTLIL::Wire *m0_arvalid = wrapper->addWire(ID(m0_arvalid), 1);
+        RTLIL::Wire *m0_arready = wrapper->addWire(ID(m0_arready), 1);
+        RTLIL::Wire *m0_rdata = wrapper->addWire(ID(m0_rdata), 32);
+        RTLIL::Wire *m0_rresp = wrapper->addWire(ID(m0_rresp), 2);
+        RTLIL::Wire *m0_rvalid = wrapper->addWire(ID(m0_rvalid), 1);
+        RTLIL::Wire *m0_rready = wrapper->addWire(ID(m0_rready), 1);
+        RTLIL::Wire *m0_awaddr = wrapper->addWire(ID(m0_awaddr), 8);
+        RTLIL::Wire *m0_awvalid = wrapper->addWire(ID(m0_awvalid), 1);
+        RTLIL::Wire *m0_awready = wrapper->addWire(ID(m0_awready), 1);
+        RTLIL::Wire *m0_wdata = wrapper->addWire(ID(m0_wdata), 32);
+        RTLIL::Wire *m0_wvalid = wrapper->addWire(ID(m0_wvalid), 1);
+        RTLIL::Wire *m0_wready = wrapper->addWire(ID(m0_wready), 1);
+        RTLIL::Wire *m0_bresp = wrapper->addWire(ID(m0_bresp), 2);
+        RTLIL::Wire *m0_bvalid = wrapper->addWire(ID(m0_bvalid), 1);
+        RTLIL::Wire *m0_bready = wrapper->addWire(ID(m0_bready), 1);
+
+        // Interconnect -> dpi_regfile (slave 1)
+        RTLIL::Wire *m1_araddr = wrapper->addWire(ID(m1_araddr), 16);
+        RTLIL::Wire *m1_arvalid = wrapper->addWire(ID(m1_arvalid), 1);
+        RTLIL::Wire *m1_arready = wrapper->addWire(ID(m1_arready), 1);
+        RTLIL::Wire *m1_rdata = wrapper->addWire(ID(m1_rdata), 32);
+        RTLIL::Wire *m1_rresp = wrapper->addWire(ID(m1_rresp), 2);
+        RTLIL::Wire *m1_rvalid = wrapper->addWire(ID(m1_rvalid), 1);
+        RTLIL::Wire *m1_rready = wrapper->addWire(ID(m1_rready), 1);
+        RTLIL::Wire *m1_awaddr = wrapper->addWire(ID(m1_awaddr), 16);
+        RTLIL::Wire *m1_awvalid = wrapper->addWire(ID(m1_awvalid), 1);
+        RTLIL::Wire *m1_awready = wrapper->addWire(ID(m1_awready), 1);
+        RTLIL::Wire *m1_wdata = wrapper->addWire(ID(m1_wdata), 32);
+        RTLIL::Wire *m1_wvalid = wrapper->addWire(ID(m1_wvalid), 1);
+        RTLIL::Wire *m1_wready = wrapper->addWire(ID(m1_wready), 1);
+        RTLIL::Wire *m1_bresp = wrapper->addWire(ID(m1_bresp), 2);
+        RTLIL::Wire *m1_bvalid = wrapper->addWire(ID(m1_bvalid), 1);
+        RTLIL::Wire *m1_bready = wrapper->addWire(ID(m1_bready), 1);
+
+        // emu_ctrl signals
+        RTLIL::Wire *emu_clk_en = wrapper->addWire(ID(emu_clk_en), 1);
+        RTLIL::Wire *dut_rst_n = wrapper->addWire(ID(dut_rst_n), 1);
+        RTLIL::Wire *cycle_count = wrapper->addWire(ID(cycle_count), 64);
+        RTLIL::Wire *irq_state_change = wrapper->addWire(ID(irq_state_change), 1);
+
+        // DPI regfile <-> wrapper signals
+        int max_args = 8;
+        RTLIL::Wire *dpi_call_valid = wrapper->addWire(ID(dpi_call_valid), n_dpi_funcs > 0 ? n_dpi_funcs : 1);
+        RTLIL::Wire *dpi_call_ready = wrapper->addWire(ID(dpi_call_ready), n_dpi_funcs > 0 ? n_dpi_funcs : 1);
+        // For simplicity, we create the args array as a flat wire
+        int args_width = (n_dpi_funcs > 0 ? n_dpi_funcs : 1) * max_args * 32;
+        RTLIL::Wire *dpi_call_args = wrapper->addWire(ID(dpi_call_args), args_width);
+        RTLIL::Wire *dpi_ret_valid = wrapper->addWire(ID(dpi_ret_valid), n_dpi_funcs > 0 ? n_dpi_funcs : 1);
+        RTLIL::Wire *dpi_ret_ready = wrapper->addWire(ID(dpi_ret_ready), n_dpi_funcs > 0 ? n_dpi_funcs : 1);
+        RTLIL::Wire *dpi_ret_data = wrapper->addWire(ID(dpi_ret_data), (n_dpi_funcs > 0 ? n_dpi_funcs : 1) * 64);
+        RTLIL::Wire *dpi_stall = wrapper->addWire(ID(dpi_stall), n_dpi_funcs > 0 ? n_dpi_funcs : 1);
+
+        // DUT DPI interface signals
+        RTLIL::Wire *dut_dpi_valid_w = wrapper->addWire(ID(dut_dpi_valid), 1);
+        RTLIL::Wire *dut_dpi_ack = wrapper->addWire(ID(dut_dpi_ack), 1);
+        RTLIL::Wire *dut_dpi_func_id = wrapper->addWire(ID(dut_dpi_func_id), 8);
+        RTLIL::Wire *dut_dpi_args = wrapper->addWire(ID(dut_dpi_args), 64);
+        RTLIL::Wire *dut_dpi_result = wrapper->addWire(ID(dut_dpi_result), 32);
+        RTLIL::Wire *wrapper_dpi_stall = wrapper->addWire(ID(wrapper_dpi_stall), 1);
+
+        // Clock gating signals
+        RTLIL::Wire *clk_gated = wrapper->addWire(ID(clk_gated), 1);
+        RTLIL::Wire *clk_enable = wrapper->addWire(ID(clk_enable), 1);
+
+        // =========================================================================
+        // Instantiate AXI Interconnect
+        // =========================================================================
+        RTLIL::Cell *interconnect = wrapper->addCell(ID(u_interconnect), ID(loom_axi_interconnect));
+        interconnect->setParam(ID(ADDR_WIDTH), addr_width);
+        interconnect->setPort(ID(clk_i), clk_i);
+        interconnect->setPort(ID(rst_ni), rst_ni);
+        // Slave interface (from BFM)
+        interconnect->setPort(ID(s_axil_araddr_i), s_axil_araddr);
+        interconnect->setPort(ID(s_axil_arvalid_i), s_axil_arvalid);
+        interconnect->setPort(ID(s_axil_arready_o), s_axil_arready);
+        interconnect->setPort(ID(s_axil_rdata_o), s_axil_rdata);
+        interconnect->setPort(ID(s_axil_rresp_o), s_axil_rresp);
+        interconnect->setPort(ID(s_axil_rvalid_o), s_axil_rvalid);
+        interconnect->setPort(ID(s_axil_rready_i), s_axil_rready);
+        interconnect->setPort(ID(s_axil_awaddr_i), s_axil_awaddr);
+        interconnect->setPort(ID(s_axil_awvalid_i), s_axil_awvalid);
+        interconnect->setPort(ID(s_axil_awready_o), s_axil_awready);
+        interconnect->setPort(ID(s_axil_wdata_i), s_axil_wdata);
+        interconnect->setPort(ID(s_axil_wstrb_i), s_axil_wstrb);
+        interconnect->setPort(ID(s_axil_wvalid_i), s_axil_wvalid);
+        interconnect->setPort(ID(s_axil_wready_o), s_axil_wready);
+        interconnect->setPort(ID(s_axil_bresp_o), s_axil_bresp);
+        interconnect->setPort(ID(s_axil_bvalid_o), s_axil_bvalid);
+        interconnect->setPort(ID(s_axil_bready_i), s_axil_bready);
+        // Master 0 (to emu_ctrl)
+        interconnect->setPort(ID(m0_axil_araddr_o), m0_araddr);
+        interconnect->setPort(ID(m0_axil_arvalid_o), m0_arvalid);
+        interconnect->setPort(ID(m0_axil_arready_i), m0_arready);
+        interconnect->setPort(ID(m0_axil_rdata_i), m0_rdata);
+        interconnect->setPort(ID(m0_axil_rresp_i), m0_rresp);
+        interconnect->setPort(ID(m0_axil_rvalid_i), m0_rvalid);
+        interconnect->setPort(ID(m0_axil_rready_o), m0_rready);
+        interconnect->setPort(ID(m0_axil_awaddr_o), m0_awaddr);
+        interconnect->setPort(ID(m0_axil_awvalid_o), m0_awvalid);
+        interconnect->setPort(ID(m0_axil_awready_i), m0_awready);
+        interconnect->setPort(ID(m0_axil_wdata_o), m0_wdata);
+        interconnect->setPort(ID(m0_axil_wvalid_o), m0_wvalid);
+        interconnect->setPort(ID(m0_axil_wready_i), m0_wready);
+        interconnect->setPort(ID(m0_axil_bresp_i), m0_bresp);
+        interconnect->setPort(ID(m0_axil_bvalid_i), m0_bvalid);
+        interconnect->setPort(ID(m0_axil_bready_o), m0_bready);
+        // Master 1 (to dpi_regfile)
+        interconnect->setPort(ID(m1_axil_araddr_o), m1_araddr);
+        interconnect->setPort(ID(m1_axil_arvalid_o), m1_arvalid);
+        interconnect->setPort(ID(m1_axil_arready_i), m1_arready);
+        interconnect->setPort(ID(m1_axil_rdata_i), m1_rdata);
+        interconnect->setPort(ID(m1_axil_rresp_i), m1_rresp);
+        interconnect->setPort(ID(m1_axil_rvalid_i), m1_rvalid);
+        interconnect->setPort(ID(m1_axil_rready_o), m1_rready);
+        interconnect->setPort(ID(m1_axil_awaddr_o), m1_awaddr);
+        interconnect->setPort(ID(m1_axil_awvalid_o), m1_awvalid);
+        interconnect->setPort(ID(m1_axil_awready_i), m1_awready);
+        interconnect->setPort(ID(m1_axil_wdata_o), m1_wdata);
+        interconnect->setPort(ID(m1_axil_wvalid_o), m1_wvalid);
+        interconnect->setPort(ID(m1_axil_wready_i), m1_wready);
+        interconnect->setPort(ID(m1_axil_bresp_i), m1_bresp);
+        interconnect->setPort(ID(m1_axil_bvalid_i), m1_bvalid);
+        interconnect->setPort(ID(m1_axil_bready_o), m1_bready);
+
+        // =========================================================================
+        // Instantiate Emulation Controller
+        // =========================================================================
+        RTLIL::Cell *emu_ctrl = wrapper->addCell(ID(u_emu_ctrl), ID(loom_emu_ctrl));
+        emu_ctrl->setParam(ID(N_DPI_FUNCS), n_dpi_funcs > 0 ? n_dpi_funcs : 1);
+        emu_ctrl->setParam(ID(N_MEMORIES), 0);
+        emu_ctrl->setParam(ID(N_SCAN_CHAINS), 1);
+        emu_ctrl->setParam(ID(TOTAL_SCAN_BITS), 0);
+        emu_ctrl->setParam(ID(DESIGN_ID), 0xE2E00001);
+        emu_ctrl->setParam(ID(LOOM_VERSION), 0x000100);
+        emu_ctrl->setPort(ID(clk_i), clk_i);
+        emu_ctrl->setPort(ID(rst_ni), rst_ni);
+        emu_ctrl->setPort(ID(axil_araddr_i), m0_araddr);
+        emu_ctrl->setPort(ID(axil_arvalid_i), m0_arvalid);
+        emu_ctrl->setPort(ID(axil_arready_o), m0_arready);
+        emu_ctrl->setPort(ID(axil_rdata_o), m0_rdata);
+        emu_ctrl->setPort(ID(axil_rresp_o), m0_rresp);
+        emu_ctrl->setPort(ID(axil_rvalid_o), m0_rvalid);
+        emu_ctrl->setPort(ID(axil_rready_i), m0_rready);
+        emu_ctrl->setPort(ID(axil_awaddr_i), m0_awaddr);
+        emu_ctrl->setPort(ID(axil_awvalid_i), m0_awvalid);
+        emu_ctrl->setPort(ID(axil_awready_o), m0_awready);
+        emu_ctrl->setPort(ID(axil_wdata_i), m0_wdata);
+        emu_ctrl->setPort(ID(axil_wvalid_i), m0_wvalid);
+        emu_ctrl->setPort(ID(axil_wready_o), m0_wready);
+        emu_ctrl->setPort(ID(axil_bresp_o), m0_bresp);
+        emu_ctrl->setPort(ID(axil_bvalid_o), m0_bvalid);
+        emu_ctrl->setPort(ID(axil_bready_i), m0_bready);
+        // DPI stall input - use dpi_stall from regfile (already n_dpi_funcs bits wide)
+        emu_ctrl->setPort(ID(dpi_stall_i), dpi_stall);
+        emu_ctrl->setPort(ID(emu_clk_en_o), emu_clk_en);
+        emu_ctrl->setPort(ID(dut_rst_no), dut_rst_n);
+        emu_ctrl->setPort(ID(cycle_count_o), cycle_count);
+        emu_ctrl->setPort(ID(irq_state_change_o), irq_state_change);
+
+        // =========================================================================
+        // Instantiate DPI Register File
+        // =========================================================================
+        RTLIL::Cell *dpi_regfile = wrapper->addCell(ID(u_dpi_regfile), ID(loom_dpi_regfile));
+        dpi_regfile->setParam(ID(N_DPI_FUNCS), n_dpi_funcs > 0 ? n_dpi_funcs : 1);
+        dpi_regfile->setParam(ID(MAX_ARGS), max_args);
+        dpi_regfile->setPort(ID(clk_i), clk_i);
+        dpi_regfile->setPort(ID(rst_ni), rst_ni);
+        dpi_regfile->setPort(ID(axil_araddr_i), m1_araddr);
+        dpi_regfile->setPort(ID(axil_arvalid_i), m1_arvalid);
+        dpi_regfile->setPort(ID(axil_arready_o), m1_arready);
+        dpi_regfile->setPort(ID(axil_rdata_o), m1_rdata);
+        dpi_regfile->setPort(ID(axil_rresp_o), m1_rresp);
+        dpi_regfile->setPort(ID(axil_rvalid_o), m1_rvalid);
+        dpi_regfile->setPort(ID(axil_rready_i), m1_rready);
+        dpi_regfile->setPort(ID(axil_awaddr_i), m1_awaddr);
+        dpi_regfile->setPort(ID(axil_awvalid_i), m1_awvalid);
+        dpi_regfile->setPort(ID(axil_awready_o), m1_awready);
+        dpi_regfile->setPort(ID(axil_wdata_i), m1_wdata);
+        dpi_regfile->setPort(ID(axil_wvalid_i), m1_wvalid);
+        dpi_regfile->setPort(ID(axil_wready_o), m1_wready);
+        dpi_regfile->setPort(ID(axil_bresp_o), m1_bresp);
+        dpi_regfile->setPort(ID(axil_bvalid_o), m1_bvalid);
+        dpi_regfile->setPort(ID(axil_bready_i), m1_bready);
+        dpi_regfile->setPort(ID(dpi_call_valid_i), dpi_call_valid);
+        dpi_regfile->setPort(ID(dpi_call_ready_o), dpi_call_ready);
+        dpi_regfile->setPort(ID(dpi_call_args_i), dpi_call_args);
+        dpi_regfile->setPort(ID(dpi_ret_valid_o), dpi_ret_valid);
+        dpi_regfile->setPort(ID(dpi_ret_ready_i), dpi_ret_ready);
+        dpi_regfile->setPort(ID(dpi_ret_data_o), dpi_ret_data);
+        dpi_regfile->setPort(ID(dpi_stall_o), dpi_stall);
+
+        // =========================================================================
+        // Instantiate Emulation Wrapper (bridges DUT DPI to regfile)
+        // =========================================================================
+        RTLIL::Cell *emu_wrapper = wrapper->addCell(ID(u_emu_wrapper), ID(loom_emu_wrapper));
+        emu_wrapper->setParam(ID(N_DPI_FUNCS), n_dpi_funcs > 0 ? n_dpi_funcs : 1);
+        emu_wrapper->setParam(ID(MAX_ARG_WIDTH), 64);
+        emu_wrapper->setParam(ID(MAX_RET_WIDTH), 32);
+        emu_wrapper->setPort(ID(clk_i), clk_i);
+        emu_wrapper->setPort(ID(rst_ni), rst_ni);
+        emu_wrapper->setPort(ID(emu_clk_en_i), emu_clk_en);
+        emu_wrapper->setPort(ID(dpi_stall_o), wrapper_dpi_stall);
+        emu_wrapper->setPort(ID(dpi_call_valid_o), dpi_call_valid);
+        emu_wrapper->setPort(ID(dpi_call_ready_i), dpi_call_ready);
+        emu_wrapper->setPort(ID(dpi_call_args_o), dpi_call_args);
+        emu_wrapper->setPort(ID(dpi_ret_valid_i), dpi_ret_valid);
+        emu_wrapper->setPort(ID(dpi_ret_ready_o), dpi_ret_ready);
+        emu_wrapper->setPort(ID(dpi_ret_data_i), dpi_ret_data);
+        emu_wrapper->setPort(ID(dut_dpi_valid_i), dut_dpi_valid_w);
+        emu_wrapper->setPort(ID(dut_dpi_func_id_i), dut_dpi_func_id);
+        emu_wrapper->setPort(ID(dut_dpi_args_i), dut_dpi_args);
+        emu_wrapper->setPort(ID(dut_dpi_result_o), dut_dpi_result);
+        emu_wrapper->setPort(ID(dut_dpi_ready_o), dut_dpi_ack);
+        // Unused outputs
+        RTLIL::Wire *unused_clk = wrapper->addWire(ID(unused_wrapper_clk), 1);
+        RTLIL::Wire *unused_rst = wrapper->addWire(ID(unused_wrapper_rst), 1);
+        emu_wrapper->setPort(ID(dut_clk_o), unused_clk);
+        emu_wrapper->setPort(ID(dut_rst_no), unused_rst);
+
+        // =========================================================================
+        // Instantiate Clock Gate for DUT
+        // =========================================================================
         RTLIL::Cell *clk_gate = wrapper->addCell(ID(u_clk_gate), ID(loom_clk_gate));
-        clk_gate->setPort(ID(clk_i), RTLIL::SigSpec(ext_clk));
-        clk_gate->setPort(ID(ce_i), RTLIL::SigSpec(clk_enable));
-        clk_gate->setPort(ID(clk_o), RTLIL::SigSpec(clk_gated));
+        clk_gate->setPort(ID(clk_i), clk_i);
+        clk_gate->setPort(ID(ce_i), clk_enable);
+        clk_gate->setPort(ID(clk_o), clk_gated);
 
         // Generate clock enable: CE = !dpi_valid | dpi_ack
-        // This means: clock enabled when no DPI call pending OR when host has acknowledged
-        if (w_dpi_valid && w_dpi_ack) {
-            // Create intermediate wire for !dpi_valid
-            RTLIL::Wire *not_dpi_valid = wrapper->addWire(NEW_ID, 1);
-            // dpi_valid_tap will be created below when connecting DUT
-            RTLIL::Wire *dpi_valid_tap = wrapper->addWire(ID(dpi_valid_tap), 1);
+        RTLIL::Wire *not_dpi_valid = wrapper->addWire(NEW_ID, 1);
+        wrapper->addNot(NEW_ID, RTLIL::SigSpec(dut_dpi_valid_w), RTLIL::SigSpec(not_dpi_valid));
+        wrapper->addOr(NEW_ID, RTLIL::SigSpec(not_dpi_valid), RTLIL::SigSpec(dut_dpi_ack),
+                      RTLIL::SigSpec(clk_enable));
 
-            // !dpi_valid
-            wrapper->addNot(NEW_ID, RTLIL::SigSpec(dpi_valid_tap), RTLIL::SigSpec(not_dpi_valid));
-
-            // clk_enable = !dpi_valid | dpi_ack
-            wrapper->addOr(NEW_ID, RTLIL::SigSpec(not_dpi_valid), RTLIL::SigSpec(w_dpi_ack),
-                          RTLIL::SigSpec(clk_enable));
-        } else {
-            // No DPI - clock always enabled
-            wrapper->connect(RTLIL::SigSpec(clk_enable), RTLIL::SigSpec(RTLIL::State::S1));
-        }
-
-        // === Instantiate DUT ===
+        // =========================================================================
+        // Instantiate DUT
+        // =========================================================================
         RTLIL::Cell *dut_inst = wrapper->addCell(ID(u_dut), dut->name);
 
         // Connect DUT ports
@@ -289,88 +440,87 @@ struct EmuTopPass : public Pass {
 
             std::string wire_name = wire->name.str();
 
-            // Handle clock specially - connect to gated clock
+            // Handle clock - connect to gated clock
             if (wire->name == RTLIL::escape_id(clk_name)) {
                 dut_inst->setPort(wire->name, RTLIL::SigSpec(clk_gated));
                 continue;
             }
 
-            // Handle reset
-            if (wire->name == RTLIL::escape_id(rst_name) && ext_rst) {
-                dut_inst->setPort(wire->name, RTLIL::SigSpec(ext_rst));
+            // Handle reset - connect to dut_rst_n from emu_ctrl
+            if (wire->name == RTLIL::escape_id(rst_name)) {
+                dut_inst->setPort(wire->name, RTLIL::SigSpec(dut_rst_n));
                 continue;
             }
 
-            // Handle DPI valid - skip here, handled separately below for clock gating
-            if ((wire->name == ID(loom_dpi_valid) || wire->name == ID(\\loom_dpi_valid)) && w_dpi_valid) {
-                continue;  // Handled in dpi_valid_tap section below
+            // Handle DPI signals
+            if (wire_name.find("loom_dpi_valid") != std::string::npos) {
+                dut_inst->setPort(wire->name, RTLIL::SigSpec(dut_dpi_valid_w));
+                continue;
             }
-
-            // Note: loom_dpi_ack is NOT connected to DUT - it's only for emu_top clock gating
-            // The DUT is clock-gated and transparent to the handshaking
-
-            if ((wire->name == ID(loom_dpi_func_id) || wire->name == ID(\\loom_dpi_func_id)) && w_dpi_func_id) {
-                dut_inst->setPort(wire->name, RTLIL::SigSpec(w_dpi_func_id));
+            if (wire_name.find("loom_dpi_func_id") != std::string::npos) {
+                dut_inst->setPort(wire->name, RTLIL::SigSpec(dut_dpi_func_id));
+                continue;
+            }
+            if (wire_name.find("loom_dpi_args") != std::string::npos) {
+                dut_inst->setPort(wire->name, RTLIL::SigSpec(dut_dpi_args));
+                continue;
+            }
+            if (wire_name.find("loom_dpi_result") != std::string::npos) {
+                dut_inst->setPort(wire->name, RTLIL::SigSpec(dut_dpi_result));
+                continue;
+            }
+            if (wire_name.find("loom_dpi_ack") != std::string::npos) {
+                dut_inst->setPort(wire->name, RTLIL::SigSpec(dut_dpi_ack));
                 continue;
             }
 
-            if ((wire->name == ID(loom_dpi_args) || wire->name == ID(\\loom_dpi_args)) && w_dpi_args) {
-                dut_inst->setPort(wire->name, RTLIL::SigSpec(w_dpi_args));
-                continue;
-            }
-
-            if ((wire->name == ID(loom_dpi_result) || wire->name == ID(\\loom_dpi_result)) && w_dpi_result) {
-                dut_inst->setPort(wire->name, RTLIL::SigSpec(w_dpi_result));
-                continue;
-            }
-
-            // Handle scan signals
-            if ((wire->name == ID(loom_scan_enable) || wire->name == ID(\\loom_scan_enable)) && w_scan_enable) {
-                dut_inst->setPort(wire->name, RTLIL::SigSpec(w_scan_enable));
-                continue;
-            }
-
-            if ((wire->name == ID(loom_scan_in) || wire->name == ID(\\loom_scan_in)) && w_scan_in) {
-                dut_inst->setPort(wire->name, RTLIL::SigSpec(w_scan_in));
-                continue;
-            }
-
-            if ((wire->name == ID(loom_scan_out) || wire->name == ID(\\loom_scan_out)) && w_scan_out) {
-                dut_inst->setPort(wire->name, RTLIL::SigSpec(w_scan_out));
-                continue;
-            }
-
-            // Other ports - connect to wrapper ports
-            RTLIL::Wire *w = wrapper->wire(wire->name);
-            if (w) {
-                dut_inst->setPort(wire->name, RTLIL::SigSpec(w));
-            }
-        }
-
-        // Connect dpi_valid from DUT to wrapper output and clock gating logic
-        // The dpi_valid_tap wire was created above in the clock gating section
-        if (w_dpi_valid) {
-            RTLIL::Wire *dpi_valid_tap = wrapper->wire(ID(dpi_valid_tap));
-            if (dpi_valid_tap) {
-                // Connect DUT's dpi_valid output to tap wire
-                // Check both escaped and non-escaped names
-                if (dut->wire(ID(loom_dpi_valid))) {
-                    dut_inst->setPort(ID(loom_dpi_valid), RTLIL::SigSpec(dpi_valid_tap));
-                } else {
-                    dut_inst->setPort(ID(\\loom_dpi_valid), RTLIL::SigSpec(dpi_valid_tap));
+            // Handle scan signals (if present) - tie off for now
+            if (wire_name.find("loom_scan") != std::string::npos) {
+                if (wire->port_input) {
+                    dut_inst->setPort(wire->name, RTLIL::SigSpec(RTLIL::State::S0, GetSize(wire)));
                 }
+                // Output scan signals are left unconnected
+                continue;
+            }
 
-                // Connect tap to wrapper output
-                wrapper->connect(RTLIL::SigSpec(w_dpi_valid), RTLIL::SigSpec(dpi_valid_tap));
+            // All other inputs: tie to '0
+            if (wire->port_input) {
+                dut_inst->setPort(wire->name, RTLIL::SigSpec(RTLIL::State::S0, GetSize(wire)));
+                log("  Tying DUT input '%s' to '0\n", wire_name.c_str());
+            }
+            // All other outputs: leave unconnected (will create internal wire)
+            // Actually, we need to connect them to something to avoid warnings
+            if (wire->port_output && wire_name.find("loom_") == std::string::npos) {
+                RTLIL::Wire *unused = wrapper->addWire(wrapper->uniquify("\\unused_" + wire_name.substr(1)), GetSize(wire));
+                dut_inst->setPort(wire->name, RTLIL::SigSpec(unused));
+                log("  Leaving DUT output '%s' unconnected\n", wire_name.c_str());
             }
         }
+
+        // =========================================================================
+        // IRQ wiring
+        // =========================================================================
+        // IRQ[0] = |dpi_stall (any DPI stall)
+        // IRQ[1] = irq_state_change
+        // IRQ[15:2] = 0
+        RTLIL::Wire *irq_dpi = wrapper->addWire(NEW_ID, 1);
+        wrapper->addReduceOr(NEW_ID, RTLIL::SigSpec(dpi_stall), RTLIL::SigSpec(irq_dpi));
+
+        RTLIL::SigSpec irq_sig;
+        irq_sig.append(RTLIL::SigSpec(irq_dpi));           // IRQ[0]
+        irq_sig.append(RTLIL::SigSpec(irq_state_change));  // IRQ[1]
+        irq_sig.append(RTLIL::SigSpec(RTLIL::State::S0, n_irq - 2));  // IRQ[15:2]
+        wrapper->connect(RTLIL::SigSpec(irq_o), irq_sig);
 
         wrapper->fixup_ports();
 
-        log("Generated wrapper module '%s'\n", wrapper_name.c_str());
+        log("Generated loom_emu_top module\n");
+        log("  Instantiated: loom_axi_interconnect (u_interconnect)\n");
+        log("  Instantiated: loom_emu_ctrl (u_emu_ctrl)\n");
+        log("  Instantiated: loom_dpi_regfile (u_dpi_regfile)\n");
+        log("  Instantiated: loom_emu_wrapper (u_emu_wrapper)\n");
         log("  Instantiated: loom_clk_gate (u_clk_gate)\n");
         log("  Instantiated: %s (u_dut)\n", top_name.c_str());
-        log("  Clock gating: %s\n", w_dpi_valid ? "enabled (CE = !dpi_valid | dpi_ack)" : "disabled (no DPI)");
     }
 };
 

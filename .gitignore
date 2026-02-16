@@ -23,8 +23,14 @@ compile_commands.json
 
 # Test outputs
 tests/**/*.v
+tests/**/build/
+tests/**/obj_dir/
 
 *.vcd
 *.vvp
+*.log
+
+# Generated JSON
+*_map*.json
 
 Testing/
