@@ -27,7 +27,7 @@ VERILATOR_FLAGS := \
     --binary --timing -Wall -Wno-fatal \
     -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM \
     -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-BLKSEQ -Wno-TIMESCALEMOD \
-    --trace -CFLAGS "-g -O0" -LDFLAGS "-lpthread"
+    --trace-fst -CFLAGS "-g -O0" -LDFLAGS "-lpthread"
 
 CFLAGS := -g -O0 -Wall -I$(HOST_DIR) -I$(BUILD_DIR)
 LDFLAGS := -lpthread
@@ -104,4 +104,4 @@ run: sim host
 
 clean:
 	rm -rf $(BUILD_DIR)
-	rm -f $(SOCKET_PATH) *.vcd
+	rm -f $(SOCKET_PATH) *.vcd *.fst

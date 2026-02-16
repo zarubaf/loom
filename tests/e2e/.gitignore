@@ -4,3 +4,7 @@ obj_dir/
 
 # VCD traces
 *.vcd
+
+# FST traces
+*.fst
+*.fst.hier
