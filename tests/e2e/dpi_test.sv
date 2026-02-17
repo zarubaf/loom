@@ -9,6 +9,7 @@
 
 import "DPI-C" function int dpi_add(input int a, input int b);
 import "DPI-C" function int dpi_report_result(input int passed, input int result);
+import "DPI-C" function void multisim_server_start(string server_name);
 
 module dpi_test (
     input  logic clk_i,
@@ -23,6 +24,7 @@ module dpi_test (
 
     typedef enum logic [2:0] {
         StIdle,
+        StServerStart,
         StCallAdd,
         StCheck,
         StNext,
@@ -65,6 +67,11 @@ module dpi_test (
         end else begin
             unique case (state_q)
                 StIdle: begin
+                    multisim_server_start("loom_e2e_test");
+                    state_q <= StServerStart;
+                end
+
+                StServerStart: begin
                     // Capture first pair of operands from LFSR
                     arg_a_q <= lfsr_q;
                     lfsr_q  <= lfsr_next;

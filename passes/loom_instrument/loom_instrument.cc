@@ -39,9 +39,10 @@ constexpr int FUNC_BLOCK_ALIGN = 64;  // Bytes per function block
 // Argument descriptor
 struct DpiArg {
     std::string name;
-    std::string type;      // SV type name
-    std::string direction; // input, output, inout
+    std::string type;         // SV type name
+    std::string direction;    // input, output, inout
     int width;
+    std::string string_value; // For string args: the compile-time constant value
 };
 
 // DPI function descriptor extracted from cells
@@ -240,6 +241,12 @@ struct LoomInstrumentPass : public Pass {
                             arg.direction = (i < (int)arg_dirs.size()) ? arg_dirs[i] : "input";
                             arg.width = (i < (int)arg_widths.size()) ?
                                 std::stoi(arg_widths[i]) : 32;
+                            // Check for string constant value
+                            std::string str_attr = cell->get_string_attribute(
+                                RTLIL::IdString("\\loom_dpi_string_arg_" + std::to_string(i)));
+                            if (!str_attr.empty() || arg.type == "string") {
+                                arg.string_value = str_attr;
+                            }
                             func.args.push_back(arg);
                         }
                     }
@@ -723,7 +730,11 @@ struct LoomInstrumentPass : public Pass {
                 ofs << "          \"name\": \"" << arg.name << "\",\n";
                 ofs << "          \"direction\": \"" << arg.direction << "\",\n";
                 ofs << "          \"type\": \"" << arg.type << "\",\n";
-                ofs << "          \"width\": " << arg.width << "\n";
+                ofs << "          \"width\": " << arg.width;
+                if (!arg.string_value.empty()) {
+                    ofs << ",\n          \"value\": \"" << arg.string_value << "\"";
+                }
+                ofs << "\n";
                 ofs << "        }";
                 if (j + 1 < func.args.size()) ofs << ",";
                 ofs << "\n";
@@ -820,10 +831,15 @@ struct LoomInstrumentPass : public Pass {
             int arg_offset = 0;
             for (size_t i = 0; i < func.args.size(); i++) {
                 const auto &arg = func.args[i];
-                std::string c_type = sv_type_to_c(arg.type, arg.width);
                 if (i > 0) call_args += ", ";
-                call_args += "(" + c_type + ")args[" + std::to_string(arg_offset) + "]";
-                arg_offset += (arg.width + 31) / 32;
+                if (arg.type == "string") {
+                    // String args: pass compile-time constant, not from register
+                    call_args += "\"" + arg.string_value + "\"";
+                } else {
+                    std::string c_type = sv_type_to_c(arg.type, arg.width);
+                    call_args += "(" + c_type + ")args[" + std::to_string(arg_offset) + "]";
+                    arg_offset += (arg.width + 31) / 32;
+                }
             }
 
             if (func.ret_width > 0) {

@@ -7,6 +7,11 @@
 #include <stdio.h>
 #include <stdint.h>
 
+// multisim_server_start: Initialize server with given name
+void multisim_server_start(const char *server_name) {
+    printf("[dpi] multisim_server_start(\"%s\")\n", server_name);
+}
+
 // dpi_add: Add two integers
 int32_t dpi_add(int32_t a, int32_t b) {
     int32_t result = a + b;
