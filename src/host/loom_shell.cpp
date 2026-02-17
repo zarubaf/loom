@@ -7,7 +7,9 @@
 #include <replxx.hxx>
 
 #include <algorithm>
+#include <climits>
 #include <csignal>
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <unistd.h>
@@ -82,9 +84,13 @@ void Shell::register_commands() {
     commands_.push_back({
         "run", {"r"},
         "Start/resume emulation",
-        "Usage: run\n"
+        "Usage: run [-a] [<N>ns | <N>]\n"
         "  Release DUT reset (first time), start emulation, and service\n"
-        "  DPI calls. Press Ctrl+C to interrupt and return to the shell.",
+        "  DPI calls. Press Ctrl+C to interrupt and return to the shell.\n"
+        "  -a         Run indefinitely (set time compare to max)\n"
+        "  <N>ns      Run for N time units from current time\n"
+        "  <N>        Run for N time units from current time\n"
+        "  (no args)  Same as -a (run indefinitely)",
         [this](const auto& args) { return cmd_run(args); }
     });
     commands_.push_back({
@@ -299,7 +305,33 @@ int Shell::run_script(const std::string& filename) {
 // Command: run
 // ============================================================================
 
-int Shell::cmd_run(const std::vector<std::string>& /*args*/) {
+int Shell::cmd_run(const std::vector<std::string>& args) {
+    // Parse arguments: run [-a] [<N>ns | <N>]
+    uint64_t time_cmp = UINT64_MAX;  // default: run indefinitely
+
+    if (args.size() > 1 && args[1] != "-a") {
+        std::string arg = args[1];
+        // Strip optional "ns" suffix
+        if (arg.size() > 2 && arg.substr(arg.size() - 2) == "ns") {
+            arg = arg.substr(0, arg.size() - 2);
+        }
+        uint64_t delta = std::strtoull(arg.c_str(), nullptr, 10);
+
+        auto cur_time = ctx_.get_time();
+        if (!cur_time.ok()) {
+            logger.error("Failed to get current time");
+            return -1;
+        }
+        time_cmp = cur_time.value() + delta;
+    }
+
+    // Set time compare before starting
+    auto tc_rc = ctx_.set_time_compare(time_cmp);
+    if (!tc_rc.ok()) {
+        logger.error("Failed to set time compare");
+        return -1;
+    }
+
     // Release DUT reset and start emulation
     auto state_result = ctx_.get_state();
     if (!state_result.ok()) {
@@ -370,11 +402,16 @@ int Shell::cmd_run(const std::vector<std::string>& /*args*/) {
         logger.info("Interrupted");
     }
 
-    // Print cycle count
+    // Print cycle count and DUT time
     auto cycles = ctx_.get_cycle_count();
     if (cycles.ok()) {
         logger.info("Cycle count: %llu",
                     static_cast<unsigned long long>(cycles.value()));
+    }
+    auto time_val = ctx_.get_time();
+    if (time_val.ok()) {
+        logger.info("DUT time: %llu",
+                    static_cast<unsigned long long>(time_val.value()));
     }
 
     return 0;
@@ -450,8 +487,20 @@ int Shell::cmd_status(const std::vector<std::string>& /*args*/) {
     auto cycles = ctx_.get_cycle_count();
     uint64_t cycle_count = cycles.ok() ? cycles.value() : 0;
 
+    auto time_result = ctx_.get_time();
+    uint64_t dut_time = time_result.ok() ? time_result.value() : 0;
+
+    auto time_cmp_result = ctx_.get_time_compare();
+    uint64_t time_cmp = time_cmp_result.ok() ? time_cmp_result.value() : 0;
+
     std::printf("  State:       %s\n", state_name(st.value()));
     std::printf("  Cycles:      %llu\n", static_cast<unsigned long long>(cycle_count));
+    std::printf("  DUT time:    %llu\n", static_cast<unsigned long long>(dut_time));
+    if (time_cmp == UINT64_MAX) {
+        std::printf("  Time cmp:    unlimited\n");
+    } else {
+        std::printf("  Time cmp:    %llu\n", static_cast<unsigned long long>(time_cmp));
+    }
     std::printf("  Design ID:   0x%08x\n", ctx_.design_id());
     std::printf("  Loom ver:    0x%08x\n", ctx_.loom_version());
     std::printf("  DPI funcs:   %u\n", ctx_.n_dpi_funcs());

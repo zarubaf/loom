@@ -35,18 +35,18 @@ function(add_yosys_slang_test TEST_NAME)
 endfunction()
 
 # Helper function for DPI bridge tests (uses slang frontend for DPI detection)
-function(add_dpi_bridge_test TEST_NAME)
+function(add_loom_instrument_test TEST_NAME)
     set(TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/${TEST_NAME})
     add_test(
         NAME yosys_${TEST_NAME}
         COMMAND ${YOSYS_BIN}
             -m ${YOSYS_SLANG_PLUGIN}
-            -m ${CMAKE_BINARY_DIR}/passes/dpi_bridge/dpi_bridge.so
+            -m ${CMAKE_BINARY_DIR}/passes/loom_instrument/loom_instrument.so
             -s ${TEST_DIR}/run.ys
         WORKING_DIRECTORY ${TEST_DIR}
     )
     set_tests_properties(yosys_${TEST_NAME} PROPERTIES
-        DEPENDS "yosys_ext;yosys_slang_ext;dpi_bridge"
+        DEPENDS "yosys_ext;yosys_slang_ext;loom_instrument"
         TIMEOUT 60
     )
 endfunction()
@@ -55,8 +55,22 @@ endfunction()
 add_yosys_test(scan_basic)
 add_yosys_test(scan_equiv)
 
-# DPI bridge tests
-add_dpi_bridge_test(dpi_bridge)
+# DPI bridge tests (uses loom_instrument pass)
+add_loom_instrument_test(dpi_bridge)
+
+# Flop enable tests (needs scan_insert + loom_instrument)
+add_test(
+    NAME yosys_loom_instrument
+    COMMAND ${YOSYS_BIN}
+        -m ${CMAKE_BINARY_DIR}/passes/scan_insert/scan_insert.so
+        -m ${CMAKE_BINARY_DIR}/passes/loom_instrument/loom_instrument.so
+        -s ${CMAKE_CURRENT_SOURCE_DIR}/loom_instrument/run.ys
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/loom_instrument
+)
+set_tests_properties(yosys_loom_instrument PROPERTIES
+    DEPENDS "yosys_ext;scan_insert;loom_instrument"
+    TIMEOUT 60
+)
 
 # Helper function for emu_top tests (uses slang + all loom passes)
 function(add_emu_top_test TEST_NAME)
@@ -66,13 +80,13 @@ function(add_emu_top_test TEST_NAME)
         COMMAND ${YOSYS_BIN}
             -m ${YOSYS_SLANG_PLUGIN}
             -m ${CMAKE_BINARY_DIR}/passes/scan_insert/scan_insert.so
-            -m ${CMAKE_BINARY_DIR}/passes/dpi_bridge/dpi_bridge.so
+            -m ${CMAKE_BINARY_DIR}/passes/loom_instrument/loom_instrument.so
             -m ${CMAKE_BINARY_DIR}/passes/emu_top/emu_top.so
             -s ${TEST_DIR}/run.ys
         WORKING_DIRECTORY ${TEST_DIR}
     )
     set_tests_properties(yosys_${TEST_NAME} PROPERTIES
-        DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;dpi_bridge;emu_top"
+        DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;loom_instrument;emu_top"
         TIMEOUT 60
     )
 endfunction()

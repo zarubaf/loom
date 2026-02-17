@@ -47,7 +47,7 @@ install(DIRECTORY ${YOSYS_PREFIX}/share/yosys/
 )
 
 # Install Loom plugins
-install(TARGETS scan_insert dpi_bridge mem_shadow
+install(TARGETS scan_insert loom_instrument mem_shadow
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/loom
 )
 

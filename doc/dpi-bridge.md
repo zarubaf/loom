@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# DPI Bridge
+# DPI Bridge (loom_instrument)
 
-The `dpi_bridge` Yosys pass transforms DPI-C function calls in SystemVerilog into hardware interfaces that can be serviced by a host application.
+The `loom_instrument` Yosys pass transforms DPI-C function calls in SystemVerilog into hardware interfaces that can be serviced by a host application.
 
 ## Overview
 
@@ -14,7 +14,7 @@ import "DPI-C" function int dpi_add(input int a, input int b);
 result = dpi_add(arg_a, arg_b);
 ```
 
-It creates a `$__loom_dpi_call` cell representing the call. The `dpi_bridge` pass then:
+It creates a `$__loom_dpi_call` cell representing the call. The `loom_instrument` pass then:
 
 1. Converts these cells into a multiplexed hardware interface
 2. Adds control signals for the handshake protocol
@@ -23,7 +23,7 @@ It creates a `$__loom_dpi_call` cell representing the call. The `dpi_bridge` pas
 ## Pass Usage
 
 ```tcl
-dpi_bridge [options]
+loom_instrument [options]
 
 Options:
   -json_out <file>    Write DPI metadata to JSON file
@@ -34,7 +34,7 @@ Example:
 ```tcl
 read_slang design.sv -top my_module
 proc
-dpi_bridge -json_out dpi_meta.json -header_out my_module_dpi.h
+loom_instrument -json_out dpi_meta.json -header_out my_module_dpi.h
 ```
 
 ## Hardware Interface
@@ -52,7 +52,7 @@ After transformation, the DUT module gains these ports:
 ### Handshake Protocol
 
 1. DUT asserts `loom_dpi_valid` with `func_id` and `args`
-2. DUT clock is gated (stalled) while waiting
+2. DUT FFs are frozen (via loom_en) while waiting
 3. Host reads args, executes function, writes result
 4. Host asserts ready via regfile
 5. DUT sees `loom_dpi_ready`, captures result, clock resumes

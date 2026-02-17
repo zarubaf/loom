@@ -25,7 +25,7 @@ Source SV → yosys + loom plugins → transformed Verilog → Vivado/Verilator
 ```
 
 **Key components:**
-- `passes/dpi_bridge/` - Converts DPI calls to hardware interfaces
+- `passes/loom_instrument/` - DPI bridge + flop enable instrumentation
 - `passes/emu_top/` - Generates emulation wrapper with AXI-Lite interface
 - `src/host/` - Host-side library for communication and DPI service
 - `src/rtl/` - Infrastructure RTL modules
@@ -61,7 +61,7 @@ All Loom-generated signals use the `loom_` prefix:
 
 | Pass | Signals |
 |------|---------|
-| `dpi_bridge` | `loom_dpi_valid`, `loom_dpi_ready`, `loom_dpi_func_id`, `loom_dpi_args`, `loom_dpi_result` |
+| `loom_instrument` | `loom_en`, `loom_dpi_valid`, `loom_dpi_ready`, `loom_dpi_func_id`, `loom_dpi_args`, `loom_dpi_result` |
 | `scan_insert` | `loom_scan_enable`, `loom_scan_in`, `loom_scan_out` |
 
 ## Files to Never Commit

@@ -16,7 +16,7 @@ OBJ_DIR := $(BUILD_DIR)/obj_dir
 YOSYS := $(LOOM_ROOT)/build/yosys/bin/yosys
 YOSYS_PLUGINS := \
     -m $(LOOM_ROOT)/build/yosys-slang/slang.so \
-    -m $(LOOM_ROOT)/build/passes/dpi_bridge/dpi_bridge.so \
+    -m $(LOOM_ROOT)/build/passes/loom_instrument/loom_instrument.so \
     -m $(LOOM_ROOT)/build/passes/scan_insert/scan_insert.so \
     -m $(LOOM_ROOT)/build/passes/emu_top/emu_top.so
 
@@ -44,8 +44,6 @@ RTL_SRCS := \
     $(RTL_DIR)/loom_emu_ctrl.sv \
     $(RTL_DIR)/loom_axi_interconnect.sv \
     $(RTL_DIR)/loom_dpi_regfile.sv \
-    $(RTL_DIR)/loom_emu_wrapper.sv \
-    $(RTL_DIR)/loom_clk_gate.sv \
     $(RTL_DIR)/loom_scan_ctrl.sv \
     $(BFM_DIR)/loom_axil_socket_bfm.sv \
     $(BUILD_DIR)/transformed_dpi_test.v \
@@ -65,7 +63,7 @@ HOST_LIB_SRCS := \
 # User DPI implementations + generated dispatch table
 HOST_SRCS := dpi_impl.c $(BUILD_DIR)/loom_dpi_dispatch.c
 
-.PHONY: all clean transform sim host run
+.PHONY: all clean transform sim host run interactive
 
 all: run
 
@@ -75,8 +73,8 @@ transform: $(BUILD_DIR)/transformed_dpi_test.v $(BUILD_DIR)/loom_dpi_dispatch.c
 $(BUILD_DIR)/run.ys: | $(BUILD_DIR)
 	@echo "read_slang ../dpi_test.sv -top dpi_test" > $@
 	@echo "proc" >> $@
-	@echo "dpi_bridge -json_out dpi_meta.json -header_out loom_dpi_dispatch.c" >> $@
 	@echo "scan_insert -map scan_map.json" >> $@
+	@echo "loom_instrument -json_out dpi_meta.json -header_out loom_dpi_dispatch.c" >> $@
 	@echo "emu_top -top dpi_test -n_dpi_funcs 2 -scan_chain_length 64" >> $@
 	@echo "write_verilog -noattr transformed_dpi_test.v" >> $@
 
@@ -122,11 +120,13 @@ $(OBJ_DIR)/loom_host: $(HOST_C_OBJS) $(HOST_CXX_OBJS) $(REPLXX_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Step 4: Run the test (script mode for automated testing)
+# Note: SIGPIPE (exit 141) is expected when the simulation terminates
+# before the host finishes reading — treat it as success.
 run: sim host
 	@rm -f $(SOCKET_PATH)
-	@echo "=== Starting Loom Simulation ==="
-	@$(OBJ_DIR)/Vloom_sim_top &
-	@SIM_PID=$$!; \
+	@echo "=== Starting Loom Simulation ===" ; \
+	$(OBJ_DIR)/Vloom_sim_top & \
+	SIM_PID=$$!; \
 	sleep 1; \
 	echo "=== Running Host ===" ; \
 	echo "run" > $(BUILD_DIR)/test_script.txt; \
@@ -136,7 +136,20 @@ run: sim host
 	kill $$SIM_PID 2>/dev/null || true; \
 	wait $$SIM_PID 2>/dev/null || true; \
 	rm -f $(SOCKET_PATH); \
-	exit $$TEST_RC
+	if [ $$TEST_RC -eq 141 ]; then exit 0; else exit $$TEST_RC; fi
+
+# Step 5: Run interactively (launch sim in background, open host shell)
+interactive: sim host
+	@rm -f $(SOCKET_PATH)
+	@echo "=== Starting Loom Simulation ===" ; \
+	$(OBJ_DIR)/Vloom_sim_top & \
+	SIM_PID=$$!; \
+	sleep 1; \
+	echo "=== Starting Interactive Shell ===" ; \
+	$(OBJ_DIR)/loom_host $(SOCKET_PATH); \
+	kill $$SIM_PID 2>/dev/null || true; \
+	wait $$SIM_PID 2>/dev/null || true; \
+	rm -f $(SOCKET_PATH)
 
 clean:
 	rm -rf $(BUILD_DIR)

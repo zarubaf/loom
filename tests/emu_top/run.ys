@@ -1,9 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Test emu_top wrapper generation pass
-# Verifies that emu_top creates a wrapper with clock gating
-
-# Read the loom_clk_gate module (blackbox for synthesis, used by emu_top)
-read_verilog -sv ../../rtl/loom_clk_gate.sv
+# Verifies that emu_top creates a wrapper with loom_en (no clock gating)
 
 # Read the test design with DPI call
 read_slang ../fixtures/dpi_example.sv
@@ -14,13 +11,13 @@ proc
 log "=== Before transformation ==="
 stat
 
-# Run DPI bridge pass to convert DPI calls
-dpi_bridge
-
 # Run scan insertion
 scan_insert
 
-log "=== After DPI bridge and scan insertion ==="
+# Run loom_instrument pass to convert DPI calls and add flop enable
+loom_instrument
+
+log "=== After scan insertion and loom_instrument ==="
 stat
 
 # Generate emu_top wrapper
@@ -30,23 +27,18 @@ log "=== After emu_top generation ==="
 stat
 
 # Verify wrapper module was created with correct structure
-# Use module-qualified selections to avoid conflicts
-select -assert-count 1 emu_top_dpi_example/c:u_clk_gate
-select -assert-count 1 emu_top_dpi_example/c:u_dut
+select -assert-count 1 loom_emu_top/c:u_dut
 
-# Verify wrapper has expected ports (non-escaped names in wrapper)
-select -assert-count 1 emu_top_dpi_example/w:clk
-select -assert-count 1 emu_top_dpi_example/w:rst
-select -assert-count 1 emu_top_dpi_example/w:loom_dpi_valid
-select -assert-count 1 emu_top_dpi_example/w:loom_dpi_ack
-select -assert-count 1 emu_top_dpi_example/w:loom_dpi_result
-select -assert-count 1 emu_top_dpi_example/w:loom_scan_enable
-select -assert-count 1 emu_top_dpi_example/w:loom_scan_out
+# Verify DUT has loom_en port (created by loom_instrument)
+select -assert-count 1 dpi_example/w:loom_en
+
+# Verify wrapper has loom_en_wire (computed by emu_top)
+select -assert-count 1 loom_emu_top/w:loom_en_wire
 
 # Clear selection
 select -clear
 
-# Check design validity (warnings allowed for behavioral clock gate model)
+# Check design validity
 check
 
 # Write output for inspection

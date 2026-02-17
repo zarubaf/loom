@@ -32,9 +32,8 @@ module tb_scan_counter;
   logic rst;
   logic rst_n;
 
-  // Gated clock to DUT
+  // DUT clock (free-running, FFs controlled via loom_en)
   logic clk_gated;
-  logic clk_gate_en;
 
   // Counter interface
   logic        en_a, en_b;
@@ -75,13 +74,9 @@ module tb_scan_counter;
   assign rst_n = ~rst;
 
   // ---------------------------------------------------------------------------
-  // Clock gate controlled by scan controller
+  // DUT clock (free-running, no clock gating)
   // ---------------------------------------------------------------------------
-  loom_clk_gate u_clk_gate (
-    .clk_i (clk),
-    .ce_i  (clk_gate_en),
-    .clk_o (clk_gated)
-  );
+  assign clk_gated = clk;
 
   // ---------------------------------------------------------------------------
   // DUT: transformed multi_counter (instantiate directly, not via emu_top)
@@ -123,9 +118,7 @@ module tb_scan_counter;
     // Scan chain interface
     .scan_enable_o  (scan_enable),
     .scan_in_o      (scan_in),
-    .scan_out_i     (scan_out),
-    // Clock gate control
-    .clk_gate_en_o  (clk_gate_en)
+    .scan_out_i     (scan_out)
   );
 
   // ---------------------------------------------------------------------------

@@ -24,7 +24,7 @@ typedef uint64_t (*loom_dpi_callback_t)(const uint32_t *args);
 
 // DPI function descriptor
 typedef struct {
-    int func_id;                    // Function ID (from dpi_bridge)
+    int func_id;                    // Function ID (from loom_instrument)
     const char *name;               // Function name for debugging
     int n_args;                     // Number of arguments
     int ret_width;                  // Return value width in bits (0 for void)
@@ -58,7 +58,7 @@ using DpiCallback = std::function<uint64_t(std::span<const uint32_t> args)>;
 
 // DPI function descriptor
 struct DpiFunc {
-    int func_id;                // Function ID (from dpi_bridge)
+    int func_id;                // Function ID (from loom_instrument)
     std::string name;           // Function name for debugging
     int n_args;                 // Number of arguments
     int ret_width;              // Return value width in bits (0 for void)

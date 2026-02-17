@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Loom Emulation Controller
 //
-// Controls the emulation state machine (run/stop/step/reset/snapshot/restore)
-// and generates the emu_clk_en signal that gates the DUT's clock.
+// Controls the emulation state machine (run/stop/step/reset/snapshot/restore),
+// bridges DUT DPI calls to the regfile, and generates the loom_en signal that
+// enables DUT flip-flops.
+//
+// loom_en_o is the single authoritative enable for the DUT:
+//   loom_en = emu_running && (!dut_dpi_valid || dpi_ack)
+// where emu_running accounts for state (Running/Stepping) and time compare,
+// and the DPI term is the combinational fast path.
 //
 // Register Map (offset from base 0x0000):
 //   0x00  EMU_STATUS       R     Current emulation state
@@ -21,6 +27,10 @@
 //   0x40  IRQ_STATUS       R     Aggregated IRQ status
 //   0x44  IRQ_ENABLE       W     Aggregated IRQ enable
 //   0x4C  EMU_FINISH       RW    Finish request: [0]=req, [15:8]=exit_code
+//   0x50  EMU_TIME_LO      R     DUT time counter [31:0]
+//   0x54  EMU_TIME_HI      R     DUT time counter [63:32]
+//   0x58  EMU_TIME_CMP_LO  RW    Time compare [31:0]
+//   0x5C  EMU_TIME_CMP_HI  RW    Time compare [63:32]
 
 `timescale 1ns/1ps
 
@@ -29,13 +39,16 @@ module loom_emu_ctrl #(
     parameter int unsigned N_MEMORIES      = 0,
     parameter int unsigned N_SCAN_CHAINS   = 1,
     parameter int unsigned TOTAL_SCAN_BITS = 0,
+    parameter int unsigned MAX_ARG_WIDTH   = 64,
+    parameter int unsigned MAX_RET_WIDTH   = 32,
+    parameter int unsigned MAX_ARGS        = 8,
     parameter logic [31:0] DESIGN_ID       = 32'h0,
     parameter logic [31:0] LOOM_VERSION    = 32'h00_01_00  // 0.1.0
 )(
     input  logic        clk_i,
     input  logic        rst_ni,
 
-    // AXI-Lite Slave interface (directly exposed registers)
+    // AXI-Lite Slave interface
     input  logic [7:0]  axil_araddr_i,
     input  logic        axil_arvalid_i,
     output logic        axil_arready_o,
@@ -54,31 +67,43 @@ module loom_emu_ctrl #(
     output logic        axil_bvalid_o,
     input  logic        axil_bready_i,
 
-    // DPI stall inputs (active high = DPI call pending)
-    input  logic [N_DPI_FUNCS-1:0] dpi_stall_i,
+    // DUT DPI interface
+    input  logic                       dut_dpi_valid_i,
+    input  logic [7:0]                 dut_dpi_func_id_i,
+    input  logic [MAX_ARG_WIDTH-1:0]   dut_dpi_args_i,
+    output logic [MAX_RET_WIDTH-1:0]   dut_dpi_result_o,
+    output logic                       dut_dpi_ready_o,
 
-    // DUT finish request (from transformed $finish/$fatal cells)
+    // DPI regfile interface
+    output logic [N_DPI_FUNCS-1:0]             dpi_call_valid_o,
+    input  logic [N_DPI_FUNCS-1:0]             dpi_call_ready_i,
+    output logic [N_DPI_FUNCS*MAX_ARGS*32-1:0] dpi_call_args_o,
+    input  logic [N_DPI_FUNCS-1:0]             dpi_ret_valid_i,
+    output logic [N_DPI_FUNCS-1:0]             dpi_ret_ready_o,
+    input  logic [N_DPI_FUNCS*64-1:0]          dpi_ret_data_i,
+
+    // DUT finish request
     input  logic        dut_finish_req_i,
     input  logic [7:0]  dut_finish_code_i,
 
-    // Clock enable output (to gate DUT clock)
-    output logic        emu_clk_en_o,
+    // DUT FF enable output
+    output logic        loom_en_o,
 
     // DUT reset output
     output logic        dut_rst_no,
 
-    // Cycle counter output (for debug/status)
+    // Cycle counter output
     output logic [63:0] cycle_count_o,
 
-    // Finish output (triggers simulation shutdown)
+    // Finish output
     output logic        finish_o,
 
-    // IRQ output (active high)
+    // IRQ output
     output logic        irq_state_change_o
 );
 
     // =========================================================================
-    // State Machine
+    // Types
     // =========================================================================
 
     typedef enum logic [2:0] {
@@ -89,9 +114,14 @@ module loom_emu_ctrl #(
         StSnapshot  = 3'd4,
         StRestore   = 3'd5,
         StError     = 3'd7
-    } state_e;
+    } emu_state_e;
 
-    // Command definitions
+    typedef enum logic [1:0] {
+        StDpiIdle    = 2'd0,
+        StDpiForward = 2'd1,
+        StDpiWait    = 2'd2
+    } dpi_state_e;
+
     localparam logic [7:0] CMD_START    = 8'h01;
     localparam logic [7:0] CMD_STOP     = 8'h02;
     localparam logic [7:0] CMD_STEP     = 8'h03;
@@ -99,109 +129,139 @@ module loom_emu_ctrl #(
     localparam logic [7:0] CMD_SNAPSHOT = 8'h05;
     localparam logic [7:0] CMD_RESTORE  = 8'h06;
 
-    state_e state_q, state_d;
-    logic [63:0] cycle_count_q;
-    logic [31:0] step_count_q;
-    logic [31:0] step_remaining_q;
-    logic [31:0] clk_div_q;
-    logic        dut_reset_q;
-    logic [31:0] irq_enable_q;
-    logic        state_changed_q;
-    logic [15:0] finish_reg_q;  // [0]=finish_req, [15:8]=exit_code
+    // =========================================================================
+    // Signals
+    // =========================================================================
 
-    // DUT reset control signals (set by write logic, processed by state machine)
-    logic        dut_reset_assert_req;
-    logic        dut_reset_release_req;
+    // Emulation state machine
+    emu_state_e state_d, state_q;
+    logic [63:0] cycle_count_d, cycle_count_q;
+    logic [63:0] time_count_d,  time_count_q;
+    logic [63:0] time_cmp_d,    time_cmp_q;
+    logic [31:0] step_count_d,  step_count_q;
+    logic [31:0] step_remaining_d, step_remaining_q;
+    logic [31:0] clk_div_d,     clk_div_q;
+    logic        dut_reset_d,   dut_reset_q;
+    logic [31:0] irq_enable_d,  irq_enable_q;
+    logic        state_changed_d, state_changed_q;
+    logic [15:0] finish_reg_d,  finish_reg_q;
+    logic [7:0]  cmd_reg_d,     cmd_reg_q;
+    logic        cmd_valid_d,   cmd_valid_q;
 
-    // DPI stall aggregation
-    logic dpi_stall_any;
-    assign dpi_stall_any = |dpi_stall_i;
+    // DPI call state
+    dpi_state_e dpi_state_d, dpi_state_q;
+    logic [7:0] dpi_func_id_d, dpi_func_id_q;
+
+    // Derived combinational signals
+    logic emu_running;
+    logic dpi_ack;
+
+    // AXI-Lite read channel
+    logic [7:0]  rd_addr_d,    rd_addr_q;
+    logic        rd_pending_d, rd_pending_q;
+    logic        arready_d,    arready_q;
+    logic        rvalid_d,     rvalid_q;
+    logic [31:0] rdata_d,      rdata_q;
+    logic [1:0]  rresp_d,      rresp_q;
+
+    // AXI-Lite write channel
+    logic [7:0]  wr_addr_d,       wr_addr_q;
+    logic [31:0] wr_data_d,       wr_data_q;
+    logic        wr_addr_valid_d, wr_addr_valid_q;
+    logic        wr_data_valid_d, wr_data_valid_q;
+    logic        awready_d,       awready_q;
+    logic        wready_d,        wready_q;
+    logic        bvalid_d,        bvalid_q;
+    logic [1:0]  bresp_d,         bresp_q;
+
+    // Write-side register update requests (from AXI write comb → main comb)
+    logic        wr_cmd_valid;
+    logic [7:0]  wr_cmd_data;
+    logic        wr_step_count_en;
+    logic [31:0] wr_step_count_data;
+    logic        wr_clk_div_en;
+    logic [31:0] wr_clk_div_data;
+    logic        wr_reset_assert;
+    logic        wr_reset_release;
+    logic        wr_irq_enable_en;
+    logic [31:0] wr_irq_enable_data;
+    logic        wr_time_cmp_lo_en;
+    logic [31:0] wr_time_cmp_lo_data;
+    logic        wr_time_cmp_hi_en;
+    logic [31:0] wr_time_cmp_hi_data;
+    logic        wr_finish_en;
+    logic [15:0] wr_finish_data;
 
     // =========================================================================
-    // Clock Enable Logic
+    // loom_en: Single Authoritative DUT Enable (combinational)
     // =========================================================================
-    // emu_clk_en is LOW (DUT frozen) when:
-    //   - state is FROZEN, SNAPSHOT, RESTORE, IDLE
-    //   - state is STEPPING and step_remaining has expired
-    //   - any DPI bridge is stalling
-
-    logic emu_clk_en_d;
 
     always_comb begin
-        case (state_q)
-            StRunning:  emu_clk_en_d = ~dpi_stall_any;
-            StStepping: emu_clk_en_d = (step_remaining_q > 0) && ~dpi_stall_any;
-            default:    emu_clk_en_d = 1'b0;  // FROZEN, SNAPSHOT, RESTORE, IDLE, ERROR
+        unique case (state_q)
+            StRunning:  emu_running = (time_count_q < time_cmp_q);
+            StStepping: emu_running = (step_remaining_q > 0) && (time_count_q < time_cmp_q);
+            default:    emu_running = 1'b0;
         endcase
     end
 
-    assign emu_clk_en_o = emu_clk_en_d;
+    assign dpi_ack = (dpi_state_q == StDpiWait) && dpi_ret_valid_i[dpi_func_id_q];
+    assign loom_en_o = emu_running && (!dut_dpi_valid_i || dpi_ack);
 
     // =========================================================================
-    // State Machine Logic
+    // Emulation State Machine (combinational)
     // =========================================================================
-
-    // Command register (directly written, cleared after processing)
-    logic [7:0] cmd_reg_q;
-    logic       cmd_valid_q;
 
     always_comb begin
         state_d = state_q;
 
-        case (state_q)
+        unique case (state_q)
             StIdle: begin
                 if (cmd_valid_q) begin
-                    case (cmd_reg_q)
+                    unique case (cmd_reg_q)
                         CMD_START: state_d = StRunning;
                         CMD_STEP:  state_d = StStepping;
-                        default:   state_d = StIdle;
+                        default:   ;
                     endcase
                 end
             end
 
             StRunning: begin
-                if (cmd_valid_q) begin
-                    case (cmd_reg_q)
+                if (time_count_q >= time_cmp_q) begin
+                    state_d = StFrozen;
+                end else if (cmd_valid_q) begin
+                    unique case (cmd_reg_q)
                         CMD_STOP:  state_d = StFrozen;
                         CMD_RESET: state_d = StIdle;
-                        default:   state_d = StRunning;
+                        default:   ;
                     endcase
                 end
             end
 
             StFrozen: begin
                 if (cmd_valid_q) begin
-                    case (cmd_reg_q)
+                    unique case (cmd_reg_q)
                         CMD_START:    state_d = StRunning;
                         CMD_STEP:     state_d = StStepping;
                         CMD_RESET:    state_d = StIdle;
                         CMD_SNAPSHOT: state_d = StSnapshot;
                         CMD_RESTORE:  state_d = StRestore;
-                        default:      state_d = StFrozen;
+                        default:      ;
                     endcase
                 end
             end
 
             StStepping: begin
-                // When step_remaining reaches 0, go to frozen
-                if (step_remaining_q == 0 || (step_remaining_q == 1 && emu_clk_en_d)) begin
+                if (step_remaining_q == 0 || (step_remaining_q == 1 && loom_en_o)
+                    || time_count_q >= time_cmp_q) begin
                     state_d = StFrozen;
                 end
-                // Can be interrupted by STOP
                 if (cmd_valid_q && cmd_reg_q == CMD_STOP) begin
                     state_d = StFrozen;
                 end
             end
 
-            StSnapshot: begin
-                // For now, immediately complete (actual scan logic is separate)
-                state_d = StFrozen;
-            end
-
-            StRestore: begin
-                // For now, immediately complete (actual scan logic is separate)
-                state_d = StFrozen;
-            end
+            StSnapshot: state_d = StFrozen;
+            StRestore:  state_d = StFrozen;
 
             StError: begin
                 if (cmd_valid_q && cmd_reg_q == CMD_RESET) begin
@@ -214,199 +274,377 @@ module loom_emu_ctrl #(
     end
 
     // =========================================================================
-    // Sequential Logic
+    // DPI Call State Machine (combinational)
+    // =========================================================================
+
+    always_comb begin
+        dpi_state_d   = dpi_state_q;
+        dpi_func_id_d = dpi_func_id_q;
+
+        unique case (dpi_state_q)
+            StDpiIdle: begin
+                if (dut_dpi_valid_i && emu_running) begin
+                    dpi_state_d   = StDpiForward;
+                    dpi_func_id_d = dut_dpi_func_id_i;
+                end
+            end
+
+            StDpiForward: begin
+                if (dpi_call_ready_i[dpi_func_id_q]) begin
+                    dpi_state_d = StDpiWait;
+                end
+            end
+
+            StDpiWait: begin
+                if (dpi_ret_valid_i[dpi_func_id_q]) begin
+                    dpi_state_d = StDpiIdle;
+                end
+            end
+
+            default: dpi_state_d = StDpiIdle;
+        endcase
+    end
+
+    // =========================================================================
+    // DPI Regfile Interface (combinational)
+    // =========================================================================
+
+    always_comb begin
+        dpi_call_valid_o = '0;
+        if (dpi_state_q == StDpiForward) begin
+            dpi_call_valid_o[dpi_func_id_q] = 1'b1;
+        end
+    end
+
+    always_comb begin
+        dpi_call_args_o = '0;
+        if (dpi_state_q == StDpiForward) begin
+            for (int w = 0; w < MAX_ARG_WIDTH / 32; w++) begin
+                dpi_call_args_o[int'(dpi_func_id_q) * MAX_ARGS * 32 + w * 32 +: 32] =
+                    dut_dpi_args_i[w * 32 +: 32];
+            end
+        end
+    end
+
+    always_comb begin
+        dpi_ret_ready_o = '0;
+        if (dpi_state_q == StDpiWait) begin
+            dpi_ret_ready_o[dpi_func_id_q] = 1'b1;
+        end
+    end
+
+    assign dut_dpi_result_o = dpi_ret_data_i[int'(dpi_func_id_q) * 64 +: MAX_RET_WIDTH];
+    assign dut_dpi_ready_o  = dpi_ack;
+
+    // =========================================================================
+    // Counters and Control Registers (combinational next-state)
+    // =========================================================================
+
+    always_comb begin
+        // Defaults: hold current value
+        cycle_count_d    = cycle_count_q;
+        time_count_d     = time_count_q;
+        step_remaining_d = step_remaining_q;
+        state_changed_d  = (state_q != state_d);
+        cmd_valid_d      = 1'b0;  // one-shot
+        cmd_reg_d        = cmd_reg_q;
+        finish_reg_d     = finish_reg_q;
+        dut_reset_d      = dut_reset_q;
+        step_count_d     = step_count_q;
+        clk_div_d        = clk_div_q;
+        irq_enable_d     = irq_enable_q;
+        time_cmp_d       = time_cmp_q;
+
+        // Cycle counter
+        if (state_q == StIdle) begin
+            cycle_count_d = 64'd0;
+        end else if (loom_en_o) begin
+            cycle_count_d = cycle_count_q + 64'd1;
+        end
+
+        // Time counter
+        if (state_q == StIdle) begin
+            time_count_d = 64'd0;
+        end else if (loom_en_o) begin
+            time_count_d = time_count_q + 64'd1;
+        end
+
+        // Step counter
+        if (state_q != StStepping && state_d == StStepping) begin
+            step_remaining_d = step_count_q;
+        end else if (state_q == StStepping && loom_en_o && step_remaining_q > 0) begin
+            step_remaining_d = step_remaining_q - 32'd1;
+        end
+
+        // DUT reset
+        if (wr_reset_assert) begin
+            dut_reset_d = 1'b1;
+        end else if (wr_reset_release) begin
+            dut_reset_d = 1'b0;
+        end
+
+        // DUT-initiated finish
+        if (dut_finish_req_i && !finish_reg_q[0]) begin
+            finish_reg_d[0]    = 1'b1;
+            finish_reg_d[15:8] = dut_finish_code_i;
+        end
+
+        // AXI write-side register updates
+        if (wr_cmd_valid) begin
+            cmd_reg_d   = wr_cmd_data;
+            cmd_valid_d = 1'b1;
+        end
+        if (wr_step_count_en)  step_count_d  = wr_step_count_data;
+        if (wr_clk_div_en)     clk_div_d     = wr_clk_div_data;
+        if (wr_irq_enable_en)  irq_enable_d  = wr_irq_enable_data;
+        if (wr_time_cmp_lo_en) time_cmp_d[31:0]  = wr_time_cmp_lo_data;
+        if (wr_time_cmp_hi_en) time_cmp_d[63:32] = wr_time_cmp_hi_data;
+        if (wr_finish_en && !finish_reg_q[0]) begin
+            finish_reg_d = wr_finish_data;
+        end
+    end
+
+    // =========================================================================
+    // Main Sequential Process
     // =========================================================================
 
     always_ff @(posedge clk_i or negedge rst_ni) begin
         if (!rst_ni) begin
             state_q          <= StIdle;
             cycle_count_q    <= 64'd0;
+            time_count_q     <= 64'd0;
+            time_cmp_q       <= 64'd0;
             step_count_q     <= 32'd1;
             step_remaining_q <= 32'd0;
             clk_div_q        <= 32'd0;
-            dut_reset_q      <= 1'b1;  // DUT in reset initially
+            dut_reset_q      <= 1'b1;
             irq_enable_q     <= 32'd0;
             cmd_reg_q        <= 8'd0;
             cmd_valid_q      <= 1'b0;
             state_changed_q  <= 1'b0;
             finish_reg_q     <= 16'd0;
+            dpi_state_q      <= StDpiIdle;
+            dpi_func_id_q    <= 8'd0;
         end else begin
-            // State transition
-            if (state_q != state_d) begin
-                state_changed_q <= 1'b1;
-            end else begin
-                state_changed_q <= 1'b0;
-            end
-            state_q <= state_d;
-
-            // Clear command after processing
-            cmd_valid_q <= 1'b0;
-
-            // Cycle counter
-            if (state_q == StIdle) begin
-                cycle_count_q <= 64'd0;
-            end else if (emu_clk_en_d) begin
-                cycle_count_q <= cycle_count_q + 1;
-            end
-
-            // Step counter decrement
-            if (state_q == StStepping && emu_clk_en_d && step_remaining_q > 0) begin
-                step_remaining_q <= step_remaining_q - 1;
-            end
-
-            // Load step count when entering STEPPING state
-            if (state_q != StStepping && state_d == StStepping) begin
-                step_remaining_q <= step_count_q;
-            end
-
-            // DUT reset control - process requests from write logic
-            // (Requests are one-shot, set by write logic, cleared here after processing)
-            if (dut_reset_assert_req) begin
-                dut_reset_q <= 1'b1;
-            end else if (dut_reset_release_req) begin
-                dut_reset_q <= 1'b0;
-            end
-
-            // DUT-initiated finish (from transformed $finish/$fatal cells)
-            // Once set, stays set until reset
-            if (dut_finish_req_i && !finish_reg_q[0]) begin
-                finish_reg_q[0]    <= 1'b1;
-                finish_reg_q[15:8] <= dut_finish_code_i;
-            end
-            // Host-initiated finish is handled in write logic below
+            state_q          <= state_d;
+            cycle_count_q    <= cycle_count_d;
+            time_count_q     <= time_count_d;
+            time_cmp_q       <= time_cmp_d;
+            step_count_q     <= step_count_d;
+            step_remaining_q <= step_remaining_d;
+            clk_div_q        <= clk_div_d;
+            dut_reset_q      <= dut_reset_d;
+            irq_enable_q     <= irq_enable_d;
+            cmd_reg_q        <= cmd_reg_d;
+            cmd_valid_q      <= cmd_valid_d;
+            state_changed_q  <= state_changed_d;
+            finish_reg_q     <= finish_reg_d;
+            dpi_state_q      <= dpi_state_d;
+            dpi_func_id_q    <= dpi_func_id_d;
         end
     end
 
-    assign cycle_count_o = cycle_count_q;
-    assign dut_rst_no = ~dut_reset_q;
-    assign finish_o = finish_reg_q[0];
+    // =========================================================================
+    // Output Assignments
+    // =========================================================================
+
+    assign cycle_count_o     = cycle_count_q;
+    assign dut_rst_no        = ~dut_reset_q;
+    assign finish_o          = finish_reg_q[0];
     assign irq_state_change_o = state_changed_q && irq_enable_q[2];
 
     // =========================================================================
-    // AXI-Lite Register Interface
+    // AXI-Lite Read Channel (combinational)
     // =========================================================================
 
-    // Read logic
-    logic [7:0] rd_addr_q;
-    logic       rd_pending_q;
+    always_comb begin
+        rd_addr_d    = rd_addr_q;
+        rd_pending_d = rd_pending_q;
+        arready_d    = 1'b1;
+        rvalid_d     = rvalid_q;
+        rdata_d      = rdata_q;
+        rresp_d      = rresp_q;
 
-    always_ff @(posedge clk_i or negedge rst_ni) begin
-        if (!rst_ni) begin
-            rd_pending_q    <= 1'b0;
-            rd_addr_q       <= 8'd0;
-            axil_arready_o  <= 1'b0;
-            axil_rvalid_o   <= 1'b0;
-            axil_rdata_o    <= 32'd0;
-            axil_rresp_o    <= 2'b00;
-        end else begin
-            axil_arready_o <= 1'b1;  // Always ready to accept address
+        if (axil_arvalid_i && arready_q) begin
+            rd_addr_d    = axil_araddr_i;
+            rd_pending_d = 1'b1;
+        end
 
-            if (axil_arvalid_i && axil_arready_o) begin
-                rd_addr_q    <= axil_araddr_i;
-                rd_pending_q <= 1'b1;
-            end
+        if (rd_pending_q && !rvalid_q) begin
+            rvalid_d     = 1'b1;
+            rresp_d      = 2'b00;
+            rd_pending_d = 1'b0;
 
-            if (rd_pending_q && !axil_rvalid_o) begin
-                axil_rvalid_o <= 1'b1;
-                axil_rresp_o  <= 2'b00;  // OKAY
+            unique case (rd_addr_q[7:2])
+                6'h00:   rdata_d = {29'd0, state_q};
+                6'h02:   rdata_d = cycle_count_q[31:0];
+                6'h03:   rdata_d = cycle_count_q[63:32];
+                6'h04:   rdata_d = step_count_q;
+                6'h05:   rdata_d = clk_div_q;
+                6'h08:   rdata_d = N_DPI_FUNCS;
+                6'h09:   rdata_d = N_MEMORIES;
+                6'h0A:   rdata_d = N_SCAN_CHAINS;
+                6'h0B:   rdata_d = TOTAL_SCAN_BITS;
+                6'h0D:   rdata_d = DESIGN_ID;
+                6'h0E:   rdata_d = LOOM_VERSION;
+                6'h10:   rdata_d = {29'd0, state_changed_q, (dpi_state_q != StDpiIdle), 1'b0};
+                6'h11:   rdata_d = irq_enable_q;
+                6'h13:   rdata_d = {16'd0, finish_reg_q};
+                6'h14:   rdata_d = time_count_q[31:0];
+                6'h15:   rdata_d = time_count_q[63:32];
+                6'h16:   rdata_d = time_cmp_q[31:0];
+                6'h17:   rdata_d = time_cmp_q[63:32];
+                default: rdata_d = 32'hDEAD_BEEF;
+            endcase
+        end
 
-                case (rd_addr_q[7:2])
-                    6'h00: axil_rdata_o <= {29'd0, state_q};         // EMU_STATUS
-                    6'h02: axil_rdata_o <= cycle_count_q[31:0];      // EMU_CYCLE_LO
-                    6'h03: axil_rdata_o <= cycle_count_q[63:32];     // EMU_CYCLE_HI
-                    6'h04: axil_rdata_o <= step_count_q;             // EMU_STEP_COUNT (readback)
-                    6'h05: axil_rdata_o <= clk_div_q;                // EMU_CLK_DIV (readback)
-                    6'h08: axil_rdata_o <= N_DPI_FUNCS;              // N_DPI_FUNCS
-                    6'h09: axil_rdata_o <= N_MEMORIES;               // N_MEMORIES
-                    6'h0A: axil_rdata_o <= N_SCAN_CHAINS;            // N_SCAN_CHAINS
-                    6'h0B: axil_rdata_o <= TOTAL_SCAN_BITS;          // TOTAL_SCAN_BITS
-                    6'h0D: axil_rdata_o <= DESIGN_ID;                // DESIGN_ID
-                    6'h0E: axil_rdata_o <= LOOM_VERSION;             // LOOM_VERSION
-                    6'h10: axil_rdata_o <= {29'd0, state_changed_q, dpi_stall_any, 1'b0}; // IRQ_STATUS
-                    6'h11: axil_rdata_o <= irq_enable_q;             // IRQ_ENABLE
-                    6'h13: axil_rdata_o <= {16'd0, finish_reg_q};    // EMU_FINISH
-                    default: axil_rdata_o <= 32'hDEAD_BEEF;
-                endcase
-
-                rd_pending_q <= 1'b0;
-            end
-
-            if (axil_rvalid_o && axil_rready_i) begin
-                axil_rvalid_o <= 1'b0;
-            end
+        if (rvalid_q && axil_rready_i) begin
+            rvalid_d = 1'b0;
         end
     end
 
-    // Write logic
-    logic wr_addr_valid_q, wr_data_valid_q;
-    logic [7:0] wr_addr_q;
-    logic [31:0] wr_data_q;
-
+    // AXI-Lite Read Channel (sequential)
     always_ff @(posedge clk_i or negedge rst_ni) begin
         if (!rst_ni) begin
-            wr_addr_valid_q       <= 1'b0;
-            wr_data_valid_q       <= 1'b0;
-            wr_addr_q             <= 8'd0;
-            wr_data_q             <= 32'd0;
-            axil_awready_o        <= 1'b0;
-            axil_wready_o         <= 1'b0;
-            axil_bvalid_o         <= 1'b0;
-            axil_bresp_o          <= 2'b00;
-            dut_reset_assert_req  <= 1'b0;
-            dut_reset_release_req <= 1'b0;
+            rd_addr_q    <= 8'd0;
+            rd_pending_q <= 1'b0;
+            arready_q    <= 1'b0;
+            rvalid_q     <= 1'b0;
+            rdata_q      <= 32'd0;
+            rresp_q      <= 2'b00;
         end else begin
-            axil_awready_o <= 1'b1;  // Always ready
-            axil_wready_o  <= 1'b1;
-
-            // Default: clear request signals (one-shot)
-            dut_reset_assert_req  <= 1'b0;
-            dut_reset_release_req <= 1'b0;
-
-            // Capture address
-            if (axil_awvalid_i && axil_awready_o) begin
-                wr_addr_q       <= axil_awaddr_i;
-                wr_addr_valid_q <= 1'b1;
-            end
-
-            // Capture data
-            if (axil_wvalid_i && axil_wready_o) begin
-                wr_data_q       <= axil_wdata_i;
-                wr_data_valid_q <= 1'b1;
-            end
-
-            // Process write when both address and data are valid
-            if (wr_addr_valid_q && wr_data_valid_q && !axil_bvalid_o) begin
-                case (wr_addr_q[7:2])
-                    6'h01: begin  // EMU_CONTROL
-                        cmd_reg_q   <= wr_data_q[7:0];
-                        cmd_valid_q <= 1'b1;
-                    end
-                    6'h04: step_count_q <= wr_data_q;    // EMU_STEP_COUNT
-                    6'h05: clk_div_q    <= wr_data_q;    // EMU_CLK_DIV
-                    6'h06: begin  // DUT_RESET_CTRL - use request signals
-                        if (wr_data_q[0]) dut_reset_assert_req  <= 1'b1;
-                        if (wr_data_q[1]) dut_reset_release_req <= 1'b1;
-                    end
-                    6'h11: irq_enable_q <= wr_data_q;    // IRQ_ENABLE
-                    6'h13: begin  // EMU_FINISH - host-initiated shutdown
-                        if (wr_data_q[0] && !finish_reg_q[0]) begin
-                            finish_reg_q[0]    <= 1'b1;
-                            finish_reg_q[15:8] <= wr_data_q[15:8];
-                        end
-                    end
-                    default: ;
-                endcase
-
-                wr_addr_valid_q <= 1'b0;
-                wr_data_valid_q <= 1'b0;
-                axil_bvalid_o   <= 1'b1;
-                axil_bresp_o    <= 2'b00;  // OKAY
-            end
-
-            if (axil_bvalid_o && axil_bready_i) begin
-                axil_bvalid_o <= 1'b0;
-            end
+            rd_addr_q    <= rd_addr_d;
+            rd_pending_q <= rd_pending_d;
+            arready_q    <= arready_d;
+            rvalid_q     <= rvalid_d;
+            rdata_q      <= rdata_d;
+            rresp_q      <= rresp_d;
         end
     end
+
+    assign axil_arready_o = arready_q;
+    assign axil_rvalid_o  = rvalid_q;
+    assign axil_rdata_o   = rdata_q;
+    assign axil_rresp_o   = rresp_q;
+
+    // =========================================================================
+    // AXI-Lite Write Channel (combinational)
+    // =========================================================================
+
+    always_comb begin
+        wr_addr_d       = wr_addr_q;
+        wr_data_d       = wr_data_q;
+        wr_addr_valid_d = wr_addr_valid_q;
+        wr_data_valid_d = wr_data_valid_q;
+        awready_d       = 1'b1;
+        wready_d        = 1'b1;
+        bvalid_d        = bvalid_q;
+        bresp_d         = bresp_q;
+
+        // Default: no register writes this cycle
+        wr_cmd_valid        = 1'b0;
+        wr_cmd_data         = 8'd0;
+        wr_step_count_en    = 1'b0;
+        wr_step_count_data  = 32'd0;
+        wr_clk_div_en       = 1'b0;
+        wr_clk_div_data     = 32'd0;
+        wr_reset_assert     = 1'b0;
+        wr_reset_release    = 1'b0;
+        wr_irq_enable_en    = 1'b0;
+        wr_irq_enable_data  = 32'd0;
+        wr_time_cmp_lo_en   = 1'b0;
+        wr_time_cmp_lo_data = 32'd0;
+        wr_time_cmp_hi_en   = 1'b0;
+        wr_time_cmp_hi_data = 32'd0;
+        wr_finish_en        = 1'b0;
+        wr_finish_data      = 16'd0;
+
+        if (axil_awvalid_i && awready_q) begin
+            wr_addr_d       = axil_awaddr_i;
+            wr_addr_valid_d = 1'b1;
+        end
+
+        if (axil_wvalid_i && wready_q) begin
+            wr_data_d       = axil_wdata_i;
+            wr_data_valid_d = 1'b1;
+        end
+
+        if (wr_addr_valid_q && wr_data_valid_q && !bvalid_q) begin
+            unique case (wr_addr_q[7:2])
+                6'h01: begin  // EMU_CONTROL
+                    wr_cmd_valid = 1'b1;
+                    wr_cmd_data  = wr_data_q[7:0];
+                end
+                6'h04: begin  // EMU_STEP_COUNT
+                    wr_step_count_en   = 1'b1;
+                    wr_step_count_data = wr_data_q;
+                end
+                6'h05: begin  // EMU_CLK_DIV
+                    wr_clk_div_en   = 1'b1;
+                    wr_clk_div_data = wr_data_q;
+                end
+                6'h06: begin  // DUT_RESET_CTRL
+                    wr_reset_assert  = wr_data_q[0];
+                    wr_reset_release = wr_data_q[1];
+                end
+                6'h11: begin  // IRQ_ENABLE
+                    wr_irq_enable_en   = 1'b1;
+                    wr_irq_enable_data = wr_data_q;
+                end
+                6'h13: begin  // EMU_FINISH
+                    if (wr_data_q[0]) begin
+                        wr_finish_en   = 1'b1;
+                        wr_finish_data = wr_data_q[15:0];
+                    end
+                end
+                6'h16: begin  // EMU_TIME_CMP_LO
+                    wr_time_cmp_lo_en   = 1'b1;
+                    wr_time_cmp_lo_data = wr_data_q;
+                end
+                6'h17: begin  // EMU_TIME_CMP_HI
+                    wr_time_cmp_hi_en   = 1'b1;
+                    wr_time_cmp_hi_data = wr_data_q;
+                end
+                default: ;
+            endcase
+
+            wr_addr_valid_d = 1'b0;
+            wr_data_valid_d = 1'b0;
+            bvalid_d        = 1'b1;
+            bresp_d         = 2'b00;
+        end
+
+        if (bvalid_q && axil_bready_i) begin
+            bvalid_d = 1'b0;
+        end
+    end
+
+    // AXI-Lite Write Channel (sequential)
+    always_ff @(posedge clk_i or negedge rst_ni) begin
+        if (!rst_ni) begin
+            wr_addr_q       <= 8'd0;
+            wr_data_q       <= 32'd0;
+            wr_addr_valid_q <= 1'b0;
+            wr_data_valid_q <= 1'b0;
+            awready_q       <= 1'b0;
+            wready_q        <= 1'b0;
+            bvalid_q        <= 1'b0;
+            bresp_q         <= 2'b00;
+        end else begin
+            wr_addr_q       <= wr_addr_d;
+            wr_data_q       <= wr_data_d;
+            wr_addr_valid_q <= wr_addr_valid_d;
+            wr_data_valid_q <= wr_data_valid_d;
+            awready_q       <= awready_d;
+            wready_q        <= wready_d;
+            bvalid_q        <= bvalid_d;
+            bresp_q         <= bresp_d;
+        end
+    end
+
+    assign axil_awready_o = awready_q;
+    assign axil_wready_o  = wready_q;
+    assign axil_bvalid_o  = bvalid_q;
+    assign axil_bresp_o   = bresp_q;
 
 endmodule

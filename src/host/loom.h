@@ -123,6 +123,10 @@ namespace reg {
     constexpr uint32_t IrqStatus = 0x40;
     constexpr uint32_t IrqEnable = 0x44;
     constexpr uint32_t Finish = 0x4C;
+    constexpr uint32_t TimeLo = 0x50;
+    constexpr uint32_t TimeHi = 0x54;
+    constexpr uint32_t TimeCmpLo = 0x58;
+    constexpr uint32_t TimeCmpHi = 0x5C;
 
     // DPI regfile register offsets (per function, 64 bytes each)
     constexpr uint32_t DpiFuncSize = 0x40;
@@ -232,6 +236,10 @@ public:
     Result<uint64_t> get_cycle_count();
     Result<void> dut_reset(bool assert_reset);
     Result<void> finish(int exit_code);
+
+    Result<uint64_t> get_time();
+    Result<void> set_time_compare(uint64_t value);
+    Result<uint64_t> get_time_compare();
 
     // ========================================================================
     // DPI Function Handling

@@ -129,6 +129,35 @@ Result<void> Context::finish(int exit_code) {
     return write32(addr::EmuCtrl + reg::Finish, val);
 }
 
+Result<uint64_t> Context::get_time() {
+    auto lo = read32(addr::EmuCtrl + reg::TimeLo);
+    if (!lo.ok()) return lo.error();
+
+    auto hi = read32(addr::EmuCtrl + reg::TimeHi);
+    if (!hi.ok()) return hi.error();
+
+    return (static_cast<uint64_t>(hi.value()) << 32) | lo.value();
+}
+
+Result<void> Context::set_time_compare(uint64_t value) {
+    auto rc = write32(addr::EmuCtrl + reg::TimeCmpLo,
+                      static_cast<uint32_t>(value & 0xFFFFFFFF));
+    if (!rc.ok()) return rc;
+
+    return write32(addr::EmuCtrl + reg::TimeCmpHi,
+                   static_cast<uint32_t>(value >> 32));
+}
+
+Result<uint64_t> Context::get_time_compare() {
+    auto lo = read32(addr::EmuCtrl + reg::TimeCmpLo);
+    if (!lo.ok()) return lo.error();
+
+    auto hi = read32(addr::EmuCtrl + reg::TimeCmpHi);
+    if (!hi.ok()) return hi.error();
+
+    return (static_cast<uint64_t>(hi.value()) << 32) | lo.value();
+}
+
 // ============================================================================
 // DPI Function Handling
 // ============================================================================

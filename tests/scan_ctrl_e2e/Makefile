@@ -10,8 +10,7 @@ EMU_TOP := $(BUILD_DIR)/passes/emu_top/emu_top.so
 RTL_DIR := $(LOOM_ROOT)/rtl
 
 # RTL files needed for simulation
-RTL_FILES := $(RTL_DIR)/loom_clk_gate.sv \
-             $(RTL_DIR)/loom_scan_ctrl.sv
+RTL_FILES := $(RTL_DIR)/loom_scan_ctrl.sv
 
 .PHONY: all transform sim clean wave
 

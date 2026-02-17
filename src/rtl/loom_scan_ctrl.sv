@@ -2,7 +2,8 @@
 // Loom Scan Chain Controller
 //
 // Controls scan chain capture (shift out state) and restore (shift in state).
-// During scan operations, this module overrides clock gating to shift data.
+// With free-running clock + FF enable override (loom_en | loom_scan_enable),
+// the scan controller simply asserts scan_enable and shifts one bit per cycle.
 //
 // Register Map (offset from base):
 //   0x00 SCAN_STATUS    R    [0]=busy, [1]=done, [7:4]=error_code
@@ -48,9 +49,6 @@ module loom_scan_ctrl #(
     output logic        scan_enable_o,    // Scan mode enable (to loom_scan_enable)
     output logic        scan_in_o,        // Serial data in (to loom_scan_in)
     input  logic        scan_out_i,       // Serial data out (from loom_scan_out)
-
-    // Clock gate override (OR'd with emu_clk_en in wrapper)
-    output logic        scan_clk_en_o,    // Enable clock during scan shift
 
     // Status output
     output logic        scan_busy_o       // Scan operation in progress
@@ -98,11 +96,6 @@ module loom_scan_ctrl #(
     // Scan enable: active during capture or restore
     assign scan_enable_o = (state_q == StCapture || state_q == StRestore);
 
-    // Clock enable for scan: pulse during capture/restore to shift one bit
-    // We use a two-phase approach: enable clock for one cycle per bit
-    logic shift_pulse_q;
-    assign scan_clk_en_o = shift_pulse_q && (state_q == StCapture || state_q == StRestore);
-
     // Busy output
     assign scan_busy_o = (state_q != StIdle && state_q != StDone);
 
@@ -138,7 +131,6 @@ module loom_scan_ctrl #(
             shift_count_q <= '0;
             done_q        <= 1'b0;
             error_code_q  <= 4'd0;
-            shift_pulse_q <= 1'b0;
             for (int i = 0; i < N_DATA_WORDS; i++) begin
                 scan_data_q[i] <= 32'd0;
             end
@@ -147,39 +139,23 @@ module loom_scan_ctrl #(
 
             case (state_q)
                 StCapture: begin
-                    // Generate shift pulses
                     if (shift_count_q > 0) begin
-                        if (!shift_pulse_q) begin
-                            shift_pulse_q <= 1'b1;
-                        end else begin
-                            // After clock edge, capture the output bit
-                            scan_data_q[word_idx][bit_in_word] <= scan_out_i;
-                            shift_count_q <= shift_count_q - 1;
-                            shift_pulse_q <= 1'b0;
-                        end
+                        scan_data_q[word_idx][bit_in_word] <= scan_out_i;
+                        shift_count_q <= shift_count_q - 1;
                     end
                 end
 
                 StRestore: begin
-                    // Generate shift pulses
                     if (shift_count_q > 0) begin
-                        if (!shift_pulse_q) begin
-                            shift_pulse_q <= 1'b1;
-                        end else begin
-                            shift_count_q <= shift_count_q - 1;
-                            shift_pulse_q <= 1'b0;
-                        end
+                        shift_count_q <= shift_count_q - 1;
                     end
                 end
 
                 StDone: begin
                     done_q <= 1'b1;
-                    shift_pulse_q <= 1'b0;
                 end
 
-                default: begin
-                    shift_pulse_q <= 1'b0;
-                end
+                default: ;
             endcase
         end
     end

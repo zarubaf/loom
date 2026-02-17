@@ -5,10 +5,10 @@ The `emu_top` Yosys pass generates a complete emulation wrapper around a transfo
 
 ## Overview
 
-After running `dpi_bridge` on a design, the `emu_top` pass creates a `loom_emu_top` module that:
+After running `loom_instrument` on a design, the `emu_top` pass creates a `loom_emu_top` module that:
 
 1. Instantiates the transformed DUT
-2. Adds clock gating and reset control
+2. Controls DUT state via `loom_en` flip-flop enable
 3. Connects DPI interfaces to a register file
 4. Provides an AXI-Lite interface for host access
 
@@ -26,7 +26,8 @@ Example:
 ```tcl
 read_slang design.sv -top my_module
 proc
-dpi_bridge -json_out dpi_meta.json -header_out my_module_dpi.h
+scan_insert
+loom_instrument -json_out dpi_meta.json -header_out my_module_dpi.h
 emu_top -top my_module -n_dpi_funcs 2
 write_verilog -noattr transformed.v
 ```
@@ -42,20 +43,19 @@ write_verilog -noattr transformed.v
 │  │ Interface    │    │ interconnect │    │ ctrl         │      │
 │  └──────────────┘    └──────┬───────┘    └──────────────┘      │
 │                             │                    │              │
-│                      ┌──────┴───────┐      emu_clk_en          │
+│                      ┌──────┴───────┐       emu_clk_en         │
 │                      │ loom_dpi_    │            │              │
 │                      │ regfile      │            ▼              │
-│                      └──────┬───────┘    ┌──────────────┐      │
-│                             │            │ loom_clk_gate│      │
-│                      ┌──────┴───────┐    └──────┬───────┘      │
-│                      │ loom_emu_    │           │              │
-│                      │ wrapper      │◄──────────┘              │
-│                      └──────┬───────┘                          │
-│                             │                                   │
-│                      ┌──────┴───────┐                          │
-│                      │    DUT       │                          │
-│                      │ (transformed)│                          │
-│                      └──────────────┘                          │
+│                      └──────┬───────┘     loom_en_wire         │
+│                      ┌──────┴───────┐    (emu_clk_en &         │
+│                      │ loom_emu_    │     !dpi_valid|ack)       │
+│                      │ wrapper      │            │              │
+│                      └──────┬───────┘            │              │
+│                             │                    │              │
+│                      ┌──────┴───────┐            │              │
+│                      │    DUT       │◄───────────┘              │
+│                      │ (transformed)│  loom_en (FF enable)      │
+│                      └──────────────┘                           │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -100,23 +100,27 @@ Bridges between the DUT's DPI interface and the regfile:
 
 - Captures DPI calls from the DUT
 - Demultiplexes to per-function regfile slots
-- Gates the DUT clock during DPI stalls
+- Reports DPI stalls to emu_ctrl
 - Returns results to the DUT
 
-### loom_clk_gate
+### loom_scan_ctrl
 
-Generates the gated clock for the DUT based on:
-- `emu_clk_en` from the controller
-- DPI stall conditions
+Controls scan chain capture/restore operations. With free-running clock and FF enable override (`loom_en | loom_scan_enable`), the scan controller simply asserts `scan_enable` and shifts one bit per cycle.
 
-## Clock Gating
+## FF Enable (loom_en)
 
-The DUT clock is gated (stopped) when:
+The DUT clock runs free (ungated). State freezing is done via the `loom_en` flip-flop enable signal:
 
-1. Emulation is not in Running state
-2. A DPI call is pending and waiting for host response
+```
+loom_en = emu_clk_en & (!dpi_valid | dpi_ack)
+```
 
-This ensures deterministic behavior - the DUT only advances when all DPI calls have been serviced.
+DUT FFs are frozen (loom_en=0) when:
+
+1. Emulation is not in Running state (emu_clk_en=0)
+2. A DPI call is pending and waiting for host response (dpi_valid=1, dpi_ack=0)
+
+Inside the DUT, each FF's enable is: `loom_en | loom_scan_enable`, so scan operations always work regardless of loom_en.
 
 ## Ports
 

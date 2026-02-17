@@ -43,7 +43,7 @@ This executes:
 
 1. **Transform** (`make transform`): Yosys with loom plugins
    - `read_slang` parses SystemVerilog
-   - `dpi_bridge` converts DPI calls, generates header
+   - `loom_instrument` converts DPI calls, adds flop enable, generates header
    - `emu_top` creates infrastructure wrapper
    - `write_verilog` outputs transformed design
 

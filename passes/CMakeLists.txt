@@ -5,10 +5,10 @@
 # scan_insert pass - scan chain insertion for FFs
 add_subdirectory(scan_insert)
 
-# dpi_bridge pass - DPI-to-hardware bridge
-add_subdirectory(dpi_bridge)
+# loom_instrument pass - DPI bridge + flop enable
+add_subdirectory(loom_instrument)
 
-# emu_top pass - top-level wrapper generation with clock gating
+# emu_top pass - top-level wrapper generation
 add_subdirectory(emu_top)
 
 # mem_shadow pass - shadow port insertion for memories

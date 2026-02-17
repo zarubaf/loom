@@ -9,12 +9,12 @@ hierarchy -check -top dpi_example
 proc
 
 # Run loom transformation passes
-dpi_bridge
+loom_instrument
 scan_insert
 
 # Generate emu_top wrapper
 emu_top -top dpi_example -clk clk -rst rst
 
-# Write transformed design (loom_clk_gate will be a blackbox reference)
-# The actual loom_clk_gate module is provided separately for simulation
+# Write transformed design (loom_en will be a blackbox reference)
+# The actual loom_en module is provided separately for simulation
 write_verilog -noattr transformed.v

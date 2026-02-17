@@ -11,7 +11,7 @@ PREFIX="${SCRIPT_DIR%/bin}"
 YOSYS_BIN="${PREFIX}/bin/yosys"
 SLANG_PLUGIN="${PREFIX}/lib/loom/slang.so"
 SCAN_INSERT_PLUGIN="${PREFIX}/lib/loom/scan_insert.so"
-DPI_BRIDGE_PLUGIN="${PREFIX}/lib/loom/dpi_bridge.so"
+LOOM_INSTRUMENT_PLUGIN="${PREFIX}/lib/loom/loom_instrument.so"
 MEM_SHADOW_PLUGIN="${PREFIX}/lib/loom/mem_shadow.so"
 
 # Generation script
@@ -154,7 +154,7 @@ YOSYS_CMD=""
 YOSYS_CMD+="plugin -i $SLANG_PLUGIN; "
 YOSYS_CMD+="plugin -i $SCAN_INSERT_PLUGIN; "
 if [[ "$DPI_BRIDGE" == true ]]; then
-    YOSYS_CMD+="plugin -i $DPI_BRIDGE_PLUGIN; "
+    YOSYS_CMD+="plugin -i $LOOM_INSTRUMENT_PLUGIN; "
 fi
 if [[ "$MEM_SHADOW" == true ]]; then
     YOSYS_CMD+="plugin -i $MEM_SHADOW_PLUGIN; "
@@ -202,9 +202,9 @@ if [[ "$DPI_BRIDGE" == true ]]; then
         DPI_JSON="${GEN_SIM_DIR}/dpi_metadata.json"
     fi
     if [[ -n "$DPI_JSON" ]]; then
-        YOSYS_CMD+="dpi_bridge -json_out $DPI_JSON; "
+        YOSYS_CMD+="loom_instrument -json_out $DPI_JSON; "
     else
-        YOSYS_CMD+="dpi_bridge; "
+        YOSYS_CMD+="loom_instrument; "
     fi
 fi
 

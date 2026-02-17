@@ -374,7 +374,7 @@ memory_dff
 finish_transform      # ← NEW: $finish/$fatal → loom_finish_req/code ports
 mem_shadow   -meta loom_meta/loom_mem_meta.json
 scan_insert  -meta loom_meta/loom_scan_meta.json
-dpi_bridge   -meta loom_meta/loom_dpi_meta.json
+loom_instrument   -meta loom_meta/loom_dpi_meta.json
 
 emu_top -board xcu200 -pcie xdma -meta_dir loom_meta/
 

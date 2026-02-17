@@ -4,8 +4,8 @@
 #
 # Flow:
 # 1. yosys-slang reads DPI imports -> creates $__loom_dpi_call cells
-# 2. dpi_bridge transforms DPI cells -> loom_dpi_* interface
-# 3. emu_top adds clock gating wrapper
+# 2. loom_instrument transforms DPI cells -> loom_dpi_* interface + flop enable
+# 3. emu_top creates emulation wrapper with loom_en
 # 4. loom_gen_sim.py generates simulation infrastructure
 # 5. Verilator builds and runs simulation + host
 
@@ -18,14 +18,14 @@ BUILD_DIR="${SCRIPT_DIR}/build"
 # Plugin paths
 YOSYS_BIN="${LOOM_ROOT}/build/yosys/bin/yosys"
 SLANG_PLUGIN="${LOOM_ROOT}/build/yosys-slang/slang.so"
-DPI_BRIDGE_PLUGIN="${LOOM_ROOT}/build/passes/dpi_bridge/dpi_bridge.so"
+LOOM_INSTRUMENT_PLUGIN="${LOOM_ROOT}/build/passes/loom_instrument/loom_instrument.so"
 EMU_TOP_PLUGIN="${LOOM_ROOT}/build/passes/emu_top/emu_top.so"
 
 echo "=== Loom Full E2E DPI Test ==="
 echo "LOOM_ROOT: $LOOM_ROOT"
 echo "BUILD_DIR: $BUILD_DIR"
 echo ""
-echo "Flow: DPI SV -> yosys-slang -> dpi_bridge -> emu_top -> simulation"
+echo "Flow: DPI SV -> yosys-slang -> loom_instrument -> emu_top -> simulation"
 
 # Check prerequisites
 if [ ! -f "$YOSYS_BIN" ]; then
@@ -39,8 +39,8 @@ if [ ! -f "$SLANG_PLUGIN" ]; then
     exit 1
 fi
 
-if [ ! -f "$DPI_BRIDGE_PLUGIN" ]; then
-    echo "ERROR: dpi_bridge plugin not found at $DPI_BRIDGE_PLUGIN"
+if [ ! -f "$LOOM_INSTRUMENT_PLUGIN" ]; then
+    echo "ERROR: loom_instrument plugin not found at $LOOM_INSTRUMENT_PLUGIN"
     exit 1
 fi
 
@@ -52,12 +52,12 @@ mkdir -p "$BUILD_DIR"
 echo ""
 echo "=== Step 1: Yosys transformation ==="
 echo "  - Read DPI imports with yosys-slang"
-echo "  - Transform DPI calls with dpi_bridge"
-echo "  - Generate emu_top wrapper with clock gating"
+echo "  - Transform DPI calls with loom_instrument"
+echo "  - Generate emu_top wrapper with loom_en"
 
 "$YOSYS_BIN" -p "
     plugin -i $SLANG_PLUGIN
-    plugin -i $DPI_BRIDGE_PLUGIN
+    plugin -i $LOOM_INSTRUMENT_PLUGIN
     plugin -i $EMU_TOP_PLUGIN
 
     # Read the DUT with DPI imports
@@ -71,9 +71,9 @@ echo "  - Generate emu_top wrapper with clock gating"
     opt
 
     # Transform DPI calls to hardware interface
-    dpi_bridge -json_out $BUILD_DIR/dpi_metadata.json
+    loom_instrument -json_out $BUILD_DIR/dpi_metadata.json
 
-    # Add emu_top wrapper with clock gating
+    # Add emu_top wrapper
     emu_top -top dpi_test -clk clk_i -rst rst_ni
 
     # Cleanup

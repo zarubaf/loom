@@ -35,10 +35,10 @@ Default socket: /tmp/loom_sim.sock
 
 | Command | Alias | Description |
 |---------|-------|-------------|
-| `run` | `r` | Release DUT reset, start emulation, service DPI loop. Ctrl+C interrupts back to shell. |
+| `run [-a] [<N>ns]` | `r` | Release DUT reset, start emulation, service DPI loop. `-a` or no args = run indefinitely. `<N>ns` or `<N>` = run for N time units from current time. Ctrl+C interrupts back to shell. |
 | `stop` | | Freeze emulation |
 | `step [N]` | `s` | Step N cycles (default 1), service DPI calls during step |
-| `status` | `st` | Print state, cycle count, design info, DPI stats |
+| `status` | `st` | Print state, cycle count, DUT time, time compare, design info, DPI stats |
 | `dump` | `d` | Stop if running, scan capture, display scan data |
 | `reset` | | Assert DUT reset |
 | `help [cmd]` | `h`, `?` | List commands or show detailed help |
@@ -54,16 +54,24 @@ $ loom_host /tmp/loom_sim.sock
 loom> status
   State:       Idle
   Cycles:      0
+  DUT time:    0
+  Time cmp:    unlimited
   Design ID:   0x00000001
   DPI funcs:   2
   Scan bits:   64
 loom> step 10
 [shell] INFO  Stepped 10 cycles (total: 10)
+loom> run 1000ns
+[shell] INFO  Emulation started
+[shell] INFO  Emulation frozen
+[shell] INFO  Cycle count: 1010
+[shell] INFO  DUT time: 1010
 loom> run
 [shell] INFO  Emulation started
 ^C
 [shell] INFO  Interrupted
-[shell] INFO  Cycle count: 1523
+[shell] INFO  Cycle count: 2533
+[shell] INFO  DUT time: 2533
 loom> dump
   Scan chain: 64 bits (2 words)
   [ 0] 0x0000002a
@@ -122,6 +130,16 @@ auto state = ctx.get_state();  // Returns Result<State>
 
 // Get cycle count
 auto cycles = ctx.get_cycle_count();  // Returns Result<uint64_t>
+
+// Get DUT time
+auto time = ctx.get_time();  // Returns Result<uint64_t>
+
+// Set time compare (emulation freezes when time >= compare)
+ctx.set_time_compare(1000);  // Run for 1000 time units from 0
+ctx.set_time_compare(UINT64_MAX);  // Run indefinitely
+
+// Get current time compare value
+auto cmp = ctx.get_time_compare();  // Returns Result<uint64_t>
 ```
 
 ### DPI Service

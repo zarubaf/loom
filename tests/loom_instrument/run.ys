@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+# Test loom_instrument pass - flop enable + DPI bridge
+# Verifies that loom_instrument adds loom_en port and converts all $dff to $dffe
+
+read_verilog -sv ../fixtures/tiny_dff.sv
+hierarchy -top tiny_dff
+proc; opt_clean
+
+# Insert scan chains first (creates loom_scan_enable)
+scan_insert
+
+# Run loom_instrument (adds loom_en, converts FFs to enable variants)
+loom_instrument
+
+# Verify loom_en port was created
+select -assert-count 1 w:loom_en
+
+# Verify no plain $dff remain (all should be $dffe or similar enable variants)
+select -assert-count 0 t:$dff
+select -assert-count 0 t:$adff
+
+# Check design validity
+check -assert

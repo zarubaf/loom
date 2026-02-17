@@ -2,7 +2,7 @@
 // DPI Test Module with actual DPI imports
 //
 // This module uses real DPI-C imports that yosys-slang will transform
-// into $__loom_dpi_call cells, which dpi_bridge then converts to
+// into $__loom_dpi_call cells, which loom_instrument then converts to
 // hardware interfaces.
 //
 // IMPORTANT: DPI calls must be in clocked (always_ff) blocks only.

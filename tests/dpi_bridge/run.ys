@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Test DPI bridge pass with automatic DPI detection
 # Verifies that yosys-slang creates $__loom_dpi_call cells for DPI imports
-# and that dpi_bridge pass converts them to hardware bridge interfaces
+# and that loom_instrument pass converts them to hardware bridge interfaces
 
 # Read using slang frontend (automatically detects DPI imports)
 read_slang ../fixtures/dpi_example.sv
@@ -13,7 +13,7 @@ proc
 stat
 
 # Run DPI bridge pass
-dpi_bridge -gen_wrapper
+loom_instrument -gen_wrapper
 
 # Check that loom_dpi_* interface ports were added
 # loom_dpi_valid triggers clock gating at emu_top level
