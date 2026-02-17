@@ -60,6 +60,7 @@ module loom_axil_socket_bfm #(
         input int unsigned   irq_bits
     );
     import "DPI-C" function void loom_sock_close();
+    import "DPI-C" function void loom_sock_set_trace(int enable);
 
     // -------------------------------------------------------------------------
     // State machine
@@ -76,6 +77,14 @@ module loom_axil_socket_bfm #(
     logic [N_IRQ-1:0] irq_prev_q;
     logic finish_pending_q;
     logic shutdown_sent_q;
+
+    // Runtime trace enable (+loom_bfm_trace on command line)
+    logic bfm_trace;
+
+    initial begin
+        bfm_trace = 1'b0;
+        if ($test$plusargs("loom_bfm_trace")) bfm_trace = 1'b1;
+    end
 
     // Pending request fields (module-level for DPI access)
     byte unsigned  req_type;
@@ -112,6 +121,7 @@ module loom_axil_socket_bfm #(
             $finish;
         end
         socket_initialized = 1'b1;
+        loom_sock_set_trace(int'(bfm_trace));
     end
 
     // Cleanup on finish
@@ -205,7 +215,7 @@ module loom_axil_socket_bfm #(
 
             // Send SHUTDOWN message when finish is pending and we're idle
             if (finish_pending_q && !shutdown_sent_q && state_q == StIdle && !pending_valid_q) begin
-                $display("[BFM] Sending SHUTDOWN message");
+                if (bfm_trace) $display("[BFM] Sending SHUTDOWN message");
                 loom_sock_send(8'd3, 32'd0, 32'd0);  // Type 3 = SHUTDOWN
                 shutdown_sent_q <= 1'b1;
             end
@@ -218,12 +228,12 @@ module loom_axil_socket_bfm #(
                         pending_valid_q <= 1'b0;  // Clear pending flag
                         if (!pending_is_write_q) begin
                             // READ request
-                            $display("[BFM] READ addr=0x%05x", pending_addr_q);
+                            if (bfm_trace) $display("[BFM] READ addr=0x%05x", pending_addr_q);
                             m_axil_araddr_o  <= pending_addr_q;
                             m_axil_arvalid_o <= 1'b1;
                         end else begin
                             // WRITE request
-                            $display("[BFM] WRITE addr=0x%05x data=0x%08x", pending_addr_q, pending_wdata_q);
+                            if (bfm_trace) $display("[BFM] WRITE addr=0x%05x data=0x%08x", pending_addr_q, pending_wdata_q);
                             m_axil_awaddr_o  <= pending_addr_q;
                             m_axil_awvalid_o <= 1'b1;
                             m_axil_wdata_o   <= pending_wdata_q;
@@ -253,7 +263,7 @@ module loom_axil_socket_bfm #(
 
                 StReadData: begin
                     if (m_axil_rvalid_i) begin
-                        $display("[BFM] READ response data=0x%08x", m_axil_rdata_i);
+                        if (bfm_trace) $display("[BFM] READ response data=0x%08x", m_axil_rdata_i);
                         m_axil_rready_o <= 1'b0;
                         loom_sock_send(8'd0, m_axil_rdata_i, 32'd0);
                     end

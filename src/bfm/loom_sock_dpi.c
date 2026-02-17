@@ -21,6 +21,7 @@ extern "C" {
 
 static int server_fd = -1;
 static int client_fd = -1;
+static int trace_enabled = 0;
 
 // Wire protocol message types
 #define LOOM_SOCK_READ       0
@@ -28,6 +29,11 @@ static int client_fd = -1;
 #define LOOM_SOCK_READ_RESP  0
 #define LOOM_SOCK_WRITE_ACK  1
 #define LOOM_SOCK_IRQ        2
+
+// Enable/disable trace logging
+void loom_sock_set_trace(int enable) {
+    trace_enabled = enable;
+}
 
 // Initialize socket server, wait for client connection
 // Called once at simulation start
@@ -123,9 +129,11 @@ int loom_sock_try_recv(
     *req_offset = buf[4] | (buf[5] << 8) | (buf[6] << 16) | (buf[7] << 24);
     *req_wdata  = buf[8] | (buf[9] << 8) | (buf[10] << 16) | (buf[11] << 24);
 
-    printf("[DPI] try_recv: type=%d offset=0x%08x wdata=0x%08x\n",
-           *req_type, *req_offset, *req_wdata);
-    fflush(stdout);
+    if (trace_enabled) {
+        printf("[DPI] try_recv: type=%d offset=0x%08x wdata=0x%08x\n",
+               *req_type, *req_offset, *req_wdata);
+        fflush(stdout);
+    }
 
     return 1;
 }
