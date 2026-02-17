@@ -253,6 +253,9 @@ struct ScanInsertPass : public Pass {
         // Update port list
         module->fixup_ports();
 
+        // Stamp chain length on the module so emu_top can read it
+        module->set_string_attribute(ID(loom_scan_chain_length), std::to_string(chain_pos));
+
         log("  Inserted scan chain with %zu element(s), %d bits total\n", dffs.size(), chain_pos);
         log("  Added ports: loom_scan_enable (in), loom_scan_in (in), loom_scan_out (out)\n");
     }

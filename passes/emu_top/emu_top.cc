@@ -51,11 +51,8 @@ struct EmuTopPass : public Pass {
         log("    -n_irq <count>\n");
         log("        Number of IRQ lines (default: 16)\n");
         log("\n");
-        log("    -n_dpi_funcs <count>\n");
-        log("        Number of DPI functions (default: auto-detect)\n");
-        log("\n");
-        log("    -scan_chain_length <bits>\n");
-        log("        Length of scan chain in bits (default: 64)\n");
+        log("DPI function count and scan chain length are auto-detected from\n");
+        log("module attributes set by loom_instrument and scan_insert.\n");
         log("\n");
         log("Generated module: loom_emu_top\n");
         log("Exposed ports:\n");
@@ -74,8 +71,6 @@ struct EmuTopPass : public Pass {
         std::string rst_name = "rst_ni";
         int addr_width = 20;
         int n_irq = 16;
-        int n_dpi_funcs_override = -1;  // -1 means auto-detect
-        int scan_chain_length = 64;     // Default scan chain length
 
         size_t argidx;
         for (argidx = 1; argidx < args.size(); argidx++) {
@@ -99,14 +94,6 @@ struct EmuTopPass : public Pass {
                 n_irq = atoi(args[++argidx].c_str());
                 continue;
             }
-            if (args[argidx] == "-n_dpi_funcs" && argidx + 1 < args.size()) {
-                n_dpi_funcs_override = atoi(args[++argidx].c_str());
-                continue;
-            }
-            if (args[argidx] == "-scan_chain_length" && argidx + 1 < args.size()) {
-                scan_chain_length = atoi(args[++argidx].c_str());
-                continue;
-            }
             break;
         }
         extra_args(args, argidx, design);
@@ -121,24 +108,24 @@ struct EmuTopPass : public Pass {
             log_error("Module '%s' not found\n", top_name.c_str());
         }
 
-        log("Creating loom_emu_top wrapper for DUT '%s'\n", top_name.c_str());
-        log("  Clock signal: %s\n", clk_name.c_str());
-        log("  Reset signal: %s\n", rst_name.c_str());
-        log("  Address width: %d\n", addr_width);
-        log("  IRQ lines: %d\n", n_irq);
-        log("  Scan chain length: %d bits\n", scan_chain_length);
-
-        // Count DPI functions
-        int n_dpi_funcs;
-        if (n_dpi_funcs_override >= 0) {
-            n_dpi_funcs = n_dpi_funcs_override;
-        } else {
-            RTLIL::Wire *dut_dpi_valid = dut->wire(ID(loom_dpi_valid));
-            if (!dut_dpi_valid) dut_dpi_valid = dut->wire(ID(\\loom_dpi_valid));
-            n_dpi_funcs = dut_dpi_valid ? 1 : 0;
+        // Auto-detect DPI function count from loom_instrument attribute
+        int n_dpi_funcs = 0;
+        std::string n_dpi_str = dut->get_string_attribute(ID(loom_n_dpi_funcs));
+        if (!n_dpi_str.empty()) {
+            n_dpi_funcs = atoi(n_dpi_str.c_str());
         }
 
-        log("  DPI functions: %d\n", n_dpi_funcs);
+        // Auto-detect scan chain length from scan_insert attribute
+        int scan_chain_length = 0;
+        std::string scan_len_str = dut->get_string_attribute(ID(loom_scan_chain_length));
+        if (!scan_len_str.empty()) {
+            scan_chain_length = atoi(scan_len_str.c_str());
+        }
+
+        log("Creating loom_emu_top wrapper for DUT '%s'\n", top_name.c_str());
+        log("  Clock: %s, Reset: %s\n", clk_name.c_str(), rst_name.c_str());
+        log("  DPI functions: %d (auto-detected)\n", n_dpi_funcs);
+        log("  Scan chain: %d bits (auto-detected)\n", scan_chain_length);
 
         // Create the wrapper module
         RTLIL::Module *wrapper = design->addModule(ID(loom_emu_top));

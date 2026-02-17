@@ -263,6 +263,10 @@ struct LoomInstrumentPass : public Pass {
                 if (!module_functions.empty()) {
                     create_bridge_interface(module, module_functions);
                 }
+
+                // Stamp DPI function count so emu_top can read it
+                module->set_string_attribute(ID(loom_n_dpi_funcs),
+                    std::to_string(module_functions.size()));
             }
 
             // Process $__loom_finish cells - transform to hardware output

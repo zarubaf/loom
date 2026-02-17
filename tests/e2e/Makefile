@@ -75,7 +75,7 @@ $(BUILD_DIR)/run.ys: | $(BUILD_DIR)
 	@echo "proc" >> $@
 	@echo "scan_insert -map scan_map.json" >> $@
 	@echo "loom_instrument -json_out dpi_meta.json -header_out loom_dpi_dispatch.c" >> $@
-	@echo "emu_top -top dpi_test -n_dpi_funcs 2 -scan_chain_length 64" >> $@
+	@echo "emu_top -top dpi_test" >> $@
 	@echo "write_verilog -noattr transformed_dpi_test.v" >> $@
 
 $(BUILD_DIR)/transformed_dpi_test.v $(BUILD_DIR)/loom_dpi_dispatch.c: dpi_test.sv $(BUILD_DIR)/run.ys
