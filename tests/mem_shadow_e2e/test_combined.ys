@@ -1,8 +1,7 @@
 # Test script for combined Loom passes (mem_shadow + scan_insert)
 
 # Read design (include sram fixture)
-read_verilog -sv ../fixtures/sram.sv
-read_verilog -sv mem_test.sv
+read_slang ../fixtures/sram.sv mem_test.sv
 
 # Process design
 hierarchy -top mem_test

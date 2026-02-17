@@ -3,7 +3,7 @@
 # Tests that scan_insert pass runs without errors on a simple design
 
 # Read the test design
-read_verilog -sv ../fixtures/tiny_dff.sv
+read_slang ../fixtures/tiny_dff.sv
 
 # Elaborate and optimize
 hierarchy -top tiny_dff
