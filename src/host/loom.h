@@ -1,0 +1,279 @@
+// SPDX-License-Identifier: Apache-2.0
+// Loom - Modern C++ Host Library for FPGA Emulation Control
+//
+// This library provides a transport-agnostic interface for controlling
+// Loom-instrumented designs. It supports both socket (simulation) and
+// PCIe (FPGA) transports.
+
+#pragma once
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <vector>
+#include <optional>
+#include <functional>
+#include <stdexcept>
+
+namespace loom {
+
+// ============================================================================
+// Error Handling
+// ============================================================================
+
+enum class Error {
+    Ok = 0,
+    Transport = -1,
+    Timeout = -2,
+    InvalidArg = -3,
+    NotConnected = -4,
+    Protocol = -5,
+    DpiError = -6,
+    Shutdown = -7,
+};
+
+// Exception for loom errors
+class Exception : public std::runtime_error {
+public:
+    explicit Exception(Error code, std::string_view message = "")
+        : std::runtime_error(std::string(message)), code_(code) {}
+
+    Error code() const { return code_; }
+
+private:
+    Error code_;
+};
+
+// Result type for operations that can fail
+template<typename T>
+class Result {
+public:
+    Result(T value) : value_(std::move(value)), error_(Error::Ok) {}
+    Result(Error error) : error_(error) {}
+
+    bool ok() const { return error_ == Error::Ok; }
+    Error error() const { return error_; }
+
+    T& value() { return value_; }
+    const T& value() const { return value_; }
+
+    T value_or(T default_value) const {
+        return ok() ? value_ : default_value;
+    }
+
+private:
+    T value_{};
+    Error error_;
+};
+
+// Specialization for void
+template<>
+class Result<void> {
+public:
+    Result() : error_(Error::Ok) {}
+    Result(Error error) : error_(error) {}
+
+    bool ok() const { return error_ == Error::Ok; }
+    Error error() const { return error_; }
+
+private:
+    Error error_;
+};
+
+// ============================================================================
+// Emulation States
+// ============================================================================
+
+enum class State : uint8_t {
+    Idle = 0,
+    Running = 1,
+    Frozen = 2,
+    Stepping = 3,
+    Snapshot = 4,
+    Restore = 5,
+    Error = 7,
+};
+
+// ============================================================================
+// Address Map Constants
+// ============================================================================
+
+namespace addr {
+    constexpr uint32_t EmuCtrl = 0x00000;
+    constexpr uint32_t DpiRegfile = 0x00100;
+    constexpr uint32_t ScanCtrl = 0x20000;
+}
+
+namespace reg {
+    // emu_ctrl register offsets
+    constexpr uint32_t Status = 0x00;
+    constexpr uint32_t Control = 0x04;
+    constexpr uint32_t CycleLo = 0x08;
+    constexpr uint32_t CycleHi = 0x0C;
+    constexpr uint32_t StepCount = 0x10;
+    constexpr uint32_t ClkDiv = 0x14;
+    constexpr uint32_t DutReset = 0x18;
+    constexpr uint32_t NDpiFuncs = 0x20;
+    constexpr uint32_t NMemories = 0x24;
+    constexpr uint32_t NScanChains = 0x28;
+    constexpr uint32_t TotalScanBits = 0x2C;
+    constexpr uint32_t DesignId = 0x34;
+    constexpr uint32_t LoomVersion = 0x38;
+    constexpr uint32_t IrqStatus = 0x40;
+    constexpr uint32_t IrqEnable = 0x44;
+    constexpr uint32_t Finish = 0x4C;
+
+    // DPI regfile register offsets (per function, 64 bytes each)
+    constexpr uint32_t DpiFuncSize = 0x40;
+    constexpr uint32_t DpiStatus = 0x00;
+    constexpr uint32_t DpiControl = 0x04;
+    constexpr uint32_t DpiArg0 = 0x08;
+    constexpr uint32_t DpiResultLo = 0x28;
+    constexpr uint32_t DpiResultHi = 0x2C;
+
+    // scan_ctrl register offsets
+    constexpr uint32_t ScanStatus = 0x00;
+    constexpr uint32_t ScanControl = 0x04;
+    constexpr uint32_t ScanLength = 0x08;
+    constexpr uint32_t ScanDataBase = 0x10;
+}
+
+namespace cmd {
+    constexpr uint32_t Start = 0x01;
+    constexpr uint32_t Stop = 0x02;
+    constexpr uint32_t Step = 0x03;
+    constexpr uint32_t Reset = 0x04;
+    constexpr uint32_t Snapshot = 0x05;
+    constexpr uint32_t Restore = 0x06;
+
+    constexpr uint32_t ScanCapture = 0x01;
+    constexpr uint32_t ScanRestore = 0x02;
+}
+
+namespace status {
+    constexpr uint32_t DpiPending = 1 << 0;
+    constexpr uint32_t DpiDone = 1 << 1;
+    constexpr uint32_t DpiError = 1 << 2;
+
+    constexpr uint32_t ScanBusy = 1 << 0;
+    constexpr uint32_t ScanDone = 1 << 1;
+}
+
+namespace ctrl {
+    constexpr uint32_t DpiAck = 1 << 0;
+    constexpr uint32_t DpiSetDone = 1 << 1;
+    constexpr uint32_t DpiSetError = 1 << 2;
+}
+
+// ============================================================================
+// Transport Interface
+// ============================================================================
+
+class Transport {
+public:
+    virtual ~Transport() = default;
+
+    virtual Result<void> connect(std::string_view target) = 0;
+    virtual void disconnect() = 0;
+    virtual Result<uint32_t> read32(uint32_t addr) = 0;
+    virtual Result<void> write32(uint32_t addr, uint32_t data) = 0;
+    virtual Result<uint32_t> poll_irq(int timeout_ms) = 0;
+
+    virtual bool is_connected() const = 0;
+};
+
+// ============================================================================
+// DPI Call Information
+// ============================================================================
+
+struct DpiCall {
+    uint32_t func_id;
+    std::vector<uint32_t> args;
+};
+
+// ============================================================================
+// Loom Context
+// ============================================================================
+
+class Context {
+public:
+    explicit Context(std::unique_ptr<Transport> transport);
+    ~Context();
+
+    // Non-copyable
+    Context(const Context&) = delete;
+    Context& operator=(const Context&) = delete;
+
+    // Movable
+    Context(Context&&) = default;
+    Context& operator=(Context&&) = default;
+
+    // Connection
+    Result<void> connect(std::string_view target);
+    void disconnect();
+    bool is_connected() const;
+
+    // Design info accessors
+    uint32_t n_dpi_funcs() const { return n_dpi_funcs_; }
+    uint32_t scan_chain_length() const { return scan_chain_length_; }
+    uint32_t design_id() const { return design_id_; }
+    uint32_t loom_version() const { return loom_version_; }
+
+    // ========================================================================
+    // Emulation Control
+    // ========================================================================
+
+    Result<State> get_state();
+    Result<void> start();
+    Result<void> stop();
+    Result<void> step(uint32_t n_cycles);
+    Result<void> reset();
+    Result<uint64_t> get_cycle_count();
+    Result<void> dut_reset(bool assert_reset);
+    Result<void> finish(int exit_code);
+
+    // ========================================================================
+    // DPI Function Handling
+    // ========================================================================
+
+    Result<uint32_t> dpi_poll();  // Returns pending mask
+    Result<DpiCall> dpi_get_call(uint32_t func_id);
+    Result<void> dpi_complete(uint32_t func_id, uint64_t result);
+    Result<void> dpi_error(uint32_t func_id);
+
+    // ========================================================================
+    // Scan Chain Control
+    // ========================================================================
+
+    Result<void> scan_capture(int timeout_ms = 5000);
+    Result<void> scan_restore(int timeout_ms = 5000);
+    Result<std::vector<uint32_t>> scan_read_data();
+    Result<void> scan_write_data(const std::vector<uint32_t>& data);
+    Result<bool> scan_is_busy();
+    Result<void> scan_clear_done();
+
+    // ========================================================================
+    // Low-level Register Access
+    // ========================================================================
+
+    Result<uint32_t> read32(uint32_t addr);
+    Result<void> write32(uint32_t addr, uint32_t data);
+
+private:
+    Result<void> scan_wait_done(int timeout_ms);
+
+    std::unique_ptr<Transport> transport_;
+    uint32_t n_dpi_funcs_ = 0;
+    uint32_t scan_chain_length_ = 0;
+    uint32_t design_id_ = 0;
+    uint32_t loom_version_ = 0;
+};
+
+// ============================================================================
+// Transport Factory Functions
+// ============================================================================
+
+std::unique_ptr<Transport> create_socket_transport();
+
+} // namespace loom

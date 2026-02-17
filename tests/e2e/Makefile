@@ -23,6 +23,7 @@ YOSYS_PLUGINS := \
 # Use debug binary to work around Verilator v5.040 internal fault bug
 VERILATOR := VERILATOR_BIN=verilator_bin_dbg verilator
 CC := gcc
+CXX := g++
 
 VERILATOR_FLAGS := \
     --binary --timing -Wall -Wno-fatal \
@@ -31,6 +32,7 @@ VERILATOR_FLAGS := \
     --trace-fst -CFLAGS "-g -O0" -LDFLAGS "-lpthread"
 
 CFLAGS := -g -O0 -Wall -I$(HOST_DIR)
+CXXFLAGS := -std=c++20 -g -O0 -Wall -I$(HOST_DIR)
 LDFLAGS := -lpthread
 
 # RTL sources (absolute paths)
@@ -47,13 +49,13 @@ RTL_SRCS := \
 
 DPI_SRCS := $(BFM_DIR)/loom_sock_dpi.c
 
-# Host sources (from loom src/host)
+# Host sources (from loom src/host) - Modern C++
 HOST_LIB_SRCS := \
-    $(HOST_DIR)/libloom.c \
-    $(HOST_DIR)/loom_transport_socket.c \
-    $(HOST_DIR)/loom_dpi_service.c \
-    $(HOST_DIR)/loom_sim_main.c \
-    $(HOST_DIR)/vpi_user.c
+    $(HOST_DIR)/loom.cpp \
+    $(HOST_DIR)/loom_transport_socket.cpp \
+    $(HOST_DIR)/loom_dpi_service.cpp \
+    $(HOST_DIR)/loom_vpi.cpp \
+    $(HOST_DIR)/loom_sim_main.cpp
 
 # User DPI implementations + generated dispatch table
 HOST_SRCS := dpi_impl.c $(BUILD_DIR)/loom_dpi_dispatch.c
@@ -87,11 +89,32 @@ $(OBJ_DIR)/Vloom_sim_top: $(RTL_SRCS) $(DPI_SRCS) transform
 	$(VERILATOR) $(VERILATOR_FLAGS) --top-module loom_sim_top $(RTL_SRCS) $(DPI_SRCS) --Mdir $(OBJ_DIR) -o Vloom_sim_top
 
 # Step 3: Build host binary
+# Compile C files as C (to preserve extern linkage for const globals)
+# Compile C++ files as C++, then link everything together
 host: $(OBJ_DIR)/loom_host
 
-$(OBJ_DIR)/loom_host: $(HOST_SRCS) $(HOST_LIB_SRCS) transform
-	@mkdir -p $(OBJ_DIR)
-	$(CC) $(CFLAGS) -o $@ $(HOST_SRCS) $(HOST_LIB_SRCS) $(LDFLAGS)
+# C object files (local sources)
+HOST_C_OBJS := $(OBJ_DIR)/dpi_impl.o $(OBJ_DIR)/loom_dpi_dispatch.o
+
+# C++ object files (from HOST_DIR)
+HOST_CXX_OBJS := $(patsubst $(HOST_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(HOST_LIB_SRCS))
+
+# Pattern rule for C++ files from HOST_DIR
+$(OBJ_DIR)/%.o: $(HOST_DIR)/%.cpp | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+# Local C files need explicit rules
+$(OBJ_DIR)/dpi_impl.o: dpi_impl.c | $(OBJ_DIR)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(OBJ_DIR)/loom_dpi_dispatch.o: $(BUILD_DIR)/loom_dpi_dispatch.c | $(OBJ_DIR)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(OBJ_DIR):
+	@mkdir -p $@
+
+$(OBJ_DIR)/loom_host: $(HOST_C_OBJS) $(HOST_CXX_OBJS)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Step 4: Run the test
 run: sim host

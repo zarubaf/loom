@@ -1,0 +1,273 @@
+// SPDX-License-Identifier: Apache-2.0
+// Loom - Modern C++ Host Library Implementation
+
+#include "loom.h"
+#include "loom_log.h"
+#include <unistd.h>
+
+namespace loom {
+
+static Logger logger = make_logger("loom");
+
+// ============================================================================
+// Context Implementation
+// ============================================================================
+
+Context::Context(std::unique_ptr<Transport> transport)
+    : transport_(std::move(transport)) {}
+
+Context::~Context() {
+    disconnect();
+}
+
+Result<void> Context::connect(std::string_view target) {
+    if (!transport_) {
+        return Error::InvalidArg;
+    }
+
+    auto result = transport_->connect(target);
+    if (!result.ok()) {
+        return result.error();
+    }
+
+    // Read design info
+    auto val = read32(addr::EmuCtrl + reg::NDpiFuncs);
+    if (!val.ok()) return val.error();
+    n_dpi_funcs_ = val.value();
+
+    val = read32(addr::EmuCtrl + reg::TotalScanBits);
+    if (!val.ok()) return val.error();
+    scan_chain_length_ = val.value();
+
+    val = read32(addr::EmuCtrl + reg::DesignId);
+    if (!val.ok()) return val.error();
+    design_id_ = val.value();
+
+    val = read32(addr::EmuCtrl + reg::LoomVersion);
+    if (!val.ok()) return val.error();
+    loom_version_ = val.value();
+
+    logger.info("Connected. Design ID: 0x%08x, Version: 0x%08x, DPI funcs: %u, Scan bits: %u",
+             design_id_, loom_version_, n_dpi_funcs_, scan_chain_length_);
+
+    return {};
+}
+
+void Context::disconnect() {
+    if (transport_) {
+        transport_->disconnect();
+    }
+}
+
+bool Context::is_connected() const {
+    return transport_ && transport_->is_connected();
+}
+
+// ============================================================================
+// Low-level Register Access
+// ============================================================================
+
+Result<uint32_t> Context::read32(uint32_t addr) {
+    if (!transport_) {
+        return Error::InvalidArg;
+    }
+    return transport_->read32(addr);
+}
+
+Result<void> Context::write32(uint32_t addr, uint32_t data) {
+    if (!transport_) {
+        return Error::InvalidArg;
+    }
+    return transport_->write32(addr, data);
+}
+
+// ============================================================================
+// Emulation Control
+// ============================================================================
+
+Result<State> Context::get_state() {
+    auto val = read32(addr::EmuCtrl + reg::Status);
+    if (!val.ok()) return val.error();
+    return static_cast<State>(val.value() & 0x7);
+}
+
+Result<void> Context::start() {
+    return write32(addr::EmuCtrl + reg::Control, cmd::Start);
+}
+
+Result<void> Context::stop() {
+    return write32(addr::EmuCtrl + reg::Control, cmd::Stop);
+}
+
+Result<void> Context::step(uint32_t n_cycles) {
+    auto result = write32(addr::EmuCtrl + reg::StepCount, n_cycles);
+    if (!result.ok()) return result;
+    return write32(addr::EmuCtrl + reg::Control, cmd::Step);
+}
+
+Result<void> Context::reset() {
+    return write32(addr::EmuCtrl + reg::Control, cmd::Reset);
+}
+
+Result<uint64_t> Context::get_cycle_count() {
+    auto lo = read32(addr::EmuCtrl + reg::CycleLo);
+    if (!lo.ok()) return lo.error();
+
+    auto hi = read32(addr::EmuCtrl + reg::CycleHi);
+    if (!hi.ok()) return hi.error();
+
+    return (static_cast<uint64_t>(hi.value()) << 32) | lo.value();
+}
+
+Result<void> Context::dut_reset(bool assert_reset) {
+    uint32_t val = assert_reset ? 0x1 : 0x2;
+    return write32(addr::EmuCtrl + reg::DutReset, val);
+}
+
+Result<void> Context::finish(int exit_code) {
+    uint32_t val = 0x01 | ((exit_code & 0xFF) << 8);
+    return write32(addr::EmuCtrl + reg::Finish, val);
+}
+
+// ============================================================================
+// DPI Function Handling
+// ============================================================================
+
+static inline uint32_t dpi_func_addr(uint32_t func_id, uint32_t reg_offset) {
+    return addr::DpiRegfile + (func_id * reg::DpiFuncSize) + reg_offset;
+}
+
+Result<uint32_t> Context::dpi_poll() {
+    uint32_t pending_mask = 0;
+
+    for (uint32_t i = 0; i < n_dpi_funcs_; i++) {
+        auto status_result = read32(dpi_func_addr(i, reg::DpiStatus));
+        if (!status_result.ok()) return status_result.error();
+
+        if (status_result.value() & status::DpiPending) {
+            pending_mask |= (1 << i);
+        }
+    }
+
+    return pending_mask;
+}
+
+Result<DpiCall> Context::dpi_get_call(uint32_t func_id) {
+    if (func_id >= n_dpi_funcs_) {
+        return Error::InvalidArg;
+    }
+
+    DpiCall call;
+    call.func_id = func_id;
+    call.args.resize(8);
+
+    // Read all arguments
+    for (int i = 0; i < 8; i++) {
+        auto arg = read32(dpi_func_addr(func_id, reg::DpiArg0 + i * 4));
+        if (!arg.ok()) return arg.error();
+        call.args[i] = arg.value();
+    }
+
+    return call;
+}
+
+Result<void> Context::dpi_complete(uint32_t func_id, uint64_t result) {
+    if (func_id >= n_dpi_funcs_) {
+        return Error::InvalidArg;
+    }
+
+    auto rc = write32(dpi_func_addr(func_id, reg::DpiResultLo),
+                      static_cast<uint32_t>(result & 0xFFFFFFFF));
+    if (!rc.ok()) return rc;
+
+    rc = write32(dpi_func_addr(func_id, reg::DpiResultHi),
+                 static_cast<uint32_t>(result >> 32));
+    if (!rc.ok()) return rc;
+
+    return write32(dpi_func_addr(func_id, reg::DpiControl), ctrl::DpiSetDone);
+}
+
+Result<void> Context::dpi_error(uint32_t func_id) {
+    if (func_id >= n_dpi_funcs_) {
+        return Error::InvalidArg;
+    }
+
+    return write32(dpi_func_addr(func_id, reg::DpiControl),
+                   ctrl::DpiSetDone | ctrl::DpiSetError);
+}
+
+// ============================================================================
+// Scan Chain Control
+// ============================================================================
+
+Result<void> Context::scan_clear_done() {
+    return write32(addr::ScanCtrl + reg::ScanStatus, status::ScanDone);
+}
+
+Result<void> Context::scan_wait_done(int timeout_ms) {
+    int elapsed = 0;
+    const int poll_interval = 10;  // ms
+
+    while (elapsed < timeout_ms) {
+        auto status_result = read32(addr::ScanCtrl + reg::ScanStatus);
+        if (!status_result.ok()) return status_result.error();
+
+        if (status_result.value() & status::ScanDone) {
+            return {};
+        }
+
+        usleep(poll_interval * 1000);  // Convert ms to microseconds
+        elapsed += poll_interval;
+    }
+
+    return Error::Timeout;
+}
+
+Result<void> Context::scan_capture(int timeout_ms) {
+    auto rc = scan_clear_done();
+    if (!rc.ok()) return rc;
+
+    rc = write32(addr::ScanCtrl + reg::ScanControl, cmd::ScanCapture);
+    if (!rc.ok()) return rc;
+
+    return scan_wait_done(timeout_ms);
+}
+
+Result<void> Context::scan_restore(int timeout_ms) {
+    auto rc = scan_clear_done();
+    if (!rc.ok()) return rc;
+
+    rc = write32(addr::ScanCtrl + reg::ScanControl, cmd::ScanRestore);
+    if (!rc.ok()) return rc;
+
+    return scan_wait_done(timeout_ms);
+}
+
+Result<std::vector<uint32_t>> Context::scan_read_data() {
+    uint32_t n_words = (scan_chain_length_ + 31) / 32;
+    std::vector<uint32_t> data(n_words);
+
+    for (uint32_t i = 0; i < n_words; i++) {
+        auto val = read32(addr::ScanCtrl + reg::ScanDataBase + (i * 4));
+        if (!val.ok()) return val.error();
+        data[i] = val.value();
+    }
+
+    return data;
+}
+
+Result<void> Context::scan_write_data(const std::vector<uint32_t>& data) {
+    for (size_t i = 0; i < data.size(); i++) {
+        auto rc = write32(addr::ScanCtrl + reg::ScanDataBase + (i * 4), data[i]);
+        if (!rc.ok()) return rc;
+    }
+    return {};
+}
+
+Result<bool> Context::scan_is_busy() {
+    auto status_result = read32(addr::ScanCtrl + reg::ScanStatus);
+    if (!status_result.ok()) return status_result.error();
+    return (status_result.value() & status::ScanBusy) != 0;
+}
+
+} // namespace loom

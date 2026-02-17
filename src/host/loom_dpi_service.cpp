@@ -1,0 +1,197 @@
+// SPDX-License-Identifier: Apache-2.0
+// Loom DPI Service Implementation
+
+#include "loom_dpi_service.h"
+#include "loom_log.h"
+#include <unistd.h>
+
+namespace loom {
+
+static Logger logger = make_logger("dpi");
+
+// ============================================================================
+// DpiService Implementation
+// ============================================================================
+
+void DpiService::register_func(int func_id, std::string_view name, int n_args,
+                                int ret_width, DpiCallback callback) {
+    funcs_.push_back({
+        .func_id = func_id,
+        .name = std::string(name),
+        .n_args = n_args,
+        .ret_width = ret_width,
+        .callback = std::move(callback)
+    });
+    logger.debug("Registered function '%.*s' (id=%d, %d args, %d-bit return)",
+              static_cast<int>(name.size()), name.data(), func_id, n_args, ret_width);
+}
+
+const DpiFunc* DpiService::find_func(int func_id) const {
+    for (const auto& func : funcs_) {
+        if (func.func_id == func_id) {
+            return &func;
+        }
+    }
+    return nullptr;
+}
+
+int DpiService::service_once(Context& ctx) {
+    // Poll for pending DPI calls
+    auto poll_result = ctx.dpi_poll();
+    if (!poll_result.ok()) {
+        if (poll_result.error() == Error::Shutdown) {
+            return static_cast<int>(Error::Shutdown);
+        }
+        logger.error("Poll failed");
+        return static_cast<int>(poll_result.error());
+    }
+
+    uint32_t pending_mask = poll_result.value();
+    if (pending_mask == 0) {
+        return 0;  // No pending calls
+    }
+
+    int serviced = 0;
+
+    // Service each pending call
+    for (size_t func_id = 0; func_id < funcs_.size() && func_id < 32; func_id++) {
+        if (!(pending_mask & (1u << func_id))) {
+            continue;
+        }
+
+        const DpiFunc* func = find_func(static_cast<int>(func_id));
+        if (!func) {
+            logger.error("Unknown function ID: %zu", func_id);
+            ctx.dpi_error(static_cast<uint32_t>(func_id));
+            error_count_++;
+            continue;
+        }
+
+        if (!func->callback) {
+            logger.error("No callback for function '%s' (id=%d)",
+                      func->name.c_str(), func->func_id);
+            ctx.dpi_error(static_cast<uint32_t>(func_id));
+            error_count_++;
+            continue;
+        }
+
+        // Get call details
+        auto call_result = ctx.dpi_get_call(static_cast<uint32_t>(func_id));
+        if (!call_result.ok()) {
+            logger.error("Failed to get call for '%s'", func->name.c_str());
+            error_count_++;
+            continue;
+        }
+
+        const DpiCall& call = call_result.value();
+
+        // Call the user function
+        std::span<const uint32_t> args(call.args.data(),
+                                        static_cast<size_t>(func->n_args));
+        uint64_t result = func->callback(args);
+
+        // Complete the call
+        auto complete_result = ctx.dpi_complete(static_cast<uint32_t>(func_id), result);
+        if (!complete_result.ok()) {
+            if (complete_result.error() == Error::Shutdown) {
+                return static_cast<int>(Error::Shutdown);
+            }
+            logger.error("Failed to complete call for '%s'", func->name.c_str());
+            error_count_++;
+            continue;
+        }
+
+        serviced++;
+        call_count_++;
+    }
+
+    return serviced;
+}
+
+DpiExitCode DpiService::run(Context& ctx, int timeout_ms) {
+    int no_activity_count = 0;
+    const int max_no_activity = timeout_ms > 0 ? (timeout_ms / 10) : 1000;
+
+    // Set context for VPI functions
+    current_ctx_ = &ctx;
+
+    logger.info("Entering service loop (n_funcs=%zu)", funcs_.size());
+
+    while (true) {
+        // Service pending calls
+        int rc = service_once(ctx);
+        if (rc == static_cast<int>(Error::Shutdown)) {
+            logger.info("Shutdown message received");
+            current_ctx_ = nullptr;
+            return DpiExitCode::Shutdown;
+        }
+        if (rc < 0) {
+            current_ctx_ = nullptr;
+            return DpiExitCode::Error;
+        }
+
+        if (rc > 0) {
+            no_activity_count = 0;  // Reset timeout counter
+        } else {
+            no_activity_count++;
+        }
+
+        // Check emulation state
+        auto state_result = ctx.get_state();
+        if (!state_result.ok()) {
+            if (state_result.error() == Error::Shutdown) {
+                logger.info("Shutdown message received");
+                current_ctx_ = nullptr;
+                return DpiExitCode::Shutdown;
+            }
+            logger.error("Failed to get state");
+            current_ctx_ = nullptr;
+            return DpiExitCode::Error;
+        }
+
+        State state = state_result.value();
+
+        // Exit on error state
+        if (state == State::Error) {
+            logger.error("Emulation error state");
+            current_ctx_ = nullptr;
+            return DpiExitCode::EmuError;
+        }
+
+        // Exit on frozen state (test complete)
+        if (state == State::Frozen) {
+            logger.info("Emulation frozen, test complete");
+            current_ctx_ = nullptr;
+            return DpiExitCode::Complete;
+        }
+
+        // Timeout check - if no DPI activity for a while and we've done some calls
+        if (call_count_ > 0 && no_activity_count >= max_no_activity) {
+            logger.info("No DPI activity, assuming test complete");
+            current_ctx_ = nullptr;
+            return DpiExitCode::Complete;
+        }
+
+        // Small delay to avoid busy-waiting
+        usleep(10000);  // 10ms
+    }
+}
+
+void DpiService::print_stats() const {
+    logger.info("Statistics:");
+    logger.info("  Total calls serviced: %llu", static_cast<unsigned long long>(call_count_));
+    logger.info("  Errors: %llu", static_cast<unsigned long long>(error_count_));
+    logger.info("  Registered functions: %zu", funcs_.size());
+    for (const auto& func : funcs_) {
+        logger.info("    [%d] %s (%d args, %d-bit return)",
+                 func.func_id, func.name.c_str(), func.n_args, func.ret_width);
+    }
+}
+
+// Global instance
+DpiService& global_dpi_service() {
+    static DpiService instance;
+    return instance;
+}
+
+} // namespace loom
