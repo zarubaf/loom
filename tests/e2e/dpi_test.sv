@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-// DPI Test Module with actual DPI imports
+// DPI Test Module
 //
-// This module uses real DPI-C imports that yosys-slang will transform
-// into $__loom_dpi_call cells, which loom_instrument then converts to
-// hardware interfaces.
+// Uses an LFSR to generate pseudo-random operands, calls dpi_add N_ITER times,
+// and verifies each result against a local adder.  After all iterations the
+// pass/fail count is reported via dpi_report_result and the design finishes.
 //
 // IMPORTANT: DPI calls must be in clocked (always_ff) blocks only.
-// This ensures deterministic clock gating behavior.
 
-// DPI function declarations
 import "DPI-C" function int dpi_add(input int a, input int b);
 import "DPI-C" function int dpi_report_result(input int passed, input int result);
 
@@ -17,57 +15,96 @@ module dpi_test (
     input  logic rst_ni
 );
 
-    // Test parameters - internal constants
-    localparam logic [31:0] TEST_ARG_A = 32'd42;
-    localparam logic [31:0] TEST_ARG_B = 32'd17;
-    localparam logic [31:0] EXPECTED_RESULT = TEST_ARG_A + TEST_ARG_B;  // 59
+    localparam int unsigned N_ITER = 8;
 
+    // =========================================================================
     // State machine
+    // =========================================================================
+
     typedef enum logic [2:0] {
         StIdle,
         StCallAdd,
-        StCheckResult,
+        StCheck,
+        StNext,
         StReport,
         StDone
     } state_e;
 
-    state_e state_q;
-    logic [31:0] result_q;
-    logic test_passed_q;
+    state_e        state_q;
+    logic [31:0]   result_q;
+    logic [15:0]   lfsr_q;        // 16-bit Galois LFSR (taps: 16,14,13,11)
+    logic [3:0]    iter_q;        // iteration counter
+    logic [3:0]    n_pass_q;      // pass count
+    logic [3:0]    n_fail_q;      // fail count
+    logic [15:0]   arg_a_q;       // captured operand A
+    logic [15:0]   arg_b_q;       // captured operand B
 
-    // Sequential logic with DPI calls in clocked block
+    // LFSR next value (Galois, maximal-length for 16 bits)
+    logic [15:0] lfsr_next;
+    assign lfsr_next = {1'b0, lfsr_q[15:1]}
+                     ^ (lfsr_q[0] ? 16'hB400 : 16'h0000);
+
+    // Local reference adder
+    logic [31:0] expected;
+    assign expected = {16'd0, arg_a_q} + {16'd0, arg_b_q};
+
+    // =========================================================================
+    // Main sequential block
+    // =========================================================================
+
     always_ff @(posedge clk_i or negedge rst_ni) begin
         if (!rst_ni) begin
-            state_q       <= StIdle;
-            result_q      <= 32'd77;
-            test_passed_q <= 1'b0;
+            state_q  <= StIdle;
+            result_q <= 32'd0;
+            lfsr_q   <= 16'hACE1;  // non-zero seed
+            iter_q   <= 4'd0;
+            n_pass_q <= 4'd0;
+            n_fail_q <= 4'd0;
+            arg_a_q  <= 16'd0;
+            arg_b_q  <= 16'd0;
         end else begin
             unique case (state_q)
                 StIdle: begin
+                    // Capture first pair of operands from LFSR
+                    arg_a_q <= lfsr_q;
+                    lfsr_q  <= lfsr_next;
                     state_q <= StCallAdd;
                 end
 
                 StCallAdd: begin
-                    // DPI call in clocked block - triggers clock gating
-                    result_q <= dpi_add(TEST_ARG_A, TEST_ARG_B);
-                    state_q <= StCheckResult;
+                    // Latch second operand, then DPI call
+                    arg_b_q  <= lfsr_q;
+                    lfsr_q   <= lfsr_next;
+                    result_q <= dpi_add({16'd0, arg_a_q}, {16'd0, lfsr_q});
+                    state_q  <= StCheck;
                 end
 
-                StCheckResult: begin
-                    // Check result
-                    test_passed_q <= (result_q == EXPECTED_RESULT);
-                    state_q <= StReport;
+                StCheck: begin
+                    if (result_q == expected) begin
+                        n_pass_q <= n_pass_q + 4'd1;
+                    end else begin
+                        n_fail_q <= n_fail_q + 4'd1;
+                    end
+                    state_q <= StNext;
+                end
+
+                StNext: begin
+                    if (iter_q == N_ITER - 1) begin
+                        state_q <= StReport;
+                    end else begin
+                        iter_q  <= iter_q + 4'd1;
+                        arg_a_q <= lfsr_q;
+                        lfsr_q  <= lfsr_next;
+                        state_q <= StCallAdd;
+                    end
                 end
 
                 StReport: begin
-                    // DPI call to report result
-                    result_q <= dpi_report_result({31'b0, test_passed_q}, result_q);
-                    state_q <= StDone;
+                    result_q <= dpi_report_result({28'd0, n_pass_q}, {28'd0, n_fail_q});
+                    state_q  <= StDone;
                 end
 
                 StDone: begin
-                    // Stay in done state
-                    state_q <= StDone;
                     $finish;
                 end
 

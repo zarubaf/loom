@@ -110,6 +110,7 @@ $(OBJ_DIR)/%.o: $(HOST_DIR)/%.cpp | $(OBJ_DIR)
 $(OBJ_DIR)/dpi_impl.o: dpi_impl.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# Generated C dispatch table
 $(OBJ_DIR)/loom_dpi_dispatch.o: $(BUILD_DIR)/loom_dpi_dispatch.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 

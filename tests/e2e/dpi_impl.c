@@ -14,14 +14,16 @@ int32_t dpi_add(int32_t a, int32_t b) {
     return result;
 }
 
-// dpi_report_result: Report test result to host
-int32_t dpi_report_result(int32_t passed, int32_t result) {
-    printf("[dpi] dpi_report_result(passed=%d, result=%d)\n", passed, result);
-    if (passed) {
-        printf("[dpi] TEST PASSED: result=%d\n", result);
+// dpi_report_result: Report final test result
+//   passed = number of passing iterations
+//   result = number of failing iterations
+int32_t dpi_report_result(int32_t passed, int32_t failed) {
+    printf("[dpi] dpi_report_result(passed=%d, failed=%d)\n", passed, failed);
+    if (failed == 0) {
+        printf("[dpi] TEST PASSED: %d/%d iterations OK\n", passed, passed + failed);
     } else {
-        printf("[dpi] TEST FAILED: result=%d\n", result);
+        printf("[dpi] TEST FAILED: %d failures out of %d iterations\n",
+               failed, passed + failed);
     }
-    // Simulation termination is handled by $finish in the hardware
-    return passed ? 0 : 1;
+    return failed;
 }
