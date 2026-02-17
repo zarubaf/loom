@@ -72,7 +72,26 @@ module loom_axi_interconnect #(
     input  logic                    m1_axil_wready_i,
     input  logic [1:0]              m1_axil_bresp_i,
     input  logic                    m1_axil_bvalid_i,
-    output logic                    m1_axil_bready_o
+    output logic                    m1_axil_bready_o,
+
+    // Slave 2: scan_ctrl (0x2_0000 - 0x2_FFFF)
+    output logic [11:0]             m2_axil_araddr_o,
+    output logic                    m2_axil_arvalid_o,
+    input  logic                    m2_axil_arready_i,
+    input  logic [31:0]             m2_axil_rdata_i,
+    input  logic [1:0]              m2_axil_rresp_i,
+    input  logic                    m2_axil_rvalid_i,
+    output logic                    m2_axil_rready_o,
+
+    output logic [11:0]             m2_axil_awaddr_o,
+    output logic                    m2_axil_awvalid_o,
+    input  logic                    m2_axil_awready_i,
+    output logic [31:0]             m2_axil_wdata_o,
+    output logic                    m2_axil_wvalid_o,
+    input  logic                    m2_axil_wready_i,
+    input  logic [1:0]              m2_axil_bresp_i,
+    input  logic                    m2_axil_bvalid_i,
+    output logic                    m2_axil_bready_o
 );
 
     // =========================================================================
@@ -89,9 +108,11 @@ module loom_axi_interconnect #(
                 return 2'd0;  // emu_ctrl
             else
                 return 2'd1;  // dpi_regfile
+        end else if (addr[19:16] == 4'h2) begin
+            return 2'd2;  // scan_ctrl
         end else begin
-            // Reserved for mem_ctrl (0x1xxxx) and scan_ctrl (0x2xxxx)
-            return 2'd1;  // Default to dpi_regfile for now
+            // Reserved for mem_ctrl (0x1xxxx)
+            return 2'd1;  // Default to dpi_regfile
         end
     endfunction
 
@@ -109,17 +130,21 @@ module loom_axi_interconnect #(
 
     // Address routing
     // Note: For dpi_regfile (m1), subtract 0x100 to get relative addresses
+    // Note: For scan_ctrl (m2), subtract 0x20000 to get relative addresses
     always_comb begin
         // Default: no slave selected
         m0_axil_araddr_o  = s_axil_araddr_i[7:0];
         m0_axil_arvalid_o = 1'b0;
         m1_axil_araddr_o  = s_axil_araddr_i[15:0] - 16'h0100;  // Subtract base
         m1_axil_arvalid_o = 1'b0;
+        m2_axil_araddr_o  = s_axil_araddr_i[11:0];  // Just use low bits
+        m2_axil_arvalid_o = 1'b0;
 
         if (s_axil_arvalid_i && !rd_in_progress_q) begin
             case (rd_slave_sel)
                 2'd0: m0_axil_arvalid_o = 1'b1;
                 2'd1: m1_axil_arvalid_o = 1'b1;
+                2'd2: m2_axil_arvalid_o = 1'b1;
                 default: ;
             endcase
         end
@@ -130,6 +155,7 @@ module loom_axi_interconnect #(
         case (rd_slave_sel)
             2'd0:    s_axil_arready_o = m0_axil_arready_i && !rd_in_progress_q;
             2'd1:    s_axil_arready_o = m1_axil_arready_i && !rd_in_progress_q;
+            2'd2:    s_axil_arready_o = m2_axil_arready_i && !rd_in_progress_q;
             default: s_axil_arready_o = 1'b0;
         endcase
     end
@@ -163,6 +189,11 @@ module loom_axi_interconnect #(
                 s_axil_rresp_o  = m1_axil_rresp_i;
                 s_axil_rvalid_o = m1_axil_rvalid_i;
             end
+            2'd2: begin
+                s_axil_rdata_o  = m2_axil_rdata_i;
+                s_axil_rresp_o  = m2_axil_rresp_i;
+                s_axil_rvalid_o = m2_axil_rvalid_i;
+            end
             default: begin
                 s_axil_rdata_o  = 32'hDEAD_BEEF;
                 s_axil_rresp_o  = 2'b10;  // SLVERR
@@ -175,6 +206,7 @@ module loom_axi_interconnect #(
     always_comb begin
         m0_axil_rready_o = (rd_slave_active_q == 2'd0) ? s_axil_rready_i : 1'b0;
         m1_axil_rready_o = (rd_slave_active_q == 2'd1) ? s_axil_rready_i : 1'b0;
+        m2_axil_rready_o = (rd_slave_active_q == 2'd2) ? s_axil_rready_i : 1'b0;
     end
 
     // =========================================================================
@@ -191,16 +223,20 @@ module loom_axi_interconnect #(
 
     // Address routing
     // Note: For dpi_regfile (m1), subtract 0x100 to get relative addresses
+    // Note: For scan_ctrl (m2), use low 12 bits
     always_comb begin
         m0_axil_awaddr_o  = s_axil_awaddr_i[7:0];
         m0_axil_awvalid_o = 1'b0;
         m1_axil_awaddr_o  = s_axil_awaddr_i[15:0] - 16'h0100;  // Subtract base
         m1_axil_awvalid_o = 1'b0;
+        m2_axil_awaddr_o  = s_axil_awaddr_i[11:0];
+        m2_axil_awvalid_o = 1'b0;
 
         if (s_axil_awvalid_i && !wr_in_progress_q) begin
             case (wr_slave_sel)
                 2'd0: m0_axil_awvalid_o = 1'b1;
                 2'd1: m1_axil_awvalid_o = 1'b1;
+                2'd2: m2_axil_awvalid_o = 1'b1;
                 default: ;
             endcase
         end
@@ -212,11 +248,14 @@ module loom_axi_interconnect #(
         m0_axil_wvalid_o = 1'b0;
         m1_axil_wdata_o  = s_axil_wdata_i;
         m1_axil_wvalid_o = 1'b0;
+        m2_axil_wdata_o  = s_axil_wdata_i;
+        m2_axil_wvalid_o = 1'b0;
 
         if (s_axil_wvalid_i && !wr_in_progress_q) begin
             case (wr_slave_sel)
                 2'd0: m0_axil_wvalid_o = 1'b1;
                 2'd1: m1_axil_wvalid_o = 1'b1;
+                2'd2: m2_axil_wvalid_o = 1'b1;
                 default: ;
             endcase
         end
@@ -232,6 +271,10 @@ module loom_axi_interconnect #(
             2'd1: begin
                 s_axil_awready_o = m1_axil_awready_i && !wr_in_progress_q;
                 s_axil_wready_o  = m1_axil_wready_i && !wr_in_progress_q;
+            end
+            2'd2: begin
+                s_axil_awready_o = m2_axil_awready_i && !wr_in_progress_q;
+                s_axil_wready_o  = m2_axil_wready_i && !wr_in_progress_q;
             end
             default: begin
                 s_axil_awready_o = 1'b0;
@@ -267,6 +310,10 @@ module loom_axi_interconnect #(
                 s_axil_bresp_o  = m1_axil_bresp_i;
                 s_axil_bvalid_o = m1_axil_bvalid_i;
             end
+            2'd2: begin
+                s_axil_bresp_o  = m2_axil_bresp_i;
+                s_axil_bvalid_o = m2_axil_bvalid_i;
+            end
             default: begin
                 s_axil_bresp_o  = 2'b10;  // SLVERR
                 s_axil_bvalid_o = 1'b0;
@@ -278,6 +325,7 @@ module loom_axi_interconnect #(
     always_comb begin
         m0_axil_bready_o = (wr_slave_active_q == 2'd0) ? s_axil_bready_i : 1'b0;
         m1_axil_bready_o = (wr_slave_active_q == 2'd1) ? s_axil_bready_i : 1'b0;
+        m2_axil_bready_o = (wr_slave_active_q == 2'd2) ? s_axil_bready_i : 1'b0;
     end
 
 endmodule

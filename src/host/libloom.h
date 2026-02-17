@@ -78,6 +78,7 @@ struct loom_transport {
 // Base addresses for different slaves
 #define LOOM_ADDR_EMU_CTRL    0x00000
 #define LOOM_ADDR_DPI_REGFILE 0x00100
+#define LOOM_ADDR_SCAN_CTRL   0x20000
 
 // emu_ctrl register offsets
 #define LOOM_EMU_STATUS       0x00
@@ -130,6 +131,21 @@ struct loom_transport {
 #define LOOM_DPI_CTRL_SET_DONE   (1 << 1)
 #define LOOM_DPI_CTRL_SET_ERROR  (1 << 2)
 
+// scan_ctrl register offsets
+#define LOOM_SCAN_STATUS      0x00
+#define LOOM_SCAN_CONTROL     0x04
+#define LOOM_SCAN_LENGTH      0x08
+#define LOOM_SCAN_DATA_BASE   0x10  // DATA[0] at 0x10, DATA[1] at 0x14, etc.
+
+// scan_ctrl status bits
+#define LOOM_SCAN_STATUS_BUSY    (1 << 0)
+#define LOOM_SCAN_STATUS_DONE    (1 << 1)
+#define LOOM_SCAN_STATUS_ERROR_MASK  0xF0
+
+// scan_ctrl commands
+#define LOOM_SCAN_CMD_CAPTURE 0x01
+#define LOOM_SCAN_CMD_RESTORE 0x02
+
 // ============================================================================
 // Loom context
 // ============================================================================
@@ -137,6 +153,7 @@ struct loom_transport {
 typedef struct {
     loom_transport_t *transport;
     uint32_t n_dpi_funcs;
+    uint32_t scan_chain_length;  // Total scan bits
     uint32_t design_id;
     uint32_t loom_version;
 } loom_ctx_t;
@@ -207,6 +224,37 @@ int loom_dpi_complete(loom_ctx_t *ctx, uint32_t func_id, uint64_t result);
 
 // Complete a DPI call with an error
 int loom_dpi_error(loom_ctx_t *ctx, uint32_t func_id);
+
+// ============================================================================
+// Scan chain control
+// ============================================================================
+
+// Get scan chain length in bits
+int loom_scan_get_length(loom_ctx_t *ctx, uint32_t *length);
+
+// Capture scan chain state into internal buffer
+// Returns LOOM_OK when done, LOOM_ERR_TIMEOUT if not complete in time
+int loom_scan_capture(loom_ctx_t *ctx, int timeout_ms);
+
+// Restore scan chain state from internal buffer
+// Returns LOOM_OK when done, LOOM_ERR_TIMEOUT if not complete in time
+int loom_scan_restore(loom_ctx_t *ctx, int timeout_ms);
+
+// Read captured scan data from buffer
+// data: array of 32-bit words (must be large enough for chain_length)
+// Returns number of words read, or negative error code
+int loom_scan_read_data(loom_ctx_t *ctx, uint32_t *data, size_t max_words);
+
+// Write scan data to buffer for restore
+// data: array of 32-bit words
+// n_words: number of words to write
+int loom_scan_write_data(loom_ctx_t *ctx, const uint32_t *data, size_t n_words);
+
+// Check if scan operation is in progress
+int loom_scan_is_busy(loom_ctx_t *ctx, int *busy);
+
+// Clear done flag after scan operation
+int loom_scan_clear_done(loom_ctx_t *ctx);
 
 // ============================================================================
 // Low-level register access

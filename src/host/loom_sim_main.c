@@ -69,6 +69,29 @@ int main(int argc, char **argv) {
     loom_dut_reset(ctx, 0);  // Deassert reset
     loom_start(ctx);
 
+    // Initial scan capture to demonstrate scan chain functionality
+    // This captures the state after reset, before the test runs
+    if (ctx->scan_chain_length > 0) {
+        printf("[loom] Initial scan capture (%u bits)...\n", ctx->scan_chain_length);
+        rc = loom_scan_capture(ctx, 5000);
+        if (rc == LOOM_OK) {
+            uint32_t n_words = (ctx->scan_chain_length + 31) / 32;
+            uint32_t *scan_data = (uint32_t *)malloc(n_words * sizeof(uint32_t));
+            if (scan_data) {
+                int words_read = loom_scan_read_data(ctx, scan_data, n_words);
+                if (words_read > 0) {
+                    printf("[loom] Initial state captured (%d words):\n", words_read);
+                    for (int i = 0; i < words_read; i++) {
+                        printf("  [%2d] 0x%08x\n", i, scan_data[i]);
+                    }
+                }
+                free(scan_data);
+            }
+        } else {
+            fprintf(stderr, "[loom] Initial scan capture failed: %d\n", rc);
+        }
+    }
+
     // Initialize and run DPI service
     loom_dpi_service_init(loom_dpi_funcs, loom_dpi_n_funcs);
 
@@ -80,6 +103,11 @@ int main(int argc, char **argv) {
     loom_get_cycle_count(ctx, &cycle_count);
     printf("[loom] Final cycle count: %llu\n", (unsigned long long)cycle_count);
     loom_dpi_service_print_stats();
+
+    // Note: Post-run scan capture is not possible because the simulation
+    // terminates when $finish executes. For production use, the DUT should
+    // signal test completion via a register (not $finish), allowing the host
+    // to stop emulation, capture state, and then initiate shutdown.
 
     // Cleanup
     loom_disconnect(ctx);

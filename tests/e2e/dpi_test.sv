@@ -39,7 +39,7 @@ module dpi_test (
     always_ff @(posedge clk_i or negedge rst_ni) begin
         if (!rst_ni) begin
             state_q       <= StIdle;
-            result_q      <= 32'd0;
+            result_q      <= 32'd77;
             test_passed_q <= 1'b0;
         end else begin
             unique case (state_q)

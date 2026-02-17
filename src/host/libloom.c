@@ -42,6 +42,10 @@ int loom_connect(loom_ctx_t *ctx, const char *target) {
     if (rc != LOOM_OK) return rc;
     ctx->n_dpi_funcs = val;
 
+    rc = loom_read32(ctx, LOOM_ADDR_EMU_CTRL + LOOM_EMU_TOTAL_SCAN_BITS, &val);
+    if (rc != LOOM_OK) return rc;
+    ctx->scan_chain_length = val;
+
     rc = loom_read32(ctx, LOOM_ADDR_EMU_CTRL + LOOM_EMU_DESIGN_ID, &val);
     if (rc != LOOM_OK) return rc;
     ctx->design_id = val;
@@ -230,4 +234,113 @@ int loom_dpi_error(loom_ctx_t *ctx, uint32_t func_id) {
     // Set error and done flags
     return loom_write32(ctx, dpi_func_addr(func_id, LOOM_DPI_CONTROL),
                         LOOM_DPI_CTRL_SET_DONE | LOOM_DPI_CTRL_SET_ERROR);
+}
+
+// ============================================================================
+// Scan chain control
+// ============================================================================
+
+int loom_scan_get_length(loom_ctx_t *ctx, uint32_t *length) {
+    if (!ctx || !length) return LOOM_ERR_INVALID_ARG;
+    *length = ctx->scan_chain_length;
+    return LOOM_OK;
+}
+
+int loom_scan_is_busy(loom_ctx_t *ctx, int *busy) {
+    if (!ctx || !busy) return LOOM_ERR_INVALID_ARG;
+
+    uint32_t status;
+    int rc = loom_read32(ctx, LOOM_ADDR_SCAN_CTRL + LOOM_SCAN_STATUS, &status);
+    if (rc != LOOM_OK) return rc;
+
+    *busy = (status & LOOM_SCAN_STATUS_BUSY) != 0;
+    return LOOM_OK;
+}
+
+int loom_scan_clear_done(loom_ctx_t *ctx) {
+    if (!ctx) return LOOM_ERR_INVALID_ARG;
+
+    // Write to status register to clear done flag (write 1 to bit 1)
+    return loom_write32(ctx, LOOM_ADDR_SCAN_CTRL + LOOM_SCAN_STATUS, LOOM_SCAN_STATUS_DONE);
+}
+
+// Helper: wait for scan operation to complete
+static int scan_wait_done(loom_ctx_t *ctx, int timeout_ms) {
+    int elapsed = 0;
+    const int poll_interval = 1;  // ms
+
+    while (elapsed < timeout_ms) {
+        uint32_t status;
+        int rc = loom_read32(ctx, LOOM_ADDR_SCAN_CTRL + LOOM_SCAN_STATUS, &status);
+        if (rc != LOOM_OK) return rc;
+
+        if (status & LOOM_SCAN_STATUS_DONE) {
+            return LOOM_OK;
+        }
+
+        // Simple busy-wait; in real implementation would use usleep
+        // For now, just do more reads as a delay
+        for (volatile int i = 0; i < 1000; i++);
+        elapsed += poll_interval;
+    }
+
+    return LOOM_ERR_TIMEOUT;
+}
+
+int loom_scan_capture(loom_ctx_t *ctx, int timeout_ms) {
+    if (!ctx) return LOOM_ERR_INVALID_ARG;
+
+    // Clear any previous done flag
+    int rc = loom_scan_clear_done(ctx);
+    if (rc != LOOM_OK) return rc;
+
+    // Issue capture command
+    rc = loom_write32(ctx, LOOM_ADDR_SCAN_CTRL + LOOM_SCAN_CONTROL, LOOM_SCAN_CMD_CAPTURE);
+    if (rc != LOOM_OK) return rc;
+
+    // Wait for completion
+    return scan_wait_done(ctx, timeout_ms);
+}
+
+int loom_scan_restore(loom_ctx_t *ctx, int timeout_ms) {
+    if (!ctx) return LOOM_ERR_INVALID_ARG;
+
+    // Clear any previous done flag
+    int rc = loom_scan_clear_done(ctx);
+    if (rc != LOOM_OK) return rc;
+
+    // Issue restore command
+    rc = loom_write32(ctx, LOOM_ADDR_SCAN_CTRL + LOOM_SCAN_CONTROL, LOOM_SCAN_CMD_RESTORE);
+    if (rc != LOOM_OK) return rc;
+
+    // Wait for completion
+    return scan_wait_done(ctx, timeout_ms);
+}
+
+int loom_scan_read_data(loom_ctx_t *ctx, uint32_t *data, size_t max_words) {
+    if (!ctx || !data) return LOOM_ERR_INVALID_ARG;
+
+    // Calculate how many words we need
+    uint32_t n_words = (ctx->scan_chain_length + 31) / 32;
+    if (n_words > max_words) n_words = max_words;
+
+    // Read each word
+    for (uint32_t i = 0; i < n_words; i++) {
+        int rc = loom_read32(ctx, LOOM_ADDR_SCAN_CTRL + LOOM_SCAN_DATA_BASE + (i * 4), &data[i]);
+        if (rc != LOOM_OK) return rc;
+    }
+
+    return (int)n_words;
+}
+
+int loom_scan_write_data(loom_ctx_t *ctx, const uint32_t *data, size_t n_words) {
+    if (!ctx || !data) return LOOM_ERR_INVALID_ARG;
+
+    // Write each word
+    for (size_t i = 0; i < n_words; i++) {
+        int rc = loom_write32(ctx, LOOM_ADDR_SCAN_CTRL + LOOM_SCAN_DATA_BASE + (i * 4), data[i]);
+        if (rc != LOOM_OK) return rc;
+    }
+
+    return LOOM_OK;
 }

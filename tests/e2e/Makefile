@@ -17,6 +17,7 @@ YOSYS := $(LOOM_ROOT)/build/yosys/bin/yosys
 YOSYS_PLUGINS := \
     -m $(LOOM_ROOT)/build/yosys-slang/slang.so \
     -m $(LOOM_ROOT)/build/passes/dpi_bridge/dpi_bridge.so \
+    -m $(LOOM_ROOT)/build/passes/scan_insert/scan_insert.so \
     -m $(LOOM_ROOT)/build/passes/emu_top/emu_top.so
 
 # Use debug binary to work around Verilator v5.040 internal fault bug
@@ -39,6 +40,7 @@ RTL_SRCS := \
     $(RTL_DIR)/loom_dpi_regfile.sv \
     $(RTL_DIR)/loom_emu_wrapper.sv \
     $(RTL_DIR)/loom_clk_gate.sv \
+    $(RTL_DIR)/loom_scan_ctrl.sv \
     $(BFM_DIR)/loom_axil_socket_bfm.sv \
     $(BUILD_DIR)/transformed_dpi_test.v \
     $(TEST_DIR)/loom_sim_top.sv
@@ -67,7 +69,8 @@ $(BUILD_DIR)/run.ys: | $(BUILD_DIR)
 	@echo "read_slang ../dpi_test.sv -top dpi_test" > $@
 	@echo "proc" >> $@
 	@echo "dpi_bridge -json_out dpi_meta.json -header_out loom_dpi_dispatch.c" >> $@
-	@echo "emu_top -top dpi_test -n_dpi_funcs 2" >> $@
+	@echo "scan_insert -map scan_map.json" >> $@
+	@echo "emu_top -top dpi_test -n_dpi_funcs 2 -scan_chain_length 64" >> $@
 	@echo "write_verilog -noattr transformed_dpi_test.v" >> $@
 
 $(BUILD_DIR)/transformed_dpi_test.v $(BUILD_DIR)/loom_dpi_dispatch.c: dpi_test.sv $(BUILD_DIR)/run.ys
