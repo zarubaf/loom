@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Loom Simulation Host - Main Entry Point
 //
-// This module provides the main() entry point for Loom simulation hosts.
-// It handles all the boilerplate: transport setup, connection, emulation
-// control, DPI service loop, and cleanup.
+// Provides the main() for Loom simulation hosts. Supports two modes:
+//   - Interactive: REPL shell with tab completion, hints, history
+//   - Script:      Execute commands from a file (-f flag)
 //
 // Usage:
 //   1. Include the generated loom_dpi_dispatch.c (defines loom_dpi_funcs)
@@ -16,12 +16,14 @@
 #include "loom.h"
 #include "loom_log.h"
 #include "loom_dpi_service.h"
+#include "loom_shell.h"
 
 #include <cstdlib>
+#include <cstring>
 #include <string>
+#include <unistd.h>
 
 // User-provided DPI function table (from generated loom_dpi_dispatch.c)
-// loom_dpi_func_t is defined in loom_dpi_service.h
 extern "C" {
     extern const loom_dpi_func_t loom_dpi_funcs[];
     extern const int loom_dpi_n_funcs;
@@ -31,10 +33,46 @@ namespace {
     loom::Logger logger = loom::make_logger("main");
 }
 
+static void print_usage(const char* prog) {
+    std::printf("Usage: %s [options] [socket_path]\n", prog);
+    std::printf("Options:\n");
+    std::printf("  -f <script>   Execute commands from script file\n");
+    std::printf("  -v            Verbose (debug logging)\n");
+    std::printf("  -h            Show this help\n");
+    std::printf("Default socket: /tmp/loom_sim.sock\n");
+}
+
 int main(int argc, char** argv) {
     std::string socket_path = "/tmp/loom_sim.sock";
-    if (argc > 1) {
-        socket_path = argv[1];
+    std::string script_file;
+    bool verbose = false;
+
+    // Parse options
+    int opt;
+    while ((opt = getopt(argc, argv, "f:vh")) != -1) {
+        switch (opt) {
+        case 'f':
+            script_file = optarg;
+            break;
+        case 'v':
+            verbose = true;
+            break;
+        case 'h':
+            print_usage(argv[0]);
+            return 0;
+        default:
+            print_usage(argv[0]);
+            return 1;
+        }
+    }
+
+    // Remaining positional argument is socket path
+    if (optind < argc) {
+        socket_path = argv[optind];
+    }
+
+    if (verbose) {
+        loom::set_log_level(loom::LogLevel::Debug);
     }
 
     logger.info("Loom Simulation Host");
@@ -63,54 +101,29 @@ int main(int argc, char** argv) {
                     ctx.n_dpi_funcs(), loom_dpi_n_funcs);
     }
 
-    // Release DUT reset and start emulation
-    ctx.dut_reset(false);
-    ctx.start();
-
-    // Initial scan capture to demonstrate scan chain functionality
-    if (ctx.scan_chain_length() > 0) {
-        logger.info("Initial scan capture (%u bits)...", ctx.scan_chain_length());
-        auto scan_result = ctx.scan_capture(5000);
-        if (scan_result.ok()) {
-            auto data_result = ctx.scan_read_data();
-            if (data_result.ok()) {
-                const auto& scan_data = data_result.value();
-                logger.info("Initial state captured (%zu words):", scan_data.size());
-                for (size_t i = 0; i < scan_data.size(); i++) {
-                    logger.info("  [%2zu] 0x%08x", i, scan_data[i]);
-                }
-            }
-        } else {
-            logger.error("Initial scan capture failed");
-        }
-    }
-
     // Initialize DPI service
     auto& dpi_service = loom::global_dpi_service();
     dpi_service.register_funcs(loom_dpi_funcs, loom_dpi_n_funcs);
 
-    logger.info("Starting DPI service loop...");
-    loom::DpiExitCode exit_code = dpi_service.run(ctx, 30000);  // 30s timeout
+    // Run shell
+    loom::Shell shell(ctx, dpi_service);
+    int exit_code;
+    if (!script_file.empty()) {
+        exit_code = shell.run_script(script_file);
+    } else {
+        exit_code = shell.run_interactive();
+    }
 
-    // Get final stats
+    // Final stats
     auto cycle_result = ctx.get_cycle_count();
     if (cycle_result.ok()) {
         logger.info("Final cycle count: %llu",
-                 static_cast<unsigned long long>(cycle_result.value()));
+                    static_cast<unsigned long long>(cycle_result.value()));
     }
     dpi_service.print_stats();
 
     // Disconnect
     ctx.disconnect();
 
-    // Report result
-    if (exit_code == loom::DpiExitCode::Complete ||
-        exit_code == loom::DpiExitCode::Shutdown) {
-        logger.info("SIMULATION COMPLETED SUCCESSFULLY (exit=%d)",
-                 static_cast<int>(exit_code));
-        return 0;
-    } else {
-        logger.error("SIMULATION FAILED (exit_code=%d)", static_cast<int>(exit_code));
-        return 1;
-    }
+    return exit_code;
 }

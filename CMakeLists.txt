@@ -18,13 +18,14 @@ endif()
 include(cmake/FetchYosys.cmake)
 include(cmake/FetchYosysSlang.cmake)  # SystemVerilog frontend (includes slang)
 include(cmake/FetchGoogleTest.cmake)
+include(cmake/FetchReplxx.cmake)
 
 # ---------- Plugins ----------
 add_subdirectory(passes)
 add_subdirectory(frontend)
 
 # ---------- Host tools ----------
-# add_subdirectory(host)  # Not yet implemented
+add_subdirectory(src/host)
 
 # ---------- Tests ----------
 enable_testing()

@@ -31,9 +31,13 @@ VERILATOR_FLAGS := \
     -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-BLKSEQ -Wno-TIMESCALEMOD \
     --trace-fst -CFLAGS "-g -O0" -LDFLAGS "-lpthread"
 
+# Replxx paths (fetched by CMake)
+REPLXX_INC := -I$(LOOM_ROOT)/build/_deps/replxx-src/include
+REPLXX_LIB := $(LOOM_ROOT)/build/_deps/replxx-build/libreplxx.a
+
 CFLAGS := -g -O0 -Wall -I$(HOST_DIR)
-CXXFLAGS := -std=c++20 -g -O0 -Wall -I$(HOST_DIR)
-LDFLAGS := -lpthread
+CXXFLAGS := -std=c++20 -g -O0 -Wall -I$(HOST_DIR) $(REPLXX_INC)
+LDFLAGS := -lpthread -lc++
 
 # RTL sources (absolute paths)
 RTL_SRCS := \
@@ -55,6 +59,7 @@ HOST_LIB_SRCS := \
     $(HOST_DIR)/loom_transport_socket.cpp \
     $(HOST_DIR)/loom_dpi_service.cpp \
     $(HOST_DIR)/loom_vpi.cpp \
+    $(HOST_DIR)/loom_shell.cpp \
     $(HOST_DIR)/loom_sim_main.cpp
 
 # User DPI implementations + generated dispatch table
@@ -113,10 +118,10 @@ $(OBJ_DIR)/loom_dpi_dispatch.o: $(BUILD_DIR)/loom_dpi_dispatch.c | $(OBJ_DIR)
 $(OBJ_DIR):
 	@mkdir -p $@
 
-$(OBJ_DIR)/loom_host: $(HOST_C_OBJS) $(HOST_CXX_OBJS)
+$(OBJ_DIR)/loom_host: $(HOST_C_OBJS) $(HOST_CXX_OBJS) $(REPLXX_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Step 4: Run the test
+# Step 4: Run the test (script mode for automated testing)
 run: sim host
 	@rm -f $(SOCKET_PATH)
 	@echo "=== Starting Loom Simulation ==="
@@ -124,7 +129,9 @@ run: sim host
 	@SIM_PID=$$!; \
 	sleep 1; \
 	echo "=== Running Host ===" ; \
-	$(OBJ_DIR)/loom_host $(SOCKET_PATH); \
+	echo "run" > $(BUILD_DIR)/test_script.txt; \
+	echo "exit" >> $(BUILD_DIR)/test_script.txt; \
+	$(OBJ_DIR)/loom_host -f $(BUILD_DIR)/test_script.txt $(SOCKET_PATH); \
 	TEST_RC=$$?; \
 	kill $$SIM_PID 2>/dev/null || true; \
 	wait $$SIM_PID 2>/dev/null || true; \
