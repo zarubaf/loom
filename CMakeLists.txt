@@ -22,7 +22,6 @@ include(cmake/FetchReplxx.cmake)
 
 # ---------- Plugins ----------
 add_subdirectory(passes)
-add_subdirectory(frontend)
 
 # ---------- Host tools ----------
 add_subdirectory(src/host)
