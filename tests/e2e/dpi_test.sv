@@ -87,6 +87,7 @@ module dpi_test (
                 end
 
                 StCheck: begin
+                    $display("Got result %x", result_q);
                     if (result_q == expected) begin
                         n_pass_q <= n_pass_q + 4'd1;
                     end else begin

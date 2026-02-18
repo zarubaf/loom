@@ -26,6 +26,7 @@
 
 #include "kernel/yosys.h"
 #include "kernel/sigtools.h"
+#include "kernel/fmt.h"
 #include <fstream>
 
 USING_YOSYS_NAMESPACE
@@ -57,6 +58,7 @@ struct DpiFunction {
     RTLIL::SigSpec args_sig;
     RTLIL::SigSpec result_sig;
     RTLIL::SigSpec valid_condition;  // Derived execution condition (populated after derive)
+    bool builtin = false;            // true for loom-provided functions (__loom_display_*)
 };
 
 struct LoomInstrumentPass : public Pass {
@@ -157,10 +159,13 @@ struct LoomInstrumentPass : public Pass {
         for (auto module : design->selected_modules()) {
             log("Processing module %s\n", log_id(module));
 
+            // Transform $print cells into $__loom_dpi_call cells first
+            process_print_cells(module);
+
             std::vector<RTLIL::Cell*> cells_to_process;
             std::vector<DpiFunction> module_functions;
 
-            // Find $__loom_dpi_call cells created by yosys-slang
+            // Find $__loom_dpi_call cells (from yosys-slang + converted $print)
             for (auto cell : module->cells()) {
                 if (cell->type == ID($__loom_dpi_call)) {
                     cells_to_process.push_back(cell);
@@ -250,6 +255,9 @@ struct LoomInstrumentPass : public Pass {
                             func.args.push_back(arg);
                         }
                     }
+
+                    // Check if this is a loom-internal builtin
+                    func.builtin = cell->get_bool_attribute(RTLIL::IdString("\\loom_dpi_builtin"));
 
                     // Get the argument and result signals
                     if (cell->hasPort(ID(ARGS))) {
@@ -429,12 +437,24 @@ struct LoomInstrumentPass : public Pass {
     }
 
     // Derive the execution condition for a DPI call.
+    // Prefers the EN port (set by yosys-slang's set_effects_trigger) if available.
+    // Falls back to tracing the RESULT signal through pmux/mux select bits.
     RTLIL::SigSpec derive_valid_condition(RTLIL::Module *module, const DpiFunction &func) {
         SigMap sigmap(module);
 
+        // If the cell has an EN port (set by yosys-slang for procedural calls),
+        // use it directly as the valid condition.
+        if (func.cell->hasPort(ID::EN)) {
+            RTLIL::SigSpec en = func.cell->getPort(ID::EN);
+            if (GetSize(en) > 0) {
+                log("    Using EN port as valid condition: %s\n", log_signal(en));
+                return en;
+            }
+        }
+
         RTLIL::SigSpec result_sig = sigmap(func.result_sig);
         if (GetSize(result_sig) == 0) {
-            log("    No result signal, defaulting to valid=1\n");
+            log_warning("    No result signal and no EN port, defaulting to valid=1\n");
             return RTLIL::SigSpec(RTLIL::State::S1);
         }
 
@@ -498,6 +518,153 @@ struct LoomInstrumentPass : public Pass {
     }
 
     // Process $__loom_finish cells and convert to hardware output signal.
+    // =========================================================================
+    // $print → $__loom_dpi_call transformation
+    // =========================================================================
+    //
+    // Converts $print cells (from $display/$write) into DPI calls.
+    // The format string is stored as a string attribute (compile-time constant,
+    // not in the hardware args bus).  Only the variable signal arguments travel
+    // through the DPI bridge registers.
+    //
+    // The generated C wrapper reconstructs printf() from the format string and
+    // the register values — no user implementation needed.
+
+    void process_print_cells(RTLIL::Module *module) {
+        static int display_counter = 0;
+        std::vector<RTLIL::Cell*> print_cells;
+
+        for (auto cell : module->cells()) {
+            if (cell->type == ID($print)) {
+                print_cells.push_back(cell);
+            }
+        }
+
+        if (print_cells.empty())
+            return;
+
+        log("  Found %zu $display/$print cell(s)\n", print_cells.size());
+
+        for (auto cell : print_cells) {
+            // Parse the Yosys Fmt structure from the $print cell
+            Fmt fmt;
+            fmt.parse_rtlil(cell);
+
+            // Build the C printf format string and collect signal arguments
+            std::string c_fmt;
+            std::string arg_names, arg_types, arg_widths, arg_dirs;
+            RTLIL::SigSpec hw_args;
+            int hw_arg_idx = 0;
+
+            // First arg is the format string (string type, width 0)
+            arg_names = "fmt";
+            arg_types = "string";
+            arg_widths = "0";
+            arg_dirs = "input";
+
+            for (const auto &part : fmt.parts) {
+                if (part.type == FmtPart::LITERAL) {
+                    // Escape for C string
+                    for (char ch : part.str) {
+                        if (ch == '\\') c_fmt += "\\\\";
+                        else if (ch == '"') c_fmt += "\\\"";
+                        else if (ch == '\n') c_fmt += "\\n";
+                        else if (ch == '\t') c_fmt += "\\t";
+                        else c_fmt += ch;
+                    }
+                } else if (part.type == FmtPart::INTEGER) {
+                    int sig_width = GetSize(part.sig);
+
+                    // Map Yosys format spec to printf conversion
+                    if (part.base == 16) {
+                        c_fmt += part.hex_upper ? "%X" : "%x";
+                    } else if (part.base == 10 && !part.signed_) {
+                        c_fmt += "%u";
+                    } else if (part.base == 10) {
+                        c_fmt += "%d";
+                    } else if (part.base == 8) {
+                        c_fmt += "%o";
+                    } else if (part.base == 2) {
+                        // Binary: no direct printf, use hex as fallback
+                        c_fmt += "0x%x";
+                    } else {
+                        c_fmt += "%d";
+                    }
+
+                    hw_args.append(part.sig);
+
+                    if (hw_arg_idx > 0 || !arg_names.empty()) {
+                        arg_names += ",";
+                        arg_types += ",";
+                        arg_widths += ",";
+                        arg_dirs += ",";
+                    }
+                    arg_names += "arg" + std::to_string(hw_arg_idx);
+                    arg_types += part.signed_ ? "int" : "bit";
+                    arg_widths += std::to_string(sig_width);
+                    arg_dirs += "input";
+                    hw_arg_idx++;
+                } else if (part.type == FmtPart::STRING) {
+                    c_fmt += "%s";
+                    hw_args.append(part.sig);
+
+                    if (!arg_names.empty()) {
+                        arg_names += ",";
+                        arg_types += ",";
+                        arg_widths += ",";
+                        arg_dirs += ",";
+                    }
+                    arg_names += "arg" + std::to_string(hw_arg_idx);
+                    arg_types += "bit";
+                    arg_widths += std::to_string(GetSize(part.sig));
+                    arg_dirs += "input";
+                    hw_arg_idx++;
+                }
+                // UNICHAR and VLOG_TIME: skip for now
+            }
+
+            int total_hw_width = GetSize(hw_args);
+
+            // Create a $__loom_dpi_call cell to replace the $print
+            std::string dpi_name = "__loom_display_" + std::to_string(display_counter++);
+            RTLIL::Cell *dpi_cell = module->addCell(NEW_ID, ID($__loom_dpi_call));
+            dpi_cell->set_string_attribute(ID(loom_dpi_func), dpi_name);
+            dpi_cell->set_bool_attribute(ID::blackbox, true);
+            dpi_cell->setPort(ID(ARGS), hw_args);
+            dpi_cell->setParam(ID(ARG_WIDTH), total_hw_width);
+            dpi_cell->setParam(ID(RET_WIDTH), 0);
+            dpi_cell->setParam(ID(NUM_ARGS), hw_arg_idx + 1); // +1 for format string
+
+            // Empty result port (void)
+            dpi_cell->setPort(ID(RESULT), RTLIL::SigSpec());
+
+            // Store argument metadata
+            dpi_cell->set_string_attribute(ID(loom_dpi_arg_names), arg_names);
+            dpi_cell->set_string_attribute(ID(loom_dpi_arg_types), arg_types);
+            dpi_cell->set_string_attribute(ID(loom_dpi_arg_widths), arg_widths);
+            dpi_cell->set_string_attribute(ID(loom_dpi_arg_dirs), arg_dirs);
+            dpi_cell->set_string_attribute(ID(loom_dpi_ret_type), "void");
+
+            // Store format string as string arg attribute
+            dpi_cell->set_string_attribute(
+                RTLIL::IdString("\\loom_dpi_string_arg_0"), c_fmt);
+
+            // Mark as loom-internal display function
+            dpi_cell->set_bool_attribute(RTLIL::IdString("\\loom_dpi_builtin"), true);
+
+            // Propagate EN from the $print cell so derive_valid_condition can use it
+            if (cell->hasPort(ID::EN)) {
+                dpi_cell->setPort(ID::EN, cell->getPort(ID::EN));
+            }
+
+            log("    Converted $print → %s (fmt=\"%s\", %d hw args, %d bits)\n",
+                dpi_name.c_str(), c_fmt.c_str(), hw_arg_idx, total_hw_width);
+
+            // Remove the original $print cell
+            module->remove(cell);
+        }
+    }
+
     void process_finish_cells(RTLIL::Module *module) {
         std::vector<RTLIL::Cell*> finish_cells;
 
@@ -800,8 +967,12 @@ struct LoomInstrumentPass : public Pass {
         ofs << "#include <loom_dpi_service.h>\n";
         ofs << "\n";
 
+        ofs << "#include <stdio.h>\n\n";
+
         ofs << "// User-provided DPI function implementations\n";
         for (const auto &func : functions) {
+            if (func.builtin) continue;  // builtins have no extern decl
+
             std::string ret_type = sv_type_to_c(func.ret_type, func.ret_width);
             if (func.ret_width == 0) {
                 ret_type = "void";
@@ -827,26 +998,49 @@ struct LoomInstrumentPass : public Pass {
         for (const auto &func : functions) {
             ofs << "static uint64_t _loom_wrap_" << func.name << "(const uint32_t *args) {\n";
 
-            std::string call_args;
-            int arg_offset = 0;
-            for (size_t i = 0; i < func.args.size(); i++) {
-                const auto &arg = func.args[i];
-                if (i > 0) call_args += ", ";
-                if (arg.type == "string") {
-                    // String args: pass compile-time constant, not from register
-                    call_args += "\"" + arg.string_value + "\"";
-                } else {
+            if (func.builtin) {
+                // Built-in display function: generate printf inline
+                // First arg (idx 0) is the format string (compile-time constant)
+                std::string fmt_str;
+                int arg_offset = 0;
+                for (const auto &arg : func.args) {
+                    if (arg.type == "string") {
+                        fmt_str = arg.string_value;
+                    }
+                }
+
+                ofs << "    printf(\"" << fmt_str << "\"";
+                for (size_t i = 0; i < func.args.size(); i++) {
+                    const auto &arg = func.args[i];
+                    if (arg.type == "string") continue;  // skip format string
                     std::string c_type = sv_type_to_c(arg.type, arg.width);
-                    call_args += "(" + c_type + ")args[" + std::to_string(arg_offset) + "]";
+                    ofs << ", (" << c_type << ")args[" << arg_offset << "]";
                     arg_offset += (arg.width + 31) / 32;
                 }
-            }
-
-            if (func.ret_width > 0) {
-                ofs << "    return (uint64_t)" << func.name << "(" << call_args << ");\n";
-            } else {
-                ofs << "    " << func.name << "(" << call_args << ");\n";
+                ofs << ");\n";
                 ofs << "    return 0;\n";
+            } else {
+                // User function: generate call with args
+                std::string call_args;
+                int arg_offset = 0;
+                for (size_t i = 0; i < func.args.size(); i++) {
+                    const auto &arg = func.args[i];
+                    if (i > 0) call_args += ", ";
+                    if (arg.type == "string") {
+                        call_args += "\"" + arg.string_value + "\"";
+                    } else {
+                        std::string c_type = sv_type_to_c(arg.type, arg.width);
+                        call_args += "(" + c_type + ")args[" + std::to_string(arg_offset) + "]";
+                        arg_offset += (arg.width + 31) / 32;
+                    }
+                }
+
+                if (func.ret_width > 0) {
+                    ofs << "    return (uint64_t)" << func.name << "(" << call_args << ");\n";
+                } else {
+                    ofs << "    " << func.name << "(" << call_args << ");\n";
+                    ofs << "    return 0;\n";
+                }
             }
             ofs << "}\n\n";
         }
