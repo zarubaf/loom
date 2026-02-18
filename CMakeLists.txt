@@ -70,6 +70,12 @@ install(DIRECTORY ${CMAKE_SOURCE_DIR}/src/rtl/
     FILES_MATCHING PATTERN "*.sv"
 )
 
+# Install public headers (svdpi.h, vpi_user.h)
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/src/include/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/loom
+    FILES_MATCHING PATTERN "*.h"
+)
+
 # Install headers for dispatch compilation
 install(FILES ${CMAKE_SOURCE_DIR}/src/host/loom_dpi_service.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/loom

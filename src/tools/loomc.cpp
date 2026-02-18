@@ -149,19 +149,16 @@ std::string build_yosys_script(const Options &opts,
                                const loom::LoomPaths &paths) {
     std::ostringstream ys;
 
-    // Read sources via slang
-    for (auto &f : opts.filelists) {
-        ys << "read_slang -F " << fs::absolute(f).string();
-        if (!opts.top_module.empty())
-            ys << " --top " << opts.top_module;
-        ys << "\n";
-    }
-    for (auto &s : opts.sources) {
-        ys << "read_slang " << fs::absolute(s).string();
-        if (!opts.top_module.empty())
-            ys << " --top " << opts.top_module;
-        ys << "\n";
-    }
+    // Read all sources via a single read_slang call so that
+    // cross-file module references resolve correctly.
+    ys << "read_slang";
+    for (auto &f : opts.filelists)
+        ys << " -F " << fs::absolute(f).string();
+    for (auto &s : opts.sources)
+        ys << " " << fs::absolute(s).string();
+    if (!opts.top_module.empty())
+        ys << " --top " << opts.top_module;
+    ys << "\n";
 
     // Elaborate
     ys << "hierarchy -check -top " << opts.top_module << "\n";

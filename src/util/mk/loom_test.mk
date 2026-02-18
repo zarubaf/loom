@@ -29,6 +29,9 @@ BUILD ?= build
 CC    ?= cc
 CXX   ?= c++
 
+# ---------- Loom include path (svdpi.h, etc.) ----------
+LOOM_INCLUDE := $(LOOM_ROOT)/src/include
+
 # ---------- Validation ----------
 ifndef TOP
   $(error TOP is not set — specify the top module name)
@@ -64,11 +67,11 @@ ifdef DPI_SRCS
 
 $(BUILD)/%.o: %.c $(DPI_HDRS) | $(BUILD)
 	@mkdir -p $(dir $@)
-	$(CC) -fPIC -g -O0 $(DPI_CFLAGS) -c -o $@ $<
+	$(CC) -fPIC -g -O0 -I$(LOOM_INCLUDE) $(DPI_CFLAGS) -c -o $@ $<
 
 $(BUILD)/%.o: %.cpp $(DPI_HDRS) | $(BUILD)
 	@mkdir -p $(dir $@)
-	$(CXX) -fPIC -g -O0 -std=c++17 $(DPI_CXXFLAGS) -c -o $@ $<
+	$(CXX) -fPIC -g -O0 -std=c++17 -I$(LOOM_INCLUDE) $(DPI_CXXFLAGS) -c -o $@ $<
 
 $(BUILD)/libdpi.so: $(_DPI_OBJS)
 	$(_DPI_LINK) -shared -o $@ $^
