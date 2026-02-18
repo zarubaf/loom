@@ -23,8 +23,11 @@ include(cmake/FetchReplxx.cmake)
 # ---------- Plugins ----------
 add_subdirectory(passes)
 
-# ---------- Host tools ----------
+# ---------- Host library ----------
 add_subdirectory(src/host)
+
+# ---------- Tools (loomc, loomx) ----------
+add_subdirectory(src/tools)
 
 # ---------- Tests ----------
 enable_testing()
@@ -56,15 +59,25 @@ install(FILES ${YOSYS_SLANG_PLUGIN}
     RENAME slang.so
 )
 
-# Install CLI wrapper
-install(PROGRAMS ${CMAKE_SOURCE_DIR}/bin/loom
-    DESTINATION ${CMAKE_INSTALL_BINDIR}
+# Install loomc and loomx
+install(TARGETS loomc loomx
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
 # Install RTL files
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/rtl/
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/src/rtl/
     DESTINATION ${CMAKE_INSTALL_DATADIR}/loom/rtl
     FILES_MATCHING PATTERN "*.sv"
+)
+
+# Install headers for dispatch compilation
+install(FILES ${CMAKE_SOURCE_DIR}/src/host/loom_dpi_service.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/loom
+)
+
+# Install shared Makefile fragments
+install(FILES ${CMAKE_SOURCE_DIR}/src/util/mk/loom.mk
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/loom
 )
 
 # Install code generator scripts

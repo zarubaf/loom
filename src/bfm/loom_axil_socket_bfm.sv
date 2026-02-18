@@ -113,11 +113,17 @@ module loom_axil_socket_bfm #(
     logic socket_initialized;
 
     initial begin
+        string effective_path;
         socket_initialized = 1'b0;
         // Wait for reset to complete (100ns at 1ns timescale)
         #200;
-        if (loom_sock_init(SOCKET_PATH) < 0) begin
-            $error("[loom_bfm] Failed to initialize socket at %s", SOCKET_PATH);
+        // Allow runtime override via +socket=PATH (used by loomx for
+        // PID-based paths that avoid collisions in parallel test runs)
+        if (!$value$plusargs("socket=%s", effective_path)) begin
+            effective_path = SOCKET_PATH;
+        end
+        if (loom_sock_init(effective_path) < 0) begin
+            $error("[loom_bfm] Failed to initialize socket at %s", effective_path);
             $finish;
         end
         socket_initialized = 1'b1;

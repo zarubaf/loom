@@ -90,6 +90,13 @@ Result<void> SocketTransport::send_message(uint8_t type, uint32_t addr, uint32_t
         ssize_t n = ::write(fd_, buf + total, 12 - total);
         if (n <= 0) {
             if (errno == EINTR) continue;
+            // Broken pipe / connection reset = peer (sim) exited
+            if (errno == EPIPE || errno == ECONNRESET) {
+                logger.debug("Peer disconnected");
+                ::close(fd_);
+                fd_ = -1;
+                return Error::Shutdown;
+            }
             logger.error("Write failed: %s", strerror(errno));
             return Error::Transport;
         }
@@ -103,10 +110,23 @@ Result<std::tuple<uint8_t, uint32_t, uint32_t>> SocketTransport::recv_message() 
     size_t total = 0;
     while (total < 12) {
         ssize_t n = ::read(fd_, buf + total, 12 - total);
-        if (n <= 0) {
+        if (n < 0) {
             if (errno == EINTR) continue;
+            if (errno == ECONNRESET) {
+                logger.debug("Peer disconnected");
+                ::close(fd_);
+                fd_ = -1;
+                return Error::Shutdown;
+            }
             logger.error("Read failed: %s", strerror(errno));
             return Error::Transport;
+        }
+        if (n == 0) {
+            // EOF — peer (sim) closed the connection
+            logger.debug("Peer disconnected (EOF)");
+            ::close(fd_);
+            fd_ = -1;
+            return Error::Shutdown;
         }
         total += static_cast<size_t>(n);
     }

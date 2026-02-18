@@ -10,7 +10,10 @@ add_library(loom_host STATIC
     loom_shell.cpp
 )
 
-target_include_directories(loom_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(loom_host PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/src/util
+)
 target_compile_features(loom_host PUBLIC cxx_std_20)
 target_link_libraries(loom_host PUBLIC replxx::replxx)
 

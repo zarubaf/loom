@@ -94,8 +94,16 @@ endfunction()
 # emu_top tests
 add_emu_top_test(emu_top)
 
-# End-to-end tests using slang frontend
-add_yosys_slang_test(e2e)
+# End-to-end DPI test using loomc/loomx
+add_test(NAME e2e_dpi_test
+    COMMAND make test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/e2e
+)
+set_tests_properties(e2e_dpi_test PROPERTIES
+    DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;loom_instrument;emu_top;loomc;loomx"
+    TIMEOUT 120
+    ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR}"
+)
 
 # Helper function for mem_shadow E2E tests (transform + simulate)
 function(add_mem_shadow_e2e_test TEST_NAME)
