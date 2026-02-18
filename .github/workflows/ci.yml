@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: Apache-2.0
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake \
+            bison flex libfl-dev gawk \
+            pkg-config \
+            libffi-dev libreadline-dev zlib1g-dev \
+            tcl-dev
+
+      - name: Cache build
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: build-${{ runner.os }}-${{ hashFiles('cmake/FetchYosys.cmake', 'cmake/FetchYosysSlang.cmake', 'third_party/yosys-slang/**') }}
+          restore-keys: |
+            build-${{ runner.os }}-
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Test (pass tests)
+        run: ctest --test-dir build -E "e2e|mem_shadow" --output-on-failure

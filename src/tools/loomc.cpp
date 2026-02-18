@@ -13,7 +13,9 @@
 #include "loom_paths.h"
 #include "loom_log.h"
 
+#include <cerrno>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
