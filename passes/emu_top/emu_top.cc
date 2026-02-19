@@ -269,15 +269,26 @@ struct EmuTopPass : public Pass {
         RTLIL::Wire *dpi_call_args = wrapper->addWire(ID(dpi_call_args), args_width);
         RTLIL::Wire *dpi_ret_valid = wrapper->addWire(ID(dpi_ret_valid), n_dpi);
         RTLIL::Wire *dpi_ret_ready = wrapper->addWire(ID(dpi_ret_ready), n_dpi);
-        RTLIL::Wire *dpi_ret_data = wrapper->addWire(ID(dpi_ret_data), n_dpi * 64);
+        int ret_data_per_func = 64 + max_args * 32; // scalar result + host-written args
+        RTLIL::Wire *dpi_ret_data = wrapper->addWire(ID(dpi_ret_data), n_dpi * ret_data_per_func);
         RTLIL::Wire *dpi_stall = wrapper->addWire(ID(dpi_stall), n_dpi);
 
         // DUT DPI interface signals (connected through emu_ctrl)
+        // Read actual widths from DUT's loom_dpi_args/result ports
+        int dut_args_width = 64;   // default
+        int dut_result_width = 32; // default
+        for (auto wire : dut->wires()) {
+            std::string wn = wire->name.str();
+            if (wn.find("loom_dpi_args") != std::string::npos && wire->port_output)
+                dut_args_width = wire->width;
+            if (wn.find("loom_dpi_result") != std::string::npos && wire->port_input)
+                dut_result_width = wire->width;
+        }
         RTLIL::Wire *dut_dpi_valid_w = wrapper->addWire(ID(dut_dpi_valid), 1);
         RTLIL::Wire *dut_dpi_ack = wrapper->addWire(ID(dut_dpi_ack), 1);
         RTLIL::Wire *dut_dpi_func_id = wrapper->addWire(ID(dut_dpi_func_id), 8);
-        RTLIL::Wire *dut_dpi_args = wrapper->addWire(ID(dut_dpi_args), 64);
-        RTLIL::Wire *dut_dpi_result = wrapper->addWire(ID(dut_dpi_result), 32);
+        RTLIL::Wire *dut_dpi_args = wrapper->addWire(ID(dut_dpi_args), dut_args_width);
+        RTLIL::Wire *dut_dpi_result = wrapper->addWire(ID(dut_dpi_result), dut_result_width);
 
         // =========================================================================
         // Instantiate AXI Interconnect
@@ -364,8 +375,8 @@ struct EmuTopPass : public Pass {
         emu_ctrl->setParam(ID(N_MEMORIES), 0);
         emu_ctrl->setParam(ID(N_SCAN_CHAINS), 1);
         emu_ctrl->setParam(ID(TOTAL_SCAN_BITS), scan_chain_length);
-        emu_ctrl->setParam(ID(MAX_ARG_WIDTH), 64);
-        emu_ctrl->setParam(ID(MAX_RET_WIDTH), 32);
+        emu_ctrl->setParam(ID(MAX_ARG_WIDTH), dut_args_width);
+        emu_ctrl->setParam(ID(MAX_RET_WIDTH), dut_result_width);
         emu_ctrl->setParam(ID(MAX_ARGS), max_args);
         emu_ctrl->setParam(ID(DESIGN_ID), 0xE2E00001);
         emu_ctrl->setParam(ID(LOOM_VERSION), 0x000100);

@@ -57,9 +57,11 @@ module loom_dpi_regfile #(
     input  logic [N_DPI_FUNCS-1:0][MAX_ARGS-1:0][31:0] dpi_call_args_i,
 
     // Return interface: host writes result, asserts ret_valid
+    // ret_data includes both scalar result (bits [63:0]) and host-written
+    // arg registers (bits [64+MAX_ARGS*32-1:64]) for output open array data.
     output logic [N_DPI_FUNCS-1:0]         dpi_ret_valid_o,
     input  logic [N_DPI_FUNCS-1:0]         dpi_ret_ready_i,
-    output logic [N_DPI_FUNCS-1:0][63:0]   dpi_ret_data_o,
+    output logic [N_DPI_FUNCS-1:0][64+MAX_ARGS*32-1:0] dpi_ret_data_o,
 
     // Stall output (active high = at least one DPI call pending)
     output logic [N_DPI_FUNCS-1:0]         dpi_stall_o
@@ -102,7 +104,8 @@ module loom_dpi_regfile #(
     generate
         for (genvar i = 0; i < N_DPI_FUNCS; i++) begin : gen_ret
             assign dpi_ret_valid_o[i] = func_state_q[i].done;
-            assign dpi_ret_data_o[i]  = func_state_q[i].result;
+            // Return data: scalar result in [63:0], host-written args in [64+:]
+            assign dpi_ret_data_o[i]  = {func_state_q[i].args, func_state_q[i].result};
         end
     endgenerate
 
@@ -135,7 +138,12 @@ module loom_dpi_regfile #(
     assign wr_func_idx = wr_addr_q[15:6];
     assign wr_reg_idx  = wr_addr_q[5:2];  // Word-aligned
 
-    // Combinational next-state
+    // Host write decode
+    logic wr_pending;
+    assign wr_pending = wr_addr_valid_q && wr_data_valid_q && !axil_bvalid_o
+                        && (wr_func_idx < N_DPI_FUNCS);
+
+    // Combinational next-state (merges DPI call events + host AXI writes)
     always_comb begin
         for (int i = 0; i < N_DPI_FUNCS; i++) begin
             func_state_d[i] = func_state_q[i];
@@ -151,6 +159,27 @@ module loom_dpi_regfile #(
             if (func_state_q[i].done && dpi_ret_ready_i[i]) begin
                 func_state_d[i].pending = 1'b0;
                 func_state_d[i].done    = 1'b0;
+            end
+
+            // Host AXI write (highest priority)
+            if (wr_pending && wr_func_idx == unsigned'(i)) begin
+                case (wr_reg_idx)
+                    REG_CONTROL: begin
+                        if (wr_data_q[1]) func_state_d[i].done  = 1'b1;
+                        if (wr_data_q[2]) func_state_d[i].error = 1'b1;
+                    end
+                    REG_RESULT_LO: func_state_d[i].result[31:0]  = wr_data_q;
+                    REG_RESULT_HI: func_state_d[i].result[63:32] = wr_data_q;
+                    REG_ARG0: func_state_d[i].args[0] = wr_data_q;
+                    REG_ARG1: func_state_d[i].args[1] = wr_data_q;
+                    REG_ARG2: func_state_d[i].args[2] = wr_data_q;
+                    REG_ARG3: func_state_d[i].args[3] = wr_data_q;
+                    REG_ARG4: func_state_d[i].args[4] = wr_data_q;
+                    REG_ARG5: func_state_d[i].args[5] = wr_data_q;
+                    REG_ARG6: func_state_d[i].args[6] = wr_data_q;
+                    REG_ARG7: func_state_d[i].args[7] = wr_data_q;
+                    default: ;
+                endcase
             end
         end
     end
@@ -168,32 +197,6 @@ module loom_dpi_regfile #(
         end else begin
             for (int i = 0; i < N_DPI_FUNCS; i++) begin
                 func_state_q[i] <= func_state_d[i];
-            end
-
-            // Host write processing (takes precedence over DPI state machine)
-            if (wr_addr_valid_q && wr_data_valid_q && !axil_bvalid_o) begin
-                if (wr_func_idx < N_DPI_FUNCS) begin
-                    case (wr_reg_idx)
-                        REG_CONTROL: begin
-                            // Bit 0: ack - this is now implicit when we write result
-                            // Bit 1: set_done - mark call as complete
-                            if (wr_data_q[1]) begin
-                                func_state_q[wr_func_idx].done <= 1'b1;
-                            end
-                            // Bit 2: set_error
-                            if (wr_data_q[2]) begin
-                                func_state_q[wr_func_idx].error <= 1'b1;
-                            end
-                        end
-                        REG_RESULT_LO: begin
-                            func_state_q[wr_func_idx].result[31:0] <= wr_data_q;
-                        end
-                        REG_RESULT_HI: begin
-                            func_state_q[wr_func_idx].result[63:32] <= wr_data_q;
-                        end
-                        default: ; // Ignore writes to read-only registers
-                    endcase
-                end
             end
         end
     end

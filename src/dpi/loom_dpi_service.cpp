@@ -14,16 +14,17 @@ static Logger logger = make_logger("dpi");
 // ============================================================================
 
 void DpiService::register_func(int func_id, std::string_view name, int n_args,
-                                int ret_width, DpiCallback callback) {
+                                int ret_width, int out_arg_words, DpiCallback callback) {
     funcs_.push_back({
         .func_id = func_id,
         .name = std::string(name),
         .n_args = n_args,
         .ret_width = ret_width,
+        .out_arg_words = out_arg_words,
         .callback = std::move(callback)
     });
-    logger.debug("Registered function '%.*s' (id=%d, %d args, %d-bit return)",
-              static_cast<int>(name.size()), name.data(), func_id, n_args, ret_width);
+    logger.debug("Registered function '%.*s' (id=%d, %d args, %d-bit return, %d out words)",
+              static_cast<int>(name.size()), name.data(), func_id, n_args, ret_width, out_arg_words);
 }
 
 const DpiFunc* DpiService::find_func(int func_id) const {
@@ -85,10 +86,24 @@ int DpiService::service_once(Context& ctx) {
 
         const DpiCall& call = call_result.value();
 
-        // Call the user function
-        std::span<const uint32_t> args(call.args.data(),
-                                        static_cast<size_t>(func->n_args));
-        uint64_t result = func->callback(args);
+        // Call the user function.
+        // Pass all arg register words — the wrapper indexes by hardware
+        // offset, not logical argument count.
+        std::span<const uint32_t> args(call.args.data(), call.args.size());
+        // Allocate buffer for output open array data
+        std::vector<uint32_t> out_args_buf(func->out_arg_words, 0);
+        std::span<uint32_t> out_args(out_args_buf);
+        uint64_t result = func->callback(args, out_args);
+
+        // Write output open array data back to regfile arg registers
+        for (int i = 0; i < func->out_arg_words; i++) {
+            auto wr_result = ctx.dpi_write_arg(static_cast<uint32_t>(func_id), i, out_args_buf[i]);
+            if (!wr_result.ok()) {
+                logger.error("Failed to write output arg %d for '%s'", i, func->name.c_str());
+                error_count_++;
+                break;
+            }
+        }
 
         // Complete the call
         auto complete_result = ctx.dpi_complete(static_cast<uint32_t>(func_id), result);

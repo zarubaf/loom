@@ -57,6 +57,7 @@ add_yosys_test(scan_equiv)
 
 # DPI bridge tests (uses loom_instrument pass)
 add_loom_instrument_test(dpi_bridge)
+add_loom_instrument_test(dpi_open_array)
 
 # Flop enable tests (needs scan_insert + loom_instrument)
 add_test(
@@ -106,6 +107,17 @@ set_tests_properties(fsm_extract_equiv PROPERTIES
 
 # emu_top tests
 add_emu_top_test(emu_top)
+
+# End-to-end DPI open array test using loomc/loomx
+add_test(NAME e2e_dpi_open_array
+    COMMAND make test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/dpi_open_array
+)
+set_tests_properties(e2e_dpi_open_array PROPERTIES
+    DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;loom_instrument;emu_top;loomc;loomx"
+    TIMEOUT 120
+    ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR}"
+)
 
 # End-to-end DPI test using loomc/loomx
 add_test(NAME e2e_dpi_test

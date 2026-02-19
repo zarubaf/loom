@@ -104,7 +104,7 @@ struct LoomPaths {
             paths.rtl_dir = paths.root / "src" / "rtl";
             paths.bfm_dir = paths.root / "src" / "bfm";
             paths.sim_top = paths.root / "src" / "test" / "loom_sim_top.sv";
-            paths.include_dir = paths.root / "src" / "host";
+            paths.include_dir = paths.root / "src" / "dpi";
         } else {
             // Install tree layout
             paths.yosys_bin = paths.root / "bin" / "yosys";

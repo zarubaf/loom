@@ -33,7 +33,7 @@ Source SV → yosys + loom plugins → transformed Verilog → Vivado/Verilator
 ## Documentation
 
 Design documentation lives in `doc/`:
-- `doc/dpi-bridge.md` - DPI bridge pass and hardware interface
+- `doc/dpi-bridge-internals.md` - DPI bridge implementation details
 - `doc/emu-top.md` - Emulation wrapper architecture
 - `doc/host-library.md` - Host-side libloom and DPI service
 - `doc/e2e-test.md` - End-to-end test guide

@@ -275,6 +275,16 @@ int main(int argc, char **argv) {
         if (const char *env_cc = std::getenv("CC"))
             cc = env_cc;
 
+        // Public headers (svdpi.h) in src/include, internal DPI
+        // code (loom_svdpi_array.h, svdpi_openarray.c, loom_dpi_service.h)
+        // in src/dpi.
+        auto svdpi_include = paths.root / "src" / "include";
+        auto dpi_dir = paths.root / "src" / "dpi";
+        if (!paths.is_build_tree) {
+            svdpi_include = paths.root / "include" / "loom";
+            dpi_dir = paths.root / "lib" / "loom" / "dpi";
+        }
+
         auto args = std::vector<std::string>{
             cc,
             "-shared",
@@ -282,6 +292,8 @@ int main(int argc, char **argv) {
             "-g",
             "-O0",
             "-I" + paths.include_dir.string(),
+            "-I" + svdpi_include.string(),
+            "-I" + dpi_dir.string(),
 #if defined(__APPLE__)
             // Allow unresolved extern refs to user DPI functions;
             // resolved at runtime when loomx loads the user .so first.
@@ -289,6 +301,7 @@ int main(int argc, char **argv) {
             "dynamic_lookup",
 #endif
             dispatch_c.string(),
+            (dpi_dir / "svdpi_openarray.c").string(),
             "-o",
             dispatch_so.string(),
         };

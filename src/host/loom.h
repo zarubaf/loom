@@ -248,6 +248,7 @@ public:
     Result<uint32_t> dpi_poll();  // Returns pending mask
     Result<DpiCall> dpi_get_call(uint32_t func_id);
     Result<void> dpi_complete(uint32_t func_id, uint64_t result);
+    Result<void> dpi_write_arg(uint32_t func_id, int arg_idx, uint32_t value);
     Result<void> dpi_error(uint32_t func_id);
 
     // ========================================================================

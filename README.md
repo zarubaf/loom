@@ -10,26 +10,29 @@ hardware-accelerated verification without rewriting testbenches.
 
 ## Features
 
-**DPI-C Function Bridging** - DPI-C import calls in your RTL are
+**DPI-C Function Bridging** — DPI-C import calls in your RTL are
 automatically transformed into a hardware mailbox interface. At runtime the
 host executes the original C functions and returns results to the design,
 transparently preserving the DPI contract.
 
 Supported argument types:
-- `int`, `shortint`, `longint`, `byte` (signed)
-- `bit [N:0]`, `logic [N:0]`, `reg [N:0]` (unsigned, arbitrary width)
+- `int`, `shortint`, `longint`, `byte` (signed scalars)
+- `bit [N:0]`, `logic [N:0]` (unsigned, arbitrary width)
+- `bit [M:0] data[]` (open arrays — input and output via `svOpenArrayHandle`)
 - `string` (compile-time constant)
 
 Supported return types: `void`, `int`, `shortint`, `longint`, `byte`,
 sized `bit`/`logic`.
 
-**`$display` / `$write` Support** - `$display` calls in `always_ff`
-blocks are converted to DPI calls automatically. Format strings (`%x`,
-`%d`, `%u`, `%o`, `%s`) are executed on the host, printing to stdout just
-like a normal simulation.
+Open arrays are fully SVDPI-compatible — user C code uses standard
+`svGetArrayPtr()`, `svLength()`, etc. The same DPI function can be called
+from multiple modules with different array sizes; Loom infers the element
+count from each call site's local variable. Compatible with libraries like
+[multisim](https://github.com/antoinemadec/multisim). 4-state and 2-state
+are treated identically (no X/Z on FPGA).
 
-**`$finish` Support** - `$finish` statements are bridged to the host
-so the simulation terminates cleanly when the design signals completion.
+**`$display` / `$finish`** — `$display` calls are bridged to `printf`
+on the host. `$finish` triggers clean simulation shutdown.
 
 **Interactive Shell** - `loomx` provides a REPL with tab completion,
 history, and the following commands:
@@ -84,7 +87,7 @@ cmake --install build --prefix ~/.local
 
 ## Usage
 
-The workflow has three steps: **compile**, **build sim**, **execute**.
+The workflow has four steps: **compile**, **build DPI**, **build sim**, **execute**.
 
 ### 1. Compile with `loomc`
 
@@ -117,10 +120,10 @@ build/
 ### 2. Compile User DPI Code
 
 Compile your DPI function implementations into a shared object.
-No Loom headers are needed - just your own code:
+Include `src/include` for `svdpi.h` if your code uses open arrays:
 
 ```bash
-cc -shared -fPIC -o libdpi.so dpi_impl.c
+cc -shared -fPIC -I$LOOM_HOME/src/include -o build/libdpi.so dpi_impl.c
 ```
 
 ### 3. Build the Verilator Simulation
@@ -168,22 +171,25 @@ Options:
 -v              Verbose output
 ```
 
-## Example
+## Examples
 
-The `tests/e2e/` directory contains a complete working example:
+### Scalar DPI (`tests/e2e/`)
 
-- **`dpi_test.sv`** - an LFSR-based test module that calls `dpi_add`
-  eight times and verifies results, uses `$display` for output, and calls
-  `$finish` when done.
-- **`dpi_impl.c`** - pure C implementations of `dpi_add` and
-  `dpi_report_result` (no Loom headers needed).
-- **`Makefile`** - ~25-line Makefile using `loom.mk` / `loom_sim.mk`.
-
-Run it:
+An LFSR-based test that calls `dpi_add` eight times, verifies results
+via `$display`, and exits with `$finish`:
 
 ```bash
-cd tests/e2e
-LOOM_HOME=../.. make test
+cd tests/e2e && LOOM_HOME=../.. make test
+```
+
+### Open array DPI (`tests/dpi_open_array/`)
+
+Exercises input and output open arrays — fills an array via
+`dpi_fill_array`, reads it back via `dpi_sum_array`, and verifies
+the round-trip:
+
+```bash
+cd tests/dpi_open_array && LOOM_HOME=../.. make test
 ```
 
 ## How It Works

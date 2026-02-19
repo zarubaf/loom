@@ -216,6 +216,13 @@ Result<void> Context::dpi_complete(uint32_t func_id, uint64_t result) {
     return write32(dpi_func_addr(func_id, reg::DpiControl), ctrl::DpiSetDone);
 }
 
+Result<void> Context::dpi_write_arg(uint32_t func_id, int arg_idx, uint32_t value) {
+    if (func_id >= n_dpi_funcs_ || arg_idx < 0 || arg_idx >= 8) {
+        return Error::InvalidArg;
+    }
+    return write32(dpi_func_addr(func_id, reg::DpiArg0 + arg_idx * 4), value);
+}
+
 Result<void> Context::dpi_error(uint32_t func_id) {
     if (func_id >= n_dpi_funcs_) {
         return Error::InvalidArg;

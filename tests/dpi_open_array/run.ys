@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+# Test open array DPI detection and bridge generation
+# Verifies that $__loom_dpi_call cells with open array arguments
+# are correctly converted to hardware bridge interfaces
+
+read_slang --loom dpi_open_array.sv
+hierarchy -check -top dpi_open_array
+proc
+
+# Run DPI bridge pass
+loom_instrument -gen_wrapper
+
+# Check that loom_dpi_* interface ports were added
+select -assert-count 1 w:loom_dpi_valid
+select -assert-count 1 w:loom_dpi_func_id
+select -assert-count 1 w:loom_dpi_args
+select -assert-count 1 w:loom_dpi_result
+
+stat

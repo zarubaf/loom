@@ -44,6 +44,8 @@ struct DpiArg {
     std::string direction;    // input, output, inout
     int width;
     std::string string_value; // For string args: the compile-time constant value
+    bool is_open_array = false; // true if arg is an open array (type contains "[]")
+    int n_elements = 0;         // number of array elements (inferred from width)
 };
 
 // DPI function descriptor extracted from cells
@@ -251,6 +253,15 @@ struct LoomInstrumentPass : public Pass {
                                 RTLIL::IdString("\\loom_dpi_string_arg_" + std::to_string(i)));
                             if (!str_attr.empty() || arg.type == "string") {
                                 arg.string_value = str_attr;
+                            }
+                            // Detect open array arguments (type contains "[]")
+                            if (arg.type.find("[]") != std::string::npos) {
+                                arg.is_open_array = true;
+                                // Element width: bit[31:0][] = 32 bits per element
+                                // For now assume 32-bit elements (svBitVecVal)
+                                int elem_width = 32;
+                                arg.n_elements = (arg.width > 0) ? arg.width / elem_width : 1;
+                                if (arg.n_elements < 1) arg.n_elements = 1;
                             }
                             func.args.push_back(arg);
                         }
@@ -727,15 +738,44 @@ struct LoomInstrumentPass : public Pass {
         log("  Created loom_finish_o output port\n");
     }
 
+    // Compute input-only arg width (excluding output open arrays).
+    int input_arg_width(const DpiFunction &func) {
+        int w = 0;
+        for (const auto &arg : func.args) {
+            if (arg.type == "string") continue;
+            if (arg.is_open_array && arg.direction == "output") continue;
+            w += arg.width;
+        }
+        return w;
+    }
+
+    // Compute output open array total width for a function.
+    int output_array_width(const DpiFunction &func) {
+        int w = 0;
+        for (const auto &arg : func.args) {
+            if (arg.is_open_array && arg.direction == "output")
+                w += arg.width;
+        }
+        return w;
+    }
+
     // Create bridge interface with proper multiplexing for multiple DPI functions.
     void create_bridge_interface(RTLIL::Module *module, std::vector<DpiFunction> &functions) {
-        // Calculate maximum widths across all functions
+        // Calculate maximum widths across all functions.
+        // Input args go through loom_dpi_args (DUT→host).
+        // Output open arrays + scalar return go through loom_dpi_result (host→DUT).
         int max_arg_width = 0;
         int max_ret_width = 0;
         for (const auto &func : functions) {
-            max_arg_width = std::max(max_arg_width, func.arg_width);
-            max_ret_width = std::max(max_ret_width, func.ret_width);
+            max_arg_width = std::max(max_arg_width, input_arg_width(func));
+            // Result bus layout: {args[MAX_ARGS-1:0], result[63:0]}
+            // Output arrays go through the args region starting at bit 64
+            int total_ret = 64 + output_array_width(func);
+            max_ret_width = std::max(max_ret_width, total_ret);
         }
+        // Ensure minimum widths
+        if (max_arg_width < 1) max_arg_width = 1;
+        if (max_ret_width < 1) max_ret_width = 1;
 
         // Create bridge interface ports
         RTLIL::Wire *dpi_valid = module->addWire(ID(loom_dpi_valid), 1);
@@ -750,6 +790,54 @@ struct LoomInstrumentPass : public Pass {
         RTLIL::Wire *dpi_result_in = module->addWire(ID(loom_dpi_result), max_ret_width);
         dpi_result_in->port_input = true;
 
+        // Helper: split a function's args_sig into input-only portion and
+        // connect output open array wires from the result bus.
+        auto connect_func_args_result = [&](const DpiFunction &func) {
+            // Build input-only args signal (skip output open arrays)
+            RTLIL::SigSpec input_args;
+            int bit_offset = 0;
+            for (const auto &arg : func.args) {
+                if (arg.type == "string") continue;
+                if (arg.is_open_array && arg.direction == "output") {
+                    bit_offset += arg.width;
+                    continue;
+                }
+                input_args.append(func.args_sig.extract(bit_offset, arg.width));
+                bit_offset += arg.width;
+            }
+
+            // Pad input args to max width
+            if (GetSize(input_args) < max_arg_width) {
+                input_args.append(RTLIL::SigSpec(RTLIL::State::S0,
+                    max_arg_width - GetSize(input_args)));
+            }
+
+            // Connect scalar return value from result bus.
+            // Layout from regfile: {args[MAX_ARGS-1:0], result[63:0]}
+            // Scalar return is in bits [63:0], host-written args start at bit 64.
+            if (GetSize(func.result_sig) > 0) {
+                module->connect(func.result_sig,
+                    RTLIL::SigSpec(dpi_result_in).extract(0, GetSize(func.result_sig)));
+            }
+
+            // Connect output open array wires from host-written ARG region.
+            // ARG0 is at bit 64, ARG1 at bit 96, etc.
+            int out_arg_offset = 64;
+            bit_offset = 0;
+            for (const auto &arg : func.args) {
+                if (arg.type == "string") continue;
+                if (arg.is_open_array && arg.direction == "output") {
+                    RTLIL::SigSpec out_wire = func.args_sig.extract(bit_offset, arg.width);
+                    module->connect(out_wire,
+                        RTLIL::SigSpec(dpi_result_in).extract(out_arg_offset, arg.width));
+                    out_arg_offset += arg.width;
+                }
+                bit_offset += arg.width;
+            }
+
+            return input_args;
+        };
+
         // For single function case, no muxing needed
         if (functions.size() == 1) {
             const DpiFunction &func = functions[0];
@@ -757,22 +845,14 @@ struct LoomInstrumentPass : public Pass {
             module->connect(RTLIL::SigSpec(dpi_valid), func.valid_condition);
             module->connect(RTLIL::SigSpec(dpi_func_id), RTLIL::SigSpec(func.func_id, 8));
 
-            RTLIL::SigSpec padded_args = func.args_sig;
-            if (GetSize(func.args_sig) < max_arg_width) {
-                padded_args.append(RTLIL::SigSpec(RTLIL::State::S0,
-                    max_arg_width - GetSize(func.args_sig)));
-            }
-            module->connect(RTLIL::SigSpec(dpi_args_out), padded_args);
-
-            if (GetSize(func.result_sig) > 0) {
-                module->connect(func.result_sig,
-                    RTLIL::SigSpec(dpi_result_in).extract(0, GetSize(func.result_sig)));
-            }
+            RTLIL::SigSpec input_args = connect_func_args_result(func);
+            module->connect(RTLIL::SigSpec(dpi_args_out), input_args);
 
             module->remove(func.cell);
 
-            log("    Converted to bridge: func_id=%d, arg_width=%d, ret_width=%d\n",
-                func.func_id, func.arg_width, func.ret_width);
+            log("    Converted to bridge: func_id=%d, in_arg_width=%d, ret_width=%d (incl %d output array bits)\n",
+                func.func_id, input_arg_width(func), func.ret_width + output_array_width(func),
+                output_array_width(func));
             log("    Base address: 0x%04x\n", LOOM_DPI_BASE + func.func_id * FUNC_BLOCK_ALIGN);
         } else {
             log("  Creating multiplexed bridge for %zu DPI functions\n", functions.size());
@@ -809,30 +889,27 @@ struct LoomInstrumentPass : public Pass {
             }
             module->connect(RTLIL::SigSpec(dpi_func_id), func_id_mux);
 
+            // Build input args and connect output arrays for each function
+            std::vector<RTLIL::SigSpec> func_input_args;
+            for (size_t i = 0; i < functions.size(); i++) {
+                func_input_args.push_back(connect_func_args_result(functions[i]));
+            }
+
             RTLIL::SigSpec args_mux = RTLIL::SigSpec(RTLIL::State::S0, max_arg_width);
             for (int i = (int)functions.size() - 1; i >= 0; i--) {
                 RTLIL::Wire *mux_out = module->addWire(NEW_ID, max_arg_width);
-                RTLIL::SigSpec padded_args = functions[i].args_sig;
-                if (GetSize(functions[i].args_sig) < max_arg_width) {
-                    padded_args.append(RTLIL::SigSpec(RTLIL::State::S0,
-                        max_arg_width - GetSize(functions[i].args_sig)));
-                }
-                module->addMux(NEW_ID, args_mux, padded_args,
+                module->addMux(NEW_ID, args_mux, func_input_args[i],
                     valid_1bit[i], mux_out);
                 args_mux = RTLIL::SigSpec(mux_out);
             }
             module->connect(RTLIL::SigSpec(dpi_args_out), args_mux);
 
             for (const auto &func : functions) {
-                if (GetSize(func.result_sig) > 0) {
-                    module->connect(func.result_sig,
-                        RTLIL::SigSpec(dpi_result_in).extract(0, GetSize(func.result_sig)));
-                }
-
                 module->remove(func.cell);
 
-                log("    Converted to bridge: func_id=%d, arg_width=%d, ret_width=%d\n",
-                    func.func_id, func.arg_width, func.ret_width);
+                log("    Converted to bridge: func_id=%d, in_arg_width=%d, ret_width=%d (incl %d output array bits)\n",
+                    func.func_id, input_arg_width(func),
+                    func.ret_width + output_array_width(func), output_array_width(func));
                 log("    Base address: 0x%04x\n", LOOM_DPI_BASE + func.func_id * FUNC_BLOCK_ALIGN);
             }
         }
@@ -921,7 +998,10 @@ struct LoomInstrumentPass : public Pass {
     }
 
     // Map SV/DPI type to C type
-    std::string sv_type_to_c(const std::string &sv_type, int width) {
+    std::string sv_type_to_c(const std::string &sv_type, int width, bool is_open_array = false) {
+        if (is_open_array) {
+            return "svOpenArrayHandle";
+        }
         if (sv_type == "int" || sv_type == "integer") {
             return "int32_t";
         }
@@ -950,6 +1030,25 @@ struct LoomInstrumentPass : public Pass {
         return "uint64_t";
     }
 
+    // Check if a function has any output open array arguments.
+    bool has_output_arrays(const DpiFunction &func) {
+        for (const auto &arg : func.args) {
+            if (arg.is_open_array && arg.direction == "output")
+                return true;
+        }
+        return false;
+    }
+
+    // Count output open array words for a function.
+    int out_arg_words(const DpiFunction &func) {
+        int words = 0;
+        for (const auto &arg : func.args) {
+            if (arg.is_open_array && arg.direction == "output")
+                words += (arg.width + 31) / 32;
+        }
+        return words;
+    }
+
     void write_c_header(const std::vector<DpiFunction> &functions, const std::string &path) {
         std::ofstream ofs(path);
         if (!ofs.is_open()) {
@@ -964,28 +1063,32 @@ struct LoomInstrumentPass : public Pass {
         ofs << "// Link this with your DPI implementation.\n";
         ofs << "\n";
         ofs << "#include <stdint.h>\n";
-        ofs << "#include <loom_dpi_service.h>\n";
+        ofs << "#include \"loom_dpi_service.h\"\n";
+        ofs << "#include <svdpi.h>\n";
+        ofs << "#include \"loom_svdpi_array.h\"\n";
         ofs << "\n";
+        ofs << "#include <stdio.h>\n";
+        ofs << "#include <string.h>\n\n";
 
-        ofs << "#include <stdio.h>\n\n";
-
+        // Emit one extern per unique function name (open arrays all map to
+        // svOpenArrayHandle, so identical across call sites)
         ofs << "// User-provided DPI function implementations\n";
+        std::set<std::string> emitted_externs;
         for (const auto &func : functions) {
-            if (func.builtin) continue;  // builtins have no extern decl
+            if (func.builtin) continue;
+            if (emitted_externs.count(func.name)) continue;
+            emitted_externs.insert(func.name);
 
             std::string ret_type = sv_type_to_c(func.ret_type, func.ret_width);
-            if (func.ret_width == 0) {
-                ret_type = "void";
-            }
+            if (func.ret_width == 0) ret_type = "void";
 
             ofs << "extern " << ret_type << " " << func.name << "(";
-
             if (func.args.empty()) {
                 ofs << "void";
             } else {
                 for (size_t i = 0; i < func.args.size(); i++) {
                     const auto &arg = func.args[i];
-                    std::string c_type = sv_type_to_c(arg.type, arg.width);
+                    std::string c_type = sv_type_to_c(arg.type, arg.width, arg.is_open_array);
                     if (i > 0) ofs << ", ";
                     ofs << c_type << " " << arg.name;
                 }
@@ -994,25 +1097,24 @@ struct LoomInstrumentPass : public Pass {
         }
         ofs << "\n";
 
+        // Emit one wrapper per func_id (each may have different array sizes).
+        // Wrapper name includes func_id to stay unique.
         ofs << "// Wrapper functions for uniform callback interface\n";
         for (const auto &func : functions) {
-            ofs << "static uint64_t _loom_wrap_" << func.name << "(const uint32_t *args) {\n";
+            ofs << "static uint64_t _loom_wrap_" << func.name << "_" << func.func_id
+                << "(const uint32_t *args, uint32_t *out_args) {\n";
 
             if (func.builtin) {
                 // Built-in display function: generate printf inline
-                // First arg (idx 0) is the format string (compile-time constant)
                 std::string fmt_str;
                 int arg_offset = 0;
                 for (const auto &arg : func.args) {
-                    if (arg.type == "string") {
-                        fmt_str = arg.string_value;
-                    }
+                    if (arg.type == "string") fmt_str = arg.string_value;
                 }
-
                 ofs << "    printf(\"" << fmt_str << "\"";
                 for (size_t i = 0; i < func.args.size(); i++) {
                     const auto &arg = func.args[i];
-                    if (arg.type == "string") continue;  // skip format string
+                    if (arg.type == "string") continue;
                     std::string c_type = sv_type_to_c(arg.type, arg.width);
                     ofs << ", (" << c_type << ")args[" << arg_offset << "]";
                     arg_offset += (arg.width + 31) / 32;
@@ -1020,14 +1122,53 @@ struct LoomInstrumentPass : public Pass {
                 ofs << ");\n";
                 ofs << "    return 0;\n";
             } else {
-                // User function: generate call with args
-                std::string call_args;
+                // Declare array buffers and handles for open array args
                 int arg_offset = 0;
+                int out_offset = 0;
+                for (size_t i = 0; i < func.args.size(); i++) {
+                    const auto &arg = func.args[i];
+                    if (arg.type == "string" || !arg.is_open_array) continue;
+                    int n = arg.n_elements;
+                    if (arg.direction == "output") {
+                        ofs << "    uint32_t " << arg.name << "_buf[" << n << "];\n";
+                        ofs << "    memset(" << arg.name << "_buf, 0, sizeof(" << arg.name << "_buf));\n";
+                    } else {
+                        // Input open array: fill from args
+                        ofs << "    uint32_t " << arg.name << "_buf[" << n << "];\n";
+                        // We'll fill it below after computing offsets
+                    }
+                    ofs << "    loom_sv_array_t " << arg.name << "_arr = { "
+                        << arg.name << "_buf, " << n << ", 32 };\n";
+                }
+
+                // Fill input open array buffers from args
+                arg_offset = 0;
+                for (size_t i = 0; i < func.args.size(); i++) {
+                    const auto &arg = func.args[i];
+                    if (arg.type == "string") continue;
+                    if (arg.is_open_array && arg.direction == "output") continue;
+                    if (arg.is_open_array && arg.direction == "input") {
+                        int n = arg.n_elements;
+                        for (int j = 0; j < n; j++) {
+                            ofs << "    " << arg.name << "_buf[" << j << "] = args["
+                                << (arg_offset + j) << "];\n";
+                        }
+                    }
+                    arg_offset += (arg.width + 31) / 32;
+                }
+
+                // Build function call arguments
+                std::string call_args;
+                arg_offset = 0;
                 for (size_t i = 0; i < func.args.size(); i++) {
                     const auto &arg = func.args[i];
                     if (i > 0) call_args += ", ";
                     if (arg.type == "string") {
                         call_args += "\"" + arg.string_value + "\"";
+                    } else if (arg.is_open_array) {
+                        call_args += "(svOpenArrayHandle)&" + arg.name + "_arr";
+                        if (arg.direction != "output")
+                            arg_offset += (arg.width + 31) / 32;
                     } else {
                         std::string c_type = sv_type_to_c(arg.type, arg.width);
                         call_args += "(" + c_type + ")args[" + std::to_string(arg_offset) + "]";
@@ -1035,22 +1176,46 @@ struct LoomInstrumentPass : public Pass {
                     }
                 }
 
+                // Call the function
                 if (func.ret_width > 0) {
-                    ofs << "    return (uint64_t)" << func.name << "(" << call_args << ");\n";
+                    std::string ret_type = sv_type_to_c(func.ret_type, func.ret_width);
+                    ofs << "    " << ret_type << " _ret = " << func.name << "(" << call_args << ");\n";
                 } else {
                     ofs << "    " << func.name << "(" << call_args << ");\n";
+                }
+
+                // Copy output open array data back to out_args
+                out_offset = 0;
+                for (size_t i = 0; i < func.args.size(); i++) {
+                    const auto &arg = func.args[i];
+                    if (!arg.is_open_array || arg.direction != "output") continue;
+                    int n = arg.n_elements;
+                    for (int j = 0; j < n; j++) {
+                        ofs << "    out_args[" << (out_offset + j) << "] = "
+                            << arg.name << "_buf[" << j << "];\n";
+                    }
+                    out_offset += n;
+                }
+
+                // Return
+                if (func.ret_width > 0) {
+                    ofs << "    return (uint64_t)(uint32_t)_ret;\n";
+                } else {
                     ofs << "    return 0;\n";
                 }
             }
             ofs << "}\n\n";
         }
 
+        // Dispatch table
         ofs << "// DPI function table for loom_sim_main\n";
         ofs << "const loom_dpi_func_t loom_dpi_funcs[] = {\n";
         for (size_t i = 0; i < functions.size(); i++) {
             const auto &func = functions[i];
             ofs << "    { " << func.func_id << ", \"" << func.name << "\", "
-                << func.args.size() << ", " << func.ret_width << ", _loom_wrap_" << func.name << " }";
+                << func.args.size() << ", " << func.ret_width << ", "
+                << out_arg_words(func) << ", "
+                << "_loom_wrap_" << func.name << "_" << func.func_id << " }";
             if (i + 1 < functions.size()) ofs << ",";
             ofs << "\n";
         }

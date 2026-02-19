@@ -80,7 +80,7 @@ module loom_emu_ctrl #(
     output logic [N_DPI_FUNCS*MAX_ARGS*32-1:0] dpi_call_args_o,
     input  logic [N_DPI_FUNCS-1:0]             dpi_ret_valid_i,
     output logic [N_DPI_FUNCS-1:0]             dpi_ret_ready_o,
-    input  logic [N_DPI_FUNCS*64-1:0]          dpi_ret_data_i,
+    input  logic [N_DPI_FUNCS*(64+MAX_ARGS*32)-1:0] dpi_ret_data_i,
 
     // DUT finish request
     input  logic        dut_finish_req_i,
@@ -117,9 +117,10 @@ module loom_emu_ctrl #(
     } emu_state_e;
 
     typedef enum logic [1:0] {
-        StDpiIdle    = 2'd0,
-        StDpiForward = 2'd1,
-        StDpiWait    = 2'd2
+        StDpiIdle     = 3'd0,
+        StDpiForward  = 3'd1,
+        StDpiWait     = 3'd2,
+        StDpiComplete = 3'd3
     } dpi_state_e;
 
     localparam logic [7:0] CMD_START    = 8'h01;
@@ -204,7 +205,7 @@ module loom_emu_ctrl #(
         endcase
     end
 
-    assign dpi_ack = (dpi_state_q == StDpiWait) && dpi_ret_valid_i[dpi_func_id_q];
+    assign dpi_ack = (dpi_state_q == StDpiComplete);
     assign loom_en_o = emu_running && (!dut_dpi_valid_i || dpi_ack);
 
     // =========================================================================
@@ -297,8 +298,13 @@ module loom_emu_ctrl #(
 
             StDpiWait: begin
                 if (dpi_ret_valid_i[dpi_func_id_q]) begin
-                    dpi_state_d = StDpiIdle;
+                    dpi_state_d = StDpiComplete;
                 end
+            end
+
+            StDpiComplete: begin
+                // Result is registered; release DUT for one cycle then go idle
+                dpi_state_d = StDpiIdle;
             end
 
             default: dpi_state_d = StDpiIdle;
@@ -333,7 +339,15 @@ module loom_emu_ctrl #(
         end
     end
 
-    assign dut_dpi_result_o = dpi_ret_data_i[int'(dpi_func_id_q) * 64 +: MAX_RET_WIDTH];
+    // Register the DPI result when ret_valid goes high (StDpiWait → StDpiComplete).
+    // This ensures the result is stable when dpi_ack releases the DUT one cycle later.
+    localparam int RET_DATA_PER_FUNC = 64 + MAX_ARGS * 32;
+    logic [MAX_RET_WIDTH-1:0] dpi_result_q;
+    always_ff @(posedge clk_i) begin
+        if (dpi_state_q == StDpiWait && dpi_ret_valid_i[dpi_func_id_q])
+            dpi_result_q <= dpi_ret_data_i[int'(dpi_func_id_q) * RET_DATA_PER_FUNC +: MAX_RET_WIDTH];
+    end
+    assign dut_dpi_result_o = dpi_result_q;
     assign dut_dpi_ready_o  = dpi_ack;
 
     // =========================================================================

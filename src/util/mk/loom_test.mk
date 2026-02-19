@@ -73,8 +73,13 @@ $(BUILD)/%.o: %.cpp $(DPI_HDRS) | $(BUILD)
 	@mkdir -p $(dir $@)
 	$(CXX) -fPIC -g -O0 -std=c++17 -I$(LOOM_INCLUDE) $(DPI_CXXFLAGS) -c -o $@ $<
 
+_DPI_LDFLAGS :=
+ifeq ($(shell uname -s),Darwin)
+  _DPI_LDFLAGS += -undefined dynamic_lookup
+endif
+
 $(BUILD)/libdpi.so: $(_DPI_OBJS)
-	$(_DPI_LINK) -shared -o $@ $^
+	$(_DPI_LINK) -shared $(_DPI_LDFLAGS) -o $@ $^
 
 endif
 

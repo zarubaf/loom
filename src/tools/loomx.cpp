@@ -138,7 +138,25 @@ int main(int argc, char **argv) {
     // DPI loading (two-stage dlopen)
     // ========================================================================
 
-    // Stage 1: Load user .so with RTLD_GLOBAL (exports user function symbols)
+    // Stage 1: Load dispatch .so first — it provides svdpi open array
+    // functions (svGetArrayPtr etc.) that the user library may depend on.
+    auto dispatch_path = work / "loom_dpi_dispatch.so";
+    if (!fs::exists(dispatch_path)) {
+        logger.error("Dispatch library not found: %s",
+                     dispatch_path.c_str());
+        return 1;
+    }
+
+    logger.info("Loading dispatch library: %s", dispatch_path.c_str());
+    void *dispatch_handle =
+        dlopen(dispatch_path.c_str(), RTLD_LAZY | RTLD_GLOBAL);
+    if (!dispatch_handle) {
+        logger.error("Failed to load dispatch library: %s", dlerror());
+        return 1;
+    }
+
+    // Stage 2: Load user .so with RTLD_GLOBAL (exports user function symbols
+    // that the dispatch wrappers call via -undefined dynamic_lookup)
     void *user_handle = nullptr;
     if (!opts.sv_lib.empty()) {
         // Resolve library path (SystemVerilog -sv_lib convention):
@@ -165,22 +183,6 @@ int main(int argc, char **argv) {
             logger.error("Failed to load user library: %s", dlerror());
             return 1;
         }
-    }
-
-    // Stage 2: Load dispatch .so from work dir
-    auto dispatch_path = work / "loom_dpi_dispatch.so";
-    if (!fs::exists(dispatch_path)) {
-        logger.error("Dispatch library not found: %s",
-                     dispatch_path.c_str());
-        return 1;
-    }
-
-    logger.info("Loading dispatch library: %s", dispatch_path.c_str());
-    void *dispatch_handle =
-        dlopen(dispatch_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
-    if (!dispatch_handle) {
-        logger.error("Failed to load dispatch library: %s", dlerror());
-        return 1;
     }
 
     // Get function table from dispatch .so

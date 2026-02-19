@@ -19,8 +19,9 @@ extern "C" {
 // ============================================================================
 
 // DPI function callback type
-// Args are passed as an array, return value is 64-bit to accommodate all types
-typedef uint64_t (*loom_dpi_callback_t)(const uint32_t *args);
+// Args are passed as an array. out_args receives output open array data.
+// Return value is 64-bit to accommodate all scalar types.
+typedef uint64_t (*loom_dpi_callback_t)(const uint32_t *args, uint32_t *out_args);
 
 // DPI function descriptor
 typedef struct {
@@ -28,6 +29,7 @@ typedef struct {
     const char *name;               // Function name for debugging
     int n_args;                     // Number of arguments
     int ret_width;                  // Return value width in bits (0 for void)
+    int out_arg_words;              // Number of 32-bit output open array words (0 if none)
     loom_dpi_callback_t callback;   // User-provided callback
 } loom_dpi_func_t;
 
@@ -54,7 +56,8 @@ constexpr int kDpiMaxArgs = 8;
 
 // DPI function callback type
 // Args are passed as a span, return value is 64-bit to accommodate all types
-using DpiCallback = std::function<uint64_t(std::span<const uint32_t> args)>;
+using DpiCallback = std::function<uint64_t(std::span<const uint32_t> args,
+                                           std::span<uint32_t> out_args)>;
 
 // DPI function descriptor
 struct DpiFunc {
@@ -62,6 +65,7 @@ struct DpiFunc {
     std::string name;           // Function name for debugging
     int n_args;                 // Number of arguments
     int ret_width;              // Return value width in bits (0 for void)
+    int out_arg_words = 0;      // Number of 32-bit output open array words
     DpiCallback callback;       // User-provided callback
 };
 
@@ -89,16 +93,17 @@ public:
 
     // Register a DPI function
     void register_func(int func_id, std::string_view name, int n_args,
-                       int ret_width, DpiCallback callback);
+                       int ret_width, int out_arg_words, DpiCallback callback);
 
     // Register functions from a C-style array (for compatibility with generated code)
     template<typename T>
     void register_funcs(const T* funcs, int n_funcs) {
         for (int i = 0; i < n_funcs; i++) {
             register_func(funcs[i].func_id, funcs[i].name, funcs[i].n_args,
-                          funcs[i].ret_width,
-                          [cb = funcs[i].callback](std::span<const uint32_t> args) {
-                              return cb(args.data());
+                          funcs[i].ret_width, funcs[i].out_arg_words,
+                          [cb = funcs[i].callback](std::span<const uint32_t> args,
+                                                    std::span<uint32_t> out_args) {
+                              return cb(args.data(), out_args.data());
                           });
         }
     }
