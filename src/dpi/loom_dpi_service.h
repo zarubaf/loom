@@ -51,8 +51,9 @@ typedef struct {
 
 namespace loom {
 
-// Maximum number of arguments per DPI function
-constexpr int kDpiMaxArgs = 8;
+// Default maximum number of argument words per DPI function.
+// Actual value is read from hardware at connect time (Context::max_dpi_args()).
+constexpr int kDpiDefaultMaxArgs = 8;
 
 // DPI function callback type
 // Args are passed as a span, return value is 64-bit to accommodate all types

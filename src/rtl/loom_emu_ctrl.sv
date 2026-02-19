@@ -499,6 +499,7 @@ module loom_emu_ctrl #(
                 6'h09:   rdata_d = N_MEMORIES;
                 6'h0A:   rdata_d = N_SCAN_CHAINS;
                 6'h0B:   rdata_d = TOTAL_SCAN_BITS;
+                6'h0C:   rdata_d = MAX_ARGS;
                 6'h0D:   rdata_d = DESIGN_ID;
                 6'h0E:   rdata_d = LOOM_VERSION;
                 6'h10:   rdata_d = {29'd0, state_changed_q, (dpi_state_q != StDpiIdle), 1'b0};

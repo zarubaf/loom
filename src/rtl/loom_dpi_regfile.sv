@@ -2,21 +2,15 @@
 // Loom DPI Register File
 //
 // Manages DPI function calls via AXI-Lite registers.
-// Each DPI function gets a 64-byte region with status, control, args, and result.
+// Each DPI function gets a region with status, control, args, and result.
+// MAX_ARGS is computed from the design's actual DPI argument widths.
 //
-// Per-function register layout (64 bytes each):
-//   0x00  FUNC_STATUS   R    Bit 0: pending, Bit 1: done, Bit 2: error
-//   0x04  FUNC_CONTROL  W    Bit 0: ack (clears pending), Bit 1: set_done
-//   0x08  ARG0          R    First argument [31:0]
-//   0x0C  ARG1          R    Second argument [31:0]
-//   0x10  ARG2          R    Third argument [31:0]
-//   0x14  ARG3          R    Fourth argument [31:0]
-//   0x18  ARG4          R    Fifth argument [31:0]
-//   0x1C  ARG5          R    Sixth argument [31:0]
-//   0x20  ARG6          R    Seventh argument [31:0]
-//   0x24  ARG7          R    Eighth argument [31:0]
-//   0x28  RESULT_LO     W    Return value [31:0]
-//   0x2C  RESULT_HI     W    Return value [63:32]
+// Per-function register layout:
+//   0x00              FUNC_STATUS   R    Bit 0: pending, Bit 1: done, Bit 2: error
+//   0x04              FUNC_CONTROL  W    Bit 1: set_done, Bit 2: set_error
+//   0x08..0x08+4*N-4  ARG0..ARGN    R/W  Arguments (N = MAX_ARGS)
+//   0x08+4*N          RESULT_LO     W    Return value [31:0]
+//   0x08+4*N+4        RESULT_HI     W    Return value [63:32]
 //
 // Address decoding:
 //   addr[15:6] = function index (up to 1024 functions)
@@ -116,16 +110,9 @@ module loom_dpi_regfile #(
     // Register addresses
     localparam logic [5:0] REG_STATUS     = 6'h00;
     localparam logic [5:0] REG_CONTROL    = 6'h01;
-    localparam logic [5:0] REG_ARG0       = 6'h02;
-    localparam logic [5:0] REG_ARG1       = 6'h03;
-    localparam logic [5:0] REG_ARG2       = 6'h04;
-    localparam logic [5:0] REG_ARG3       = 6'h05;
-    localparam logic [5:0] REG_ARG4       = 6'h06;
-    localparam logic [5:0] REG_ARG5       = 6'h07;
-    localparam logic [5:0] REG_ARG6       = 6'h08;
-    localparam logic [5:0] REG_ARG7       = 6'h09;
-    localparam logic [5:0] REG_RESULT_LO  = 6'h0A;
-    localparam logic [5:0] REG_RESULT_HI  = 6'h0B;
+    localparam logic [5:0] REG_ARG0       = 6'h02;  // ARG0..ARG(MAX_ARGS-1) at consecutive offsets
+    localparam logic [5:0] REG_RESULT_LO  = REG_ARG0 + MAX_ARGS[5:0];
+    localparam logic [5:0] REG_RESULT_HI  = REG_RESULT_LO + 1;
 
     // Write address/data capture
     logic wr_addr_valid_q, wr_data_valid_q;
@@ -170,15 +157,12 @@ module loom_dpi_regfile #(
                     end
                     REG_RESULT_LO: func_state_d[i].result[31:0]  = wr_data_q;
                     REG_RESULT_HI: func_state_d[i].result[63:32] = wr_data_q;
-                    REG_ARG0: func_state_d[i].args[0] = wr_data_q;
-                    REG_ARG1: func_state_d[i].args[1] = wr_data_q;
-                    REG_ARG2: func_state_d[i].args[2] = wr_data_q;
-                    REG_ARG3: func_state_d[i].args[3] = wr_data_q;
-                    REG_ARG4: func_state_d[i].args[4] = wr_data_q;
-                    REG_ARG5: func_state_d[i].args[5] = wr_data_q;
-                    REG_ARG6: func_state_d[i].args[6] = wr_data_q;
-                    REG_ARG7: func_state_d[i].args[7] = wr_data_q;
-                    default: ;
+                    default: begin
+                        // ARG registers: REG_ARG0 + k for k in [0, MAX_ARGS)
+                        if (wr_reg_idx >= REG_ARG0 &&
+                            wr_reg_idx < REG_ARG0 + MAX_ARGS[5:0])
+                            func_state_d[i].args[wr_reg_idx - REG_ARG0] = wr_data_q;
+                    end
                 endcase
             end
         end
@@ -239,17 +223,15 @@ module loom_dpi_regfile #(
                                                      func_state_q[rd_func_idx].error,
                                                      func_state_q[rd_func_idx].done,
                                                      func_state_q[rd_func_idx].pending};
-                        REG_ARG0:   axil_rdata_o <= func_state_q[rd_func_idx].args[0];
-                        REG_ARG1:   axil_rdata_o <= func_state_q[rd_func_idx].args[1];
-                        REG_ARG2:   axil_rdata_o <= func_state_q[rd_func_idx].args[2];
-                        REG_ARG3:   axil_rdata_o <= func_state_q[rd_func_idx].args[3];
-                        REG_ARG4:   axil_rdata_o <= func_state_q[rd_func_idx].args[4];
-                        REG_ARG5:   axil_rdata_o <= func_state_q[rd_func_idx].args[5];
-                        REG_ARG6:   axil_rdata_o <= func_state_q[rd_func_idx].args[6];
-                        REG_ARG7:   axil_rdata_o <= func_state_q[rd_func_idx].args[7];
                         REG_RESULT_LO: axil_rdata_o <= func_state_q[rd_func_idx].result[31:0];
                         REG_RESULT_HI: axil_rdata_o <= func_state_q[rd_func_idx].result[63:32];
-                        default:    axil_rdata_o <= 32'hDEAD_BEEF;
+                        default: begin
+                            if (rd_reg_idx >= REG_ARG0 &&
+                                rd_reg_idx < REG_ARG0 + MAX_ARGS[5:0])
+                                axil_rdata_o <= func_state_q[rd_func_idx].args[rd_reg_idx - REG_ARG0];
+                            else
+                                axil_rdata_o <= 32'hDEAD_BEEF;
+                        end
                     endcase
                 end else begin
                     axil_rdata_o <= 32'hDEAD_BEEF;

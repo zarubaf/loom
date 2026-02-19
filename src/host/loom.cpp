@@ -35,6 +35,11 @@ Result<void> Context::connect(std::string_view target) {
     if (!val.ok()) return val.error();
     n_dpi_funcs_ = val.value();
 
+    val = read32(addr::EmuCtrl + reg::MaxDpiArgs);
+    if (!val.ok()) return val.error();
+    max_dpi_args_ = val.value();
+    if (max_dpi_args_ == 0) max_dpi_args_ = 8;  // fallback for older designs
+
     val = read32(addr::EmuCtrl + reg::TotalScanBits);
     if (!val.ok()) return val.error();
     scan_chain_length_ = val.value();
@@ -188,10 +193,10 @@ Result<DpiCall> Context::dpi_get_call(uint32_t func_id) {
 
     DpiCall call;
     call.func_id = func_id;
-    call.args.resize(8);
+    call.args.resize(max_dpi_args_);
 
     // Read all arguments
-    for (int i = 0; i < 8; i++) {
+    for (uint32_t i = 0; i < max_dpi_args_; i++) {
         auto arg = read32(dpi_func_addr(func_id, reg::DpiArg0 + i * 4));
         if (!arg.ok()) return arg.error();
         call.args[i] = arg.value();
@@ -205,11 +210,12 @@ Result<void> Context::dpi_complete(uint32_t func_id, uint64_t result) {
         return Error::InvalidArg;
     }
 
-    auto rc = write32(dpi_func_addr(func_id, reg::DpiResultLo),
+    uint32_t result_lo_offset = reg::DpiArg0 + max_dpi_args_ * 4;
+    auto rc = write32(dpi_func_addr(func_id, result_lo_offset),
                       static_cast<uint32_t>(result & 0xFFFFFFFF));
     if (!rc.ok()) return rc;
 
-    rc = write32(dpi_func_addr(func_id, reg::DpiResultHi),
+    rc = write32(dpi_func_addr(func_id, result_lo_offset + 4),
                  static_cast<uint32_t>(result >> 32));
     if (!rc.ok()) return rc;
 
@@ -217,7 +223,7 @@ Result<void> Context::dpi_complete(uint32_t func_id, uint64_t result) {
 }
 
 Result<void> Context::dpi_write_arg(uint32_t func_id, int arg_idx, uint32_t value) {
-    if (func_id >= n_dpi_funcs_ || arg_idx < 0 || arg_idx >= 8) {
+    if (func_id >= n_dpi_funcs_ || arg_idx < 0 || static_cast<uint32_t>(arg_idx) >= max_dpi_args_) {
         return Error::InvalidArg;
     }
     return write32(dpi_func_addr(func_id, reg::DpiArg0 + arg_idx * 4), value);

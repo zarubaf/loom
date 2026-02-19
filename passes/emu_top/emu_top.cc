@@ -260,8 +260,27 @@ struct EmuTopPass : public Pass {
         RTLIL::Wire *emu_finish = wrapper->addWire(ID(emu_finish), 1);
         RTLIL::Wire *dut_finish = wrapper->addWire(ID(dut_finish), 1);
 
+        // Read actual DPI port widths from DUT (set by loom_instrument)
+        int dut_args_width = 64;   // default
+        int dut_result_width = 32; // default
+        for (auto wire : dut->wires()) {
+            std::string wn = wire->name.str();
+            if (wn.find("loom_dpi_args") != std::string::npos && wire->port_output)
+                dut_args_width = wire->width;
+            if (wn.find("loom_dpi_result") != std::string::npos && wire->port_input)
+                dut_result_width = wire->width;
+        }
+
         // DPI regfile <-> emu_ctrl signals
-        int max_args = 8;
+        // Compute max_args from the actual DUT args port width.
+        // The 64-byte per-function block has room for status(1) + control(1) + args(N) +
+        // result(2) = N+4 registers, so N <= 12 with the current address decode scheme.
+        int max_args = (dut_args_width + 31) / 32;
+        if (max_args < 1) max_args = 1;
+        if (max_args > 12)
+            log_error("DPI args width %d bits (%d words) exceeds 12-word regfile limit.\n"
+                      "Reduce DPI argument sizes or split into multiple calls.\n",
+                      dut_args_width, max_args);
         int n_dpi = n_dpi_funcs > 0 ? n_dpi_funcs : 1;
         RTLIL::Wire *dpi_call_valid = wrapper->addWire(ID(dpi_call_valid), n_dpi);
         RTLIL::Wire *dpi_call_ready = wrapper->addWire(ID(dpi_call_ready), n_dpi);
@@ -273,17 +292,7 @@ struct EmuTopPass : public Pass {
         RTLIL::Wire *dpi_ret_data = wrapper->addWire(ID(dpi_ret_data), n_dpi * ret_data_per_func);
         RTLIL::Wire *dpi_stall = wrapper->addWire(ID(dpi_stall), n_dpi);
 
-        // DUT DPI interface signals (connected through emu_ctrl)
-        // Read actual widths from DUT's loom_dpi_args/result ports
-        int dut_args_width = 64;   // default
-        int dut_result_width = 32; // default
-        for (auto wire : dut->wires()) {
-            std::string wn = wire->name.str();
-            if (wn.find("loom_dpi_args") != std::string::npos && wire->port_output)
-                dut_args_width = wire->width;
-            if (wn.find("loom_dpi_result") != std::string::npos && wire->port_input)
-                dut_result_width = wire->width;
-        }
+        // DUT DPI interface wires (connected through emu_ctrl)
         RTLIL::Wire *dut_dpi_valid_w = wrapper->addWire(ID(dut_dpi_valid), 1);
         RTLIL::Wire *dut_dpi_ack = wrapper->addWire(ID(dut_dpi_ack), 1);
         RTLIL::Wire *dut_dpi_func_id = wrapper->addWire(ID(dut_dpi_func_id), 8);

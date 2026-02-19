@@ -118,6 +118,7 @@ namespace reg {
     constexpr uint32_t NMemories = 0x24;
     constexpr uint32_t NScanChains = 0x28;
     constexpr uint32_t TotalScanBits = 0x2C;
+    constexpr uint32_t MaxDpiArgs = 0x30;
     constexpr uint32_t DesignId = 0x34;
     constexpr uint32_t LoomVersion = 0x38;
     constexpr uint32_t IrqStatus = 0x40;
@@ -133,8 +134,9 @@ namespace reg {
     constexpr uint32_t DpiStatus = 0x00;
     constexpr uint32_t DpiControl = 0x04;
     constexpr uint32_t DpiArg0 = 0x08;
-    constexpr uint32_t DpiResultLo = 0x28;
-    constexpr uint32_t DpiResultHi = 0x2C;
+    // DpiResultLo/Hi follow after MAX_ARGS arg registers:
+    //   DpiResultLo = DpiArg0 + max_args * 4
+    //   DpiResultHi = DpiResultLo + 4
 
     // scan_ctrl register offsets
     constexpr uint32_t ScanStatus = 0x00;
@@ -220,6 +222,7 @@ public:
 
     // Design info accessors
     uint32_t n_dpi_funcs() const { return n_dpi_funcs_; }
+    uint32_t max_dpi_args() const { return max_dpi_args_; }
     uint32_t scan_chain_length() const { return scan_chain_length_; }
     uint32_t design_id() const { return design_id_; }
     uint32_t loom_version() const { return loom_version_; }
@@ -274,6 +277,7 @@ private:
 
     std::unique_ptr<Transport> transport_;
     uint32_t n_dpi_funcs_ = 0;
+    uint32_t max_dpi_args_ = 8;
     uint32_t scan_chain_length_ = 0;
     uint32_t design_id_ = 0;
     uint32_t loom_version_ = 0;
