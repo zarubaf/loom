@@ -17,6 +17,7 @@ endif()
 # ---------- Dependencies ----------
 include(cmake/FetchYosys.cmake)
 include(cmake/FetchYosysSlang.cmake)  # SystemVerilog frontend (includes slang)
+include(cmake/FetchVerilator.cmake)
 include(cmake/FetchGoogleTest.cmake)
 include(cmake/FetchReplxx.cmake)
 

@@ -3,7 +3,7 @@
 
 YOSYS ?= ../../build/yosys/bin/yosys
 YOSYS_SLANG_PLUGIN ?= ../../build/yosys-slang/slang.so
-VERILATOR := verilator
+VERILATOR ?= verilator
 OBJ_DIR := obj_dir
 
 VERILATOR_FLAGS := \

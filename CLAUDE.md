@@ -5,9 +5,14 @@
 
 ```bash
 # Prerequisites (macOS)
-brew install pkg-config libffi bison readline
+brew install pkg-config libffi bison readline autoconf
 
-# Build
+# Prerequisites (Ubuntu)
+sudo apt-get install build-essential cmake bison flex libfl-dev \
+    pkg-config libffi-dev libreadline-dev zlib1g-dev tcl-dev \
+    autoconf ccache help2man perl python3 git
+
+# Build (automatically fetches and builds Yosys, yosys-slang, and Verilator v5.044)
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 

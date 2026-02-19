@@ -8,8 +8,8 @@
 
 LOOM_HOME ?= $(error LOOM_HOME is not set)
 
-# Use debug binary to work around Verilator v5.040 internal fault bug
-VERILATOR ?= VERILATOR_BIN=verilator_bin_dbg verilator
+# Verilator binary (v5.044+, bug fixed)
+VERILATOR ?= verilator
 
 VERILATOR_FLAGS := \
     --binary --timing -Wall -Wno-fatal \

@@ -10,8 +10,6 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-24.04
-    env:
-      VERILATOR_VERSION: v5.030
 
     steps:
       - uses: actions/checkout@v4
@@ -27,41 +25,14 @@ jobs:
             pkg-config \
             libffi-dev libreadline-dev zlib1g-dev \
             tcl-dev \
-            autoconf ccache help2man perl python3
+            autoconf ccache help2man perl python3 git
 
-      # Cache Verilator installation (very expensive to build from source)
-      - name: Cache Verilator
-        id: cache-verilator
-        uses: actions/cache@v4
-        with:
-          path: /opt/verilator
-          key: verilator-${{ env.VERILATOR_VERSION }}-${{ runner.os }}
-
-      - name: Build Verilator from source
-        if: steps.cache-verilator.outputs.cache-hit != 'true'
-        run: |
-          git clone https://github.com/verilator/verilator.git
-          cd verilator
-          git checkout ${{ env.VERILATOR_VERSION }}
-          autoconf
-          ./configure --prefix=/opt/verilator
-          make -j$(nproc)
-          sudo make install
-          cd ..
-          rm -rf verilator
-
-      - name: Add Verilator to PATH
-        run: echo "/opt/verilator/bin" >> $GITHUB_PATH
-
-      - name: Verify Verilator installation
-        run: verilator --version
-
-      # Cache Loom build directory
+      # Cache Loom build directory (includes Verilator, Yosys, etc.)
       - name: Cache Loom build
         uses: actions/cache@v4
         with:
           path: build
-          key: loom-build-${{ runner.os }}-${{ hashFiles('cmake/FetchYosys.cmake', 'cmake/FetchYosysSlang.cmake', 'third_party/yosys-slang/**', 'passes/**/*.cc', 'src/**/*.{cc,cpp,sv}') }}
+          key: loom-build-${{ runner.os }}-${{ hashFiles('cmake/**', 'passes/**', 'src/**') }}
           restore-keys: |
             loom-build-${{ runner.os }}-
 

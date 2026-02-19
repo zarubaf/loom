@@ -170,65 +170,68 @@ int main(int argc, char **argv) {
     // DPI loading (two-stage dlopen)
     // ========================================================================
 
-    // Stage 1: Load dispatch .so first — it provides svdpi open array
-    // functions (svGetArrayPtr etc.) that the user library may depend on.
-    auto dispatch_path = work / "loom_dpi_dispatch.so";
-    if (!fs::exists(dispatch_path)) {
-        logger.error("Dispatch library not found: %s",
-                     dispatch_path.c_str());
-        return 1;
-    }
-
-    logger.info("Loading dispatch library: %s", dispatch_path.c_str());
-    void *dispatch_handle =
-        dlopen(dispatch_path.c_str(), RTLD_LAZY | RTLD_GLOBAL);
-    if (!dispatch_handle) {
-        logger.error("Failed to load dispatch library: %s", dlerror());
-        return 1;
-    }
-
-    // Stage 2: Load user .so with RTLD_GLOBAL (exports user function symbols
-    // that the dispatch wrappers call via -undefined dynamic_lookup)
+    // Initialize to null (for designs without DPI)
+    const loom_dpi_func_t *funcs = nullptr;
+    const int *n_funcs = nullptr;
+    void *dispatch_handle = nullptr;
     void *user_handle = nullptr;
-    if (!opts.sv_lib.empty()) {
-        // Resolve library path (SystemVerilog -sv_lib convention):
-        //   -sv_lib foo       → try foo.so, then libfoo.so
-        //   -sv_lib dir/foo   → try dir/foo.so, then dir/libfoo.so
-        std::string user_lib;
-        fs::path sv_path(opts.sv_lib);
-        fs::path with_so = sv_path;
-        with_so += ".so";
-        fs::path with_lib = sv_path.parent_path() / ("lib" + sv_path.filename().string() + ".so");
 
-        if (fs::exists(with_so)) {
-            user_lib = fs::absolute(with_so).string();
-        } else if (fs::exists(with_lib)) {
-            user_lib = fs::absolute(with_lib).string();
-        } else {
-            // Try as a direct path
-            user_lib = opts.sv_lib;
-        }
-
-        logger.info("Loading user DPI library: %s", user_lib.c_str());
-        user_handle = dlopen(user_lib.c_str(), RTLD_NOW | RTLD_GLOBAL);
-        if (!user_handle) {
-            logger.error("Failed to load user library: %s", dlerror());
+    // Only load DPI libraries if dispatch library exists
+    auto dispatch_path = work / "loom_dpi_dispatch.so";
+    if (fs::exists(dispatch_path)) {
+        // Stage 1: Load dispatch .so first — it provides svdpi open array
+        // functions (svGetArrayPtr etc.) that the user library may depend on.
+        logger.info("Loading dispatch library: %s", dispatch_path.c_str());
+        dispatch_handle = dlopen(dispatch_path.c_str(), RTLD_LAZY | RTLD_GLOBAL);
+        if (!dispatch_handle) {
+            logger.error("Failed to load dispatch library: %s", dlerror());
             return 1;
         }
+
+        // Stage 2: Load user .so with RTLD_GLOBAL (exports user function symbols
+        // that the dispatch wrappers call via -undefined dynamic_lookup)
+        if (!opts.sv_lib.empty()) {
+            // Resolve library path (SystemVerilog -sv_lib convention):
+            //   -sv_lib foo       → try foo.so, then libfoo.so
+            //   -sv_lib dir/foo   → try dir/foo.so, then dir/libfoo.so
+            std::string user_lib;
+            fs::path sv_path(opts.sv_lib);
+            fs::path with_so = sv_path;
+            with_so += ".so";
+            fs::path with_lib = sv_path.parent_path() / ("lib" + sv_path.filename().string() + ".so");
+
+            if (fs::exists(with_so)) {
+                user_lib = fs::absolute(with_so).string();
+            } else if (fs::exists(with_lib)) {
+                user_lib = fs::absolute(with_lib).string();
+            } else {
+                // Try as a direct path
+                user_lib = opts.sv_lib;
+            }
+
+            logger.info("Loading user DPI library: %s", user_lib.c_str());
+            user_handle = dlopen(user_lib.c_str(), RTLD_NOW | RTLD_GLOBAL);
+            if (!user_handle) {
+                logger.error("Failed to load user library: %s", dlerror());
+                return 1;
+            }
+        }
+
+        // Get function table from dispatch .so
+        funcs = reinterpret_cast<const loom_dpi_func_t *>(
+            dlsym(dispatch_handle, "loom_dpi_funcs"));
+        n_funcs =
+            reinterpret_cast<const int *>(dlsym(dispatch_handle, "loom_dpi_n_funcs"));
+
+        if (!funcs || !n_funcs) {
+            logger.error("Dispatch library missing loom_dpi_funcs/loom_dpi_n_funcs");
+            return 1;
+        }
+
+        logger.info("Loaded %d DPI functions from dispatch table", *n_funcs);
+    } else {
+        logger.info("No dispatch library found - design has no DPI calls");
     }
-
-    // Get function table from dispatch .so
-    auto *funcs = reinterpret_cast<const loom_dpi_func_t *>(
-        dlsym(dispatch_handle, "loom_dpi_funcs"));
-    auto *n_funcs =
-        reinterpret_cast<const int *>(dlsym(dispatch_handle, "loom_dpi_n_funcs"));
-
-    if (!funcs || !n_funcs) {
-        logger.error("Dispatch library missing loom_dpi_funcs/loom_dpi_n_funcs");
-        return 1;
-    }
-
-    logger.info("Loaded %d DPI functions from dispatch table", *n_funcs);
 
     // ========================================================================
     // Launch simulation (unless --no-sim)
@@ -322,15 +325,21 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Verify DPI function count
-    if (ctx.n_dpi_funcs() != static_cast<uint32_t>(*n_funcs)) {
-        logger.warning("Design has %u DPI funcs, dispatch has %d",
-                       ctx.n_dpi_funcs(), *n_funcs);
-    }
-
-    // Register DPI functions
+    // Verify DPI function count and register (only if we have DPI)
     auto &dpi_service = loom::global_dpi_service();
-    dpi_service.register_funcs(funcs, *n_funcs);
+    if (funcs && n_funcs) {
+        if (ctx.n_dpi_funcs() != static_cast<uint32_t>(*n_funcs)) {
+            logger.warning("Design has %u DPI funcs, dispatch has %d",
+                           ctx.n_dpi_funcs(), *n_funcs);
+        }
+        dpi_service.register_funcs(funcs, *n_funcs);
+    } else {
+        // No DPI functions in design
+        if (ctx.n_dpi_funcs() > 0) {
+            logger.warning("Design has %u DPI funcs but no dispatch library loaded",
+                           ctx.n_dpi_funcs());
+        }
+    }
 
     // Run shell
     loom::Shell shell(ctx, dpi_service);

@@ -102,8 +102,9 @@ add_test(NAME fsm_extract_equiv
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/fsm_extract
 )
 set_tests_properties(fsm_extract_equiv PROPERTIES
-    DEPENDS "yosys_ext;yosys_slang_ext"
+    DEPENDS "yosys_ext;yosys_slang_ext;verilator_ext"
     TIMEOUT 120
+    ENVIRONMENT "VERILATOR=${VERILATOR_BIN}"
 )
 
 # emu_top tests
@@ -116,9 +117,9 @@ add_test(NAME e2e_dpi_open_array
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/dpi_open_array
 )
 set_tests_properties(e2e_dpi_open_array PROPERTIES
-    DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;loom_instrument;emu_top;loomc;loomx"
+    DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
     TIMEOUT 120
-    ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR}"
+    ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
 
 # End-to-end DPI fixed-size array test using loomc/loomx
@@ -127,9 +128,9 @@ add_test(NAME e2e_dpi_fixed_array
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/dpi_fixed_array
 )
 set_tests_properties(e2e_dpi_fixed_array PROPERTIES
-    DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;loom_instrument;emu_top;loomc;loomx"
+    DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
     TIMEOUT 120
-    ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR}"
+    ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
 
 # End-to-end DPI test using loomc/loomx
@@ -138,9 +139,9 @@ add_test(NAME e2e_dpi_test
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/e2e
 )
 set_tests_properties(e2e_dpi_test PROPERTIES
-    DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;loom_instrument;emu_top;loomc;loomx"
+    DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
     TIMEOUT 120
-    ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR}"
+    ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
 
 # Helper function for mem_shadow E2E tests (transform + simulate)
@@ -152,9 +153,9 @@ function(add_mem_shadow_e2e_test TEST_NAME)
         WORKING_DIRECTORY ${TEST_DIR}
     )
     set_tests_properties(mem_shadow_${TEST_NAME} PROPERTIES
-        DEPENDS "yosys_ext;yosys_slang_ext;mem_shadow"
+        DEPENDS "yosys_ext;yosys_slang_ext;mem_shadow;verilator_ext"
         TIMEOUT 120
-        ENVIRONMENT "YOSYS=${YOSYS_BIN};YOSYS_SLANG_PLUGIN=${YOSYS_SLANG_PLUGIN}"
+        ENVIRONMENT "YOSYS=${YOSYS_BIN};YOSYS_SLANG_PLUGIN=${YOSYS_SLANG_PLUGIN};VERILATOR=${VERILATOR_BIN}"
     )
 endfunction()
 
@@ -167,7 +168,7 @@ add_test(NAME e2e_shell_regaccess
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/shell_regaccess
 )
 set_tests_properties(e2e_shell_regaccess PROPERTIES
-    DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;loom_instrument;emu_top;loomc;loomx"
+    DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
     TIMEOUT 120
-    ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR}"
+    ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
