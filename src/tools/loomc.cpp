@@ -151,7 +151,10 @@ std::string build_yosys_script(const Options &opts,
 
     // Read all sources via a single read_slang call so that
     // cross-file module references resolve correctly.
-    ys << "read_slang";
+    // --ignore-initial: initial blocks with waits/timing are not synthesizable
+    // Note: --ignore-timing is NOT used -- multi-cycle always blocks with
+    // inner @(posedge clk) are handled by the FSM extractor in --loom mode.
+    ys << "read_slang --ignore-initial --loom";
     for (auto &f : opts.filelists)
         ys << " -F " << fs::absolute(f).string();
     for (auto &s : opts.sources)

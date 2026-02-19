@@ -91,6 +91,19 @@ function(add_emu_top_test TEST_NAME)
     )
 endfunction()
 
+# FSM extraction test (uses slang frontend)
+add_yosys_slang_test(fsm_extract)
+
+# FSM extraction equivalence test (Verilator --timing)
+add_test(NAME fsm_extract_equiv
+    COMMAND make sim
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/fsm_extract
+)
+set_tests_properties(fsm_extract_equiv PROPERTIES
+    DEPENDS "yosys_ext;yosys_slang_ext"
+    TIMEOUT 120
+)
+
 # emu_top tests
 add_emu_top_test(emu_top)
 

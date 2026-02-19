@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: Apache-2.0
+# Test FSM extraction from multi-cycle always blocks
+
+# === Test 1: Basic 2-state FSM (alternating output) ===
+read_slang --loom basic_fsm.sv
+hierarchy -check -top basic_fsm
+proc
+opt
+
+# Verify: flip-flop(s) for 'a' output (may be $dff or $dffe after opt)
+select -assert-min 1 t:$dff t:$dffe %u
+select -clear
+delete basic_fsm
+
+# === Test 2: 3-state FSM with while-wait pattern ===
+read_slang --loom wait_fsm.sv
+hierarchy -check -top wait_fsm
+proc
+opt
+
+# Verify: DFFs/DFFEs exist for state register and driven signals
+select -assert-min 3 t:$dff t:$dffe %u
+select -clear
+
+# Verify: mux cells exist (state-dependent logic)
+select -assert-min 1 t:$mux
+select -clear
+
+stat
+
+delete wait_fsm
+
+# === Test 3: if + repeat + while-wait FSM ===
+read_slang --loom if_repeat_fsm.sv
+hierarchy -check -top if_repeat_fsm
+proc
+opt
+
+# Verify: DFFs/DFFEs (state + counter + active + request)
+select -assert-min 4 t:$dff t:$dffe %u
+select -clear
+
+# Verify: subtractor for counter decrement
+select -assert-min 1 t:$sub
+select -clear
+
+stat

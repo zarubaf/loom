@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+transformed_*_fsm.v
+tb_*_fsm_equiv.sv
+obj_dir/
+_ports.json

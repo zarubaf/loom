@@ -4,7 +4,7 @@
 # and that loom_instrument pass converts them to hardware bridge interfaces
 
 # Read using slang frontend (automatically detects DPI imports)
-read_slang ../fixtures/dpi_example.sv
+read_slang --loom ../fixtures/dpi_example.sv
 
 hierarchy -check -top dpi_example
 proc

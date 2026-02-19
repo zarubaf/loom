@@ -1,11 +1,13 @@
-module top;
+module top (
+  input logic clk
+);
 
-  reg clk;
-  // tbx clkgen
-  initial begin
-    clk = 0;
-    forever #1 clk = ~clk;
-  end
+  // reg clk;
+  // // tbx clkgen
+  // initial begin
+  //   clk = 0;
+  //   forever #1 clk = ~clk;
+  // end
 
   bit [63:0] mem[1<<8];
 

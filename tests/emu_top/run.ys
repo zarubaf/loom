@@ -3,7 +3,7 @@
 # Verifies that emu_top creates a wrapper with loom_en (no clock gating)
 
 # Read the test design with DPI call
-read_slang ../fixtures/dpi_example.sv
+read_slang --loom ../fixtures/dpi_example.sv
 
 hierarchy -check -top dpi_example
 proc

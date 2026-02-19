@@ -27,6 +27,7 @@ tests/**/build/
 tests/**/obj_dir/
 
 *.vcd
+*.fst
 *.vvp
 *.log
 
