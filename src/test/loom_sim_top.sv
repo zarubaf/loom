@@ -152,12 +152,17 @@ module loom_sim_top;
     end
 
     // =========================================================================
-    // Simulation timeout
+    // Simulation timeout (configurable via +timeout=<ns>, -1 for infinite)
     // =========================================================================
     initial begin
-        #100_000_000;  // 100ms timeout
-        $display("[sim] Timeout!");
-        $finish;
+        longint unsigned timeout_ns;
+        if (!$value$plusargs("timeout=%d", timeout_ns))
+            timeout_ns = 100_000_000;  // default: 100ms
+        if (timeout_ns != '1) begin
+            #(timeout_ns);
+            $display("[sim] Timeout after %0d ns!", timeout_ns);
+            $finish;
+        end
     end
 
 endmodule

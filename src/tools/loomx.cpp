@@ -39,6 +39,7 @@ struct Options {
     std::string sim_name = "Vloom_sim_top";
     std::string script_file;
     std::string socket_path;    // Empty = auto PID-based
+    std::string timeout;        // Sim timeout in ns (empty = sim default, "-1" = infinite)
     bool verbose = false;
     bool no_sim = false;
 };
@@ -53,6 +54,7 @@ void print_usage(const char *prog) {
         "  -sim BINARY     Simulation binary name (default: Vloom_sim_top)\n"
         "  -f SCRIPT       Run commands from script file\n"
         "  -s SOCKET       Socket path (default: auto PID-based)\n"
+        "  -timeout NS     Simulation timeout in ns (-1 for infinite)\n"
         "  --no-sim        Don't launch sim (connect to existing socket)\n"
         "  -v              Verbose output\n"
         "  -h              Show this help\n",
@@ -74,6 +76,8 @@ Options parse_args(int argc, char **argv) {
             opts.script_file = argv[++i];
         } else if (arg == "-s" && i + 1 < argc) {
             opts.socket_path = argv[++i];
+        } else if (arg == "-timeout" && i + 1 < argc) {
+            opts.timeout = argv[++i];
         } else if (arg == "--no-sim") {
             opts.no_sim = true;
         } else if (arg == "-v") {
@@ -227,12 +231,20 @@ int main(int argc, char **argv) {
             return 1;
         }
         if (sim_pid == 0) {
-            // Child: exec simulation with +socket= plusarg
-            std::string socket_arg = "+socket=" + opts.socket_path;
-            execl(sim_bin.c_str(), sim_bin.c_str(), socket_arg.c_str(),
-                  nullptr);
+            // Child: exec simulation with plusargs
+            std::vector<std::string> sim_args = {
+                sim_bin, "+socket=" + opts.socket_path
+            };
+            if (!opts.timeout.empty())
+                sim_args.push_back("+timeout=" + opts.timeout);
+
+            std::vector<const char *> argv;
+            for (auto &a : sim_args) argv.push_back(a.c_str());
+            argv.push_back(nullptr);
+
+            execv(sim_bin.c_str(), const_cast<char *const *>(argv.data()));
             // In child — can't use logger safely after fork
-            std::perror("execl");
+            std::perror("execv");
             _exit(127);
         }
 

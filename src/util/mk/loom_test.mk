@@ -49,6 +49,7 @@ _DPI_LINK     := $(if $(_DPI_CXX_SRCS),$(CXX),$(CC))
 
 # loomx flags: only pass -sv_lib when there are DPI sources
 _LOOMX_DPI := $(if $(DPI_SRCS),-sv_lib $(BUILD)/dpi)
+_LOOMX_TIMEOUT := $(if $(timeout),-timeout $(timeout))
 
 # ---------- Phony targets ----------
 .PHONY: all test interactive clean
@@ -92,11 +93,11 @@ _TEST_DEPS := $(BUILD)/sim/obj_dir/Vloom_sim_top $(if $(DPI_SRCS),$(BUILD)/libdp
 test: $(_TEST_DEPS)
 	@echo "run" > $(BUILD)/test_script.txt
 	@echo "exit" >> $(BUILD)/test_script.txt
-	$(LOOMX) -work $(BUILD) $(_LOOMX_DPI) -sim Vloom_sim_top -f $(BUILD)/test_script.txt
+	$(LOOMX) -work $(BUILD) $(_LOOMX_DPI) $(_LOOMX_TIMEOUT) -sim Vloom_sim_top -f $(BUILD)/test_script.txt
 
 # ---------- Step 5: Interactive ----------
 interactive: $(_TEST_DEPS)
-	$(LOOMX) -work $(BUILD) $(_LOOMX_DPI) -sim Vloom_sim_top
+	$(LOOMX) -work $(BUILD) $(_LOOMX_DPI) $(_LOOMX_TIMEOUT) -sim Vloom_sim_top
 
 # ---------- Clean ----------
 clean:
