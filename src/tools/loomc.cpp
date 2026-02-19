@@ -33,10 +33,11 @@ loom::Logger logger = loom::make_logger("loomc");
 struct Options {
     std::string top_module;
     fs::path work_dir = "work";
-    std::string clk = "clk_i";
+    std::string clk;          // empty = auto-detect from tbx clkgen, fallback clk_i
     std::string rst = "rst_ni";
     std::vector<fs::path> sources;
     std::vector<fs::path> filelists;
+    std::vector<std::string> defines;
     bool mem_shadow = false;
     bool verbose = false;
 };
@@ -51,6 +52,7 @@ void print_usage(const char *prog) {
         "  -f FILELIST    Read source files from filelist\n"
         "  -clk SIGNAL    Clock signal name (default: clk_i)\n"
         "  -rst SIGNAL    Reset signal name (default: rst_ni)\n"
+        "  -D DEFINE      Preprocessor define (passed to slang)\n"
         "  --mem-shadow   Enable memory shadow ports\n"
         "  -v             Verbose output\n"
         "  -h             Show this help\n",
@@ -72,6 +74,8 @@ Options parse_args(int argc, char **argv) {
             opts.clk = argv[++i];
         } else if (arg == "-rst" && i + 1 < argc) {
             opts.rst = argv[++i];
+        } else if (arg == "-D" && i + 1 < argc) {
+            opts.defines.emplace_back(argv[++i]);
         } else if (arg == "--mem-shadow") {
             opts.mem_shadow = true;
         } else if (arg == "-v") {
@@ -151,10 +155,12 @@ std::string build_yosys_script(const Options &opts,
 
     // Read all sources via a single read_slang call so that
     // cross-file module references resolve correctly.
-    // --ignore-initial: initial blocks with waits/timing are not synthesizable
-    // Note: --ignore-timing is NOT used -- multi-cycle always blocks with
-    // inner @(posedge clk) are handled by the FSM extractor in --loom mode.
-    ys << "read_slang --ignore-initial --loom";
+    // --loom: enables DPI bridging, FSM extraction, and tbx clkgen detection.
+    // Note: --ignore-initial is NOT used — loom mode selectively handles
+    // initial blocks (tbx clkgen → port promotion, waits → skipped).
+    ys << "read_slang --loom";
+    for (auto &d : opts.defines)
+        ys << " -D " << d;
     for (auto &f : opts.filelists)
         ys << " -F " << fs::absolute(f).string();
     for (auto &s : opts.sources)
@@ -187,8 +193,10 @@ std::string build_yosys_script(const Options &opts,
        << " -header_out loom_dpi_dispatch.c\n";
 
     // Emulation top wrapper
-    ys << "emu_top -top " << opts.top_module << " -clk " << opts.clk
-       << " -rst " << opts.rst << "\n";
+    ys << "emu_top -top " << opts.top_module;
+    if (!opts.clk.empty())
+        ys << " -clk " << opts.clk;
+    ys << " -rst " << opts.rst << "\n";
 
     // Cleanup and output
     ys << "opt_clean\n";

@@ -122,6 +122,41 @@ struct EmuTopPass : public Pass {
             scan_chain_length = atoi(scan_len_str.c_str());
         }
 
+        // Auto-detect clock name from tbx clkgen detection
+        std::string tbx_clk = dut->get_string_attribute(RTLIL::IdString("\\loom_tbx_clk"));
+        if (!tbx_clk.empty()) {
+            if (clk_name == "clk_i") {
+                // Default clock name — override with detected
+                clk_name = tbx_clk;
+                log("  Clock from tbx clkgen: %s\n", tbx_clk.c_str());
+            } else if (clk_name != tbx_clk) {
+                log_error("Clock name conflict: -clk specifies '%s' but "
+                          "tbx clkgen detected '%s'.\n"
+                          "Remove -clk to use the auto-detected clock, "
+                          "or fix the mismatch.\n",
+                          clk_name.c_str(), tbx_clk.c_str());
+            }
+        }
+
+        // Ensure clock and reset are input ports on the DUT.
+        // This handles the "tbx clkgen" pattern where the clock is driven by
+        // an initial block (skipped by --ignore-initial) and may have been
+        // optimized away or left as an internal wire.
+        for (auto &sig_name : {clk_name, rst_name}) {
+            RTLIL::Wire *w = dut->wire(RTLIL::escape_id(sig_name));
+            if (!w) {
+                // Wire was optimized away — recreate as input port
+                log("  Creating input port '%s' (was missing — tbx clkgen pattern)\n", sig_name.c_str());
+                w = dut->addWire(RTLIL::escape_id(sig_name), 1);
+                w->port_input = true;
+                dut->fixup_ports();
+            } else if (!w->port_input) {
+                log("  Promoting internal wire '%s' to input port\n", sig_name.c_str());
+                w->port_input = true;
+                dut->fixup_ports();
+            }
+        }
+
         log("Creating loom_emu_top wrapper for DUT '%s'\n", top_name.c_str());
         log("  Clock: %s, Reset: %s\n", clk_name.c_str(), rst_name.c_str());
         log("  DPI functions: %d (auto-detected)\n", n_dpi_funcs);

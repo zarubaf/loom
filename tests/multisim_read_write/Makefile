@@ -6,5 +6,6 @@ DPI_SRCS := multisim/multisim_server.cpp multisim/socket_server/server.cpp
 DPI_HDRS := multisim/multisim_server.h multisim/multisim_common.h \
             multisim/socket_server/server.h
 DPI_CXXFLAGS := -Imultisim
+LOOMC_FLAGS  := -D MULTISIM_EMULATION
 
 include ../../src/util/mk/loom_test.mk
