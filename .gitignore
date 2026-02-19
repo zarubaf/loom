@@ -8,6 +8,7 @@ cmake-build-*/
 *.swp
 *.swo
 *~
+.cache
 
 # macOS
 .DS_Store

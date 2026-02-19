@@ -44,7 +44,8 @@ struct DpiArg {
     std::string direction;    // input, output, inout
     int width;
     std::string string_value; // For string args: the compile-time constant value
-    bool is_open_array = false; // true if arg is an open array (type contains "[]")
+    bool is_array = false;      // true for any unpacked array (open or fixed-size)
+    bool is_open_array = false; // true specifically for open (unsized) arrays
     int n_elements = 0;         // number of array elements (inferred from width)
 };
 
@@ -254,11 +255,13 @@ struct LoomInstrumentPass : public Pass {
                             if (!str_attr.empty() || arg.type == "string") {
                                 arg.string_value = str_attr;
                             }
-                            // Detect open array arguments (type contains "[]")
-                            if (arg.type.find("[]") != std::string::npos) {
-                                arg.is_open_array = true;
-                                // Element width: bit[31:0][] = 32 bits per element
-                                // For now assume 32-bit elements (svBitVecVal)
+                            // Detect array arguments from slang type string:
+                            //   Open array:  "bit[31:0]$[]"  (contains "$[]")
+                            //   Fixed-size:  "bit[31:0]$[0:1]" (contains "$[" but not "$[]")
+                            if (arg.type.find("$[") != std::string::npos) {
+                                arg.is_array = true;
+                                arg.is_open_array = (arg.type.find("$[]") != std::string::npos);
+                                // Element width: assume 32-bit elements (svBitVecVal)
                                 int elem_width = 32;
                                 arg.n_elements = (arg.width > 0) ? arg.width / elem_width : 1;
                                 if (arg.n_elements < 1) arg.n_elements = 1;
@@ -738,22 +741,22 @@ struct LoomInstrumentPass : public Pass {
         log("  Created loom_finish_o output port\n");
     }
 
-    // Compute input-only arg width (excluding output open arrays).
+    // Compute input-only arg width (excluding output arrays).
     int input_arg_width(const DpiFunction &func) {
         int w = 0;
         for (const auto &arg : func.args) {
             if (arg.type == "string") continue;
-            if (arg.is_open_array && arg.direction == "output") continue;
+            if (arg.is_array && arg.direction == "output") continue;
             w += arg.width;
         }
         return w;
     }
 
-    // Compute output open array total width for a function.
+    // Compute output array total width for a function.
     int output_array_width(const DpiFunction &func) {
         int w = 0;
         for (const auto &arg : func.args) {
-            if (arg.is_open_array && arg.direction == "output")
+            if (arg.is_array && arg.direction == "output")
                 w += arg.width;
         }
         return w;
@@ -791,14 +794,14 @@ struct LoomInstrumentPass : public Pass {
         dpi_result_in->port_input = true;
 
         // Helper: split a function's args_sig into input-only portion and
-        // connect output open array wires from the result bus.
+        // connect output array wires from the result bus.
         auto connect_func_args_result = [&](const DpiFunction &func) {
-            // Build input-only args signal (skip output open arrays)
+            // Build input-only args signal (skip output arrays)
             RTLIL::SigSpec input_args;
             int bit_offset = 0;
             for (const auto &arg : func.args) {
                 if (arg.type == "string") continue;
-                if (arg.is_open_array && arg.direction == "output") {
+                if (arg.is_array && arg.direction == "output") {
                     bit_offset += arg.width;
                     continue;
                 }
@@ -820,13 +823,13 @@ struct LoomInstrumentPass : public Pass {
                     RTLIL::SigSpec(dpi_result_in).extract(0, GetSize(func.result_sig)));
             }
 
-            // Connect output open array wires from host-written ARG region.
+            // Connect output array wires from host-written ARG region.
             // ARG0 is at bit 64, ARG1 at bit 96, etc.
             int out_arg_offset = 64;
             bit_offset = 0;
             for (const auto &arg : func.args) {
                 if (arg.type == "string") continue;
-                if (arg.is_open_array && arg.direction == "output") {
+                if (arg.is_array && arg.direction == "output") {
                     RTLIL::SigSpec out_wire = func.args_sig.extract(bit_offset, arg.width);
                     module->connect(out_wire,
                         RTLIL::SigSpec(dpi_result_in).extract(out_arg_offset, arg.width));
@@ -998,9 +1001,10 @@ struct LoomInstrumentPass : public Pass {
     }
 
     // Map SV/DPI type to C type
-    std::string sv_type_to_c(const std::string &sv_type, int width, bool is_open_array = false) {
-        if (is_open_array) {
-            return "svOpenArrayHandle";
+    std::string sv_type_to_c(const std::string &sv_type, int width,
+                             bool is_array = false, bool is_open_array = false) {
+        if (is_array) {
+            return is_open_array ? "svOpenArrayHandle" : "uint32_t*";
         }
         if (sv_type == "int" || sv_type == "integer") {
             return "int32_t";
@@ -1030,20 +1034,20 @@ struct LoomInstrumentPass : public Pass {
         return "uint64_t";
     }
 
-    // Check if a function has any output open array arguments.
+    // Check if a function has any output array arguments.
     bool has_output_arrays(const DpiFunction &func) {
         for (const auto &arg : func.args) {
-            if (arg.is_open_array && arg.direction == "output")
+            if (arg.is_array && arg.direction == "output")
                 return true;
         }
         return false;
     }
 
-    // Count output open array words for a function.
+    // Count output array words for a function.
     int out_arg_words(const DpiFunction &func) {
         int words = 0;
         for (const auto &arg : func.args) {
-            if (arg.is_open_array && arg.direction == "output")
+            if (arg.is_array && arg.direction == "output")
                 words += (arg.width + 31) / 32;
         }
         return words;
@@ -1088,7 +1092,7 @@ struct LoomInstrumentPass : public Pass {
             } else {
                 for (size_t i = 0; i < func.args.size(); i++) {
                     const auto &arg = func.args[i];
-                    std::string c_type = sv_type_to_c(arg.type, arg.width, arg.is_open_array);
+                    std::string c_type = sv_type_to_c(arg.type, arg.width, arg.is_array, arg.is_open_array);
                     if (i > 0) ofs << ", ";
                     ofs << c_type << " " << arg.name;
                 }
@@ -1122,32 +1126,34 @@ struct LoomInstrumentPass : public Pass {
                 ofs << ");\n";
                 ofs << "    return 0;\n";
             } else {
-                // Declare array buffers and handles for open array args
+                // Declare array buffers for array args (open and fixed-size)
                 int arg_offset = 0;
                 int out_offset = 0;
                 for (size_t i = 0; i < func.args.size(); i++) {
                     const auto &arg = func.args[i];
-                    if (arg.type == "string" || !arg.is_open_array) continue;
+                    if (arg.type == "string" || !arg.is_array) continue;
                     int n = arg.n_elements;
                     if (arg.direction == "output") {
                         ofs << "    uint32_t " << arg.name << "_buf[" << n << "];\n";
                         ofs << "    memset(" << arg.name << "_buf, 0, sizeof(" << arg.name << "_buf));\n";
                     } else {
-                        // Input open array: fill from args
+                        // Input array: fill from args below
                         ofs << "    uint32_t " << arg.name << "_buf[" << n << "];\n";
-                        // We'll fill it below after computing offsets
                     }
-                    ofs << "    loom_sv_array_t " << arg.name << "_arr = { "
-                        << arg.name << "_buf, " << n << ", 32 };\n";
+                    // Open arrays need a loom_sv_array_t wrapper for svOpenArrayHandle
+                    if (arg.is_open_array) {
+                        ofs << "    loom_sv_array_t " << arg.name << "_arr = { "
+                            << arg.name << "_buf, " << n << ", 32 };\n";
+                    }
                 }
 
-                // Fill input open array buffers from args
+                // Fill input array buffers from args
                 arg_offset = 0;
                 for (size_t i = 0; i < func.args.size(); i++) {
                     const auto &arg = func.args[i];
                     if (arg.type == "string") continue;
-                    if (arg.is_open_array && arg.direction == "output") continue;
-                    if (arg.is_open_array && arg.direction == "input") {
+                    if (arg.is_array && arg.direction == "output") continue;
+                    if (arg.is_array && arg.direction == "input") {
                         int n = arg.n_elements;
                         for (int j = 0; j < n; j++) {
                             ofs << "    " << arg.name << "_buf[" << j << "] = args["
@@ -1165,8 +1171,14 @@ struct LoomInstrumentPass : public Pass {
                     if (i > 0) call_args += ", ";
                     if (arg.type == "string") {
                         call_args += "\"" + arg.string_value + "\"";
-                    } else if (arg.is_open_array) {
-                        call_args += "(svOpenArrayHandle)&" + arg.name + "_arr";
+                    } else if (arg.is_array) {
+                        // Open arrays: pass svOpenArrayHandle wrapper
+                        // Fixed-size arrays: pass buffer pointer directly
+                        if (arg.is_open_array) {
+                            call_args += "(svOpenArrayHandle)&" + arg.name + "_arr";
+                        } else {
+                            call_args += arg.name + "_buf";
+                        }
                         if (arg.direction != "output")
                             arg_offset += (arg.width + 31) / 32;
                     } else {
@@ -1184,11 +1196,11 @@ struct LoomInstrumentPass : public Pass {
                     ofs << "    " << func.name << "(" << call_args << ");\n";
                 }
 
-                // Copy output open array data back to out_args
+                // Copy output array data back to out_args
                 out_offset = 0;
                 for (size_t i = 0; i < func.args.size(); i++) {
                     const auto &arg = func.args[i];
-                    if (!arg.is_open_array || arg.direction != "output") continue;
+                    if (!arg.is_array || arg.direction != "output") continue;
                     int n = arg.n_elements;
                     for (int j = 0; j < n; j++) {
                         ofs << "    out_args[" << (out_offset + j) << "] = "
