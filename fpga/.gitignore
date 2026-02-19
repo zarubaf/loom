@@ -1,0 +1,14 @@
+work-*/
+ip/*/.done
+ip/*/xlnx_*.srcs/
+ip/*/xlnx_*.cache/
+ip/*/xlnx_*.runs/
+ip/*/xlnx_*.hw/
+ip/*/xlnx_*.gen/
+ip/*/xlnx_*.ip_user_files/
+ip/*/.Xil/
+*.bit
+*.dcp
+*.xci
+*xpr
+clockInfo.txt

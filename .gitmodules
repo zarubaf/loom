@@ -1,3 +1,6 @@
 [submodule "third_party/yosys-slang"]
 	path = third_party/yosys-slang
 	url = https://github.com/povik/yosys-slang.git
+[submodule "third_party/dma_ip_drivers"]
+	path = third_party/dma_ip_drivers
+	url = https://github.com/Xilinx/dma_ip_drivers.git
