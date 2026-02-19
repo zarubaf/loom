@@ -62,14 +62,16 @@ Default output frequency: 50 MHz (from 300 MHz input).
 
 ## Host Transport
 
-The FPGA host binary (`loom_fpga_main.cpp`) uses the XDMA transport
-(`loom_transport_xdma.cpp`) which accesses the FPGA via:
+`loomx -t xdma` uses the XDMA transport (`loom_transport_xdma.cpp`) which
+accesses the FPGA via:
 
 ```
 /dev/xdma0_user → pread/pwrite → AXI-Lite registers
 ```
 
-The `Context` and `DpiService` classes are shared with simulation.
+The `Context`, `DpiService`, and shell are shared with simulation mode.
+The shell `read`/`write` commands provide direct register access for
+debugging.
 
 ## Build Flow
 
@@ -83,14 +85,11 @@ make -C tests/e2e transform
 # 3. Build bitstream
 make -C fpga bitstream TRANSFORMED_V=tests/e2e/build/transformed_dpi_test.v
 
-# 4. Build FPGA host binary
-make -C tests/e2e fpga-host
+# 4. Program FPGA
+make -C fpga program
 
-# 5. Program FPGA
-make -C tests/e2e fpga-program
-
-# 6. Run test
-tests/e2e/build/obj_dir/loom_fpga_host /dev/xdma0_user
+# 5. Run via loomx
+loomx -work tests/e2e/build -t xdma -sv_lib tests/e2e/build/dpi
 ```
 
 ## Files
@@ -100,7 +99,6 @@ tests/e2e/build/obj_dir/loom_fpga_host /dev/xdma0_user
 | `src/fpga/loom_fpga_top.sv` | FPGA top-level |
 | `src/rtl/loom_axil_demux.sv` | Parameterizable AXI-Lite 1:N demux |
 | `src/host/loom_transport_xdma.cpp` | PCIe/XDMA transport |
-| `src/host/loom_fpga_main.cpp` | FPGA host entry point |
 | `fpga/Makefile` | Build orchestration |
 | `fpga/boards/u250/` | Board settings and constraints |
 | `fpga/ip/` | Xilinx IP generation scripts |

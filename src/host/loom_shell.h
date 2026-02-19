@@ -64,6 +64,8 @@ private:
     int cmd_status(const std::vector<std::string>& args);
     int cmd_dump(const std::vector<std::string>& args);
     int cmd_reset(const std::vector<std::string>& args);
+    int cmd_read(const std::vector<std::string>& args);
+    int cmd_write(const std::vector<std::string>& args);
     int cmd_help(const std::vector<std::string>& args);
     int cmd_exit(const std::vector<std::string>& args);
 

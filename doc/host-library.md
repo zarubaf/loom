@@ -10,6 +10,7 @@ src/host/
 ├── loom.h                    # Main API header (Context, Transport)
 ├── loom.cpp                  # Core library implementation
 ├── loom_transport_socket.cpp # Unix socket transport
+├── loom_transport_xdma.cpp   # PCIe/XDMA transport (FPGA)
 ├── loom_dpi_service.h/cpp    # Generic DPI service loop
 ├── loom_shell.h/cpp          # Interactive shell (replxx-based)
 ├── loom_sim_main.cpp         # Main entry point
@@ -39,6 +40,8 @@ Default socket: /tmp/loom_sim.sock
 | `stop` | | Freeze emulation |
 | `step [N]` | `s` | Step N cycles (default 1), service DPI calls during step |
 | `status` | `st` | Print state, cycle count, DUT time, time compare, design info, DPI stats |
+| `read <addr>` | | Read a 32-bit register at hex address. Example: `read 0x34` |
+| `write <addr> <data>` | `wr` | Write a 32-bit hex value to hex address. Example: `write 0x04 0x01` |
 | `dump` | `d` | Stop if running, scan capture, display scan data |
 | `reset` | | Assert DUT reset |
 | `help [cmd]` | `h`, `?` | List commands or show detailed help |
@@ -224,7 +227,26 @@ auto transport = loom::create_socket_transport();
 
 The socket transport connects to a Verilator simulation running `loom_axil_socket_bfm`.
 
+### XDMA Transport (PCIe/FPGA)
+
+```cpp
+auto transport = loom::create_xdma_transport();
+loom::Context ctx(std::move(transport));
+ctx.connect("/dev/xdma0_user");      // XDMA driver (pread/pwrite)
+ctx.connect("0000:17:00.0");         // PCI BDF (mmap BAR0)
+```
+
+The XDMA transport connects to an FPGA over PCIe. It supports two modes:
+- **XDMA driver** (`/dev/xdma0_user`) — uses `pread`/`pwrite` on the char device.
+- **sysfs BAR mmap** (PCI BDF or `/sys/bus/pci/...`) — directly mmaps BAR0.
+
+`loomx` selects this transport with `-t xdma`:
+
+```bash
+loomx -work build/ -t xdma                    # default /dev/xdma0_user
+loomx -work build/ -t xdma -d 0000:17:00.0    # PCI BDF
+```
+
 ### Future Transports
 
-- PCIe (XDMA/QDMA) for FPGA deployment
 - Shared memory for fast local simulation

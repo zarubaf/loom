@@ -1,0 +1,27 @@
+# Shell register access test script
+# Exercises read, write, and status commands against a live design.
+
+status
+
+# Read Design ID register
+read 0x34
+
+# Read Loom Version register
+read 0x38
+
+# Write step count = 10
+write 0x10 0x0a
+
+# Read back step count to verify write
+read 0x10
+
+# Step 5 cycles
+step 5
+
+# Read cycle counter low
+read 0x08
+
+# Ensure emulation is stopped
+stop
+
+exit

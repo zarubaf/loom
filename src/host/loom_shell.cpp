@@ -131,6 +131,22 @@ void Shell::register_commands() {
         [this](const auto& args) { return cmd_reset(args); }
     });
     commands_.push_back({
+        "read", {},
+        "Read a register",
+        "Usage: read <addr>\n"
+        "  Read a 32-bit register at the given hex address.\n"
+        "  Example: read 0x34",
+        [this](const auto& args) { return cmd_read(args); }
+    });
+    commands_.push_back({
+        "write", {"wr"},
+        "Write a register",
+        "Usage: write <addr> <data>\n"
+        "  Write a 32-bit value to the given hex address.\n"
+        "  Example: write 0x04 0x01",
+        [this](const auto& args) { return cmd_write(args); }
+    });
+    commands_.push_back({
         "help", {"h", "?"},
         "Show help",
         "Usage: help [command]\n"
@@ -563,6 +579,67 @@ int Shell::cmd_reset(const std::vector<std::string>& /*args*/) {
         return -1;
     }
     logger.info("DUT reset asserted");
+    return 0;
+}
+
+// ============================================================================
+// Command: read
+// ============================================================================
+
+int Shell::cmd_read(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        logger.error("Usage: read <addr>");
+        return -1;
+    }
+
+    char *end = nullptr;
+    uint32_t addr = static_cast<uint32_t>(std::strtoul(args[1].c_str(), &end, 16));
+    if (end == args[1].c_str()) {
+        logger.error("Invalid address: %s", args[1].c_str());
+        return -1;
+    }
+
+    auto result = ctx_.read32(addr);
+    if (!result.ok()) {
+        logger.error("Read failed at 0x%05x", addr);
+        return -1;
+    }
+
+    std::printf("0x%08x\n", result.value());
+    return 0;
+}
+
+// ============================================================================
+// Command: write
+// ============================================================================
+
+int Shell::cmd_write(const std::vector<std::string>& args) {
+    if (args.size() < 3) {
+        logger.error("Usage: write <addr> <data>");
+        return -1;
+    }
+
+    char *end = nullptr;
+    uint32_t addr = static_cast<uint32_t>(std::strtoul(args[1].c_str(), &end, 16));
+    if (end == args[1].c_str()) {
+        logger.error("Invalid address: %s", args[1].c_str());
+        return -1;
+    }
+
+    end = nullptr;
+    uint32_t data = static_cast<uint32_t>(std::strtoul(args[2].c_str(), &end, 16));
+    if (end == args[2].c_str()) {
+        logger.error("Invalid data: %s", args[2].c_str());
+        return -1;
+    }
+
+    auto rc = ctx_.write32(addr, data);
+    if (!rc.ok()) {
+        logger.error("Write failed at 0x%05x", addr);
+        return -1;
+    }
+
+    std::printf("OK [0x%05x] <- 0x%08x\n", addr, data);
     return 0;
 }
 

@@ -5,6 +5,7 @@
 add_library(loom_host STATIC
     loom.cpp
     loom_transport_socket.cpp
+    loom_transport_xdma.cpp
     ${CMAKE_SOURCE_DIR}/src/dpi/loom_dpi_service.cpp
     loom_vpi.cpp
     loom_shell.cpp

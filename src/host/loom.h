@@ -101,7 +101,7 @@ enum class State : uint8_t {
 
 namespace addr {
     constexpr uint32_t EmuCtrl = 0x00000;
-    constexpr uint32_t DpiRegfile = 0x00100;
+    constexpr uint32_t DpiRegfile = 0x10000;
     constexpr uint32_t ScanCtrl = 0x20000;
 }
 
@@ -288,5 +288,6 @@ private:
 // ============================================================================
 
 std::unique_ptr<Transport> create_socket_transport();
+std::unique_ptr<Transport> create_xdma_transport();
 
 } // namespace loom

@@ -40,8 +40,11 @@ struct Options {
     std::string script_file;
     std::string socket_path;    // Empty = auto PID-based
     std::string timeout;        // Sim timeout in ns (empty = sim default, "-1" = infinite)
+    std::string transport = "socket";  // "socket" or "xdma"
+    std::string device;         // XDMA device path (default /dev/xdma0_user)
     bool verbose = false;
     bool no_sim = false;
+    bool sim_explicit = false;  // true if user passed -sim
 };
 
 void print_usage(const char *prog) {
@@ -55,6 +58,8 @@ void print_usage(const char *prog) {
         "  -f SCRIPT       Run commands from script file\n"
         "  -s SOCKET       Socket path (default: auto PID-based)\n"
         "  -timeout NS     Simulation timeout in ns (-1 for infinite)\n"
+        "  -t TRANSPORT    Transport: socket (default) or xdma\n"
+        "  -d DEVICE       XDMA device path or PCI BDF (default: /dev/xdma0_user)\n"
         "  --no-sim        Don't launch sim (connect to existing socket)\n"
         "  -v              Verbose output\n"
         "  -h              Show this help\n",
@@ -72,12 +77,17 @@ Options parse_args(int argc, char **argv) {
             opts.sv_lib = argv[++i];
         } else if (arg == "-sim" && i + 1 < argc) {
             opts.sim_name = argv[++i];
+            opts.sim_explicit = true;
         } else if (arg == "-f" && i + 1 < argc) {
             opts.script_file = argv[++i];
         } else if (arg == "-s" && i + 1 < argc) {
             opts.socket_path = argv[++i];
         } else if (arg == "-timeout" && i + 1 < argc) {
             opts.timeout = argv[++i];
+        } else if (arg == "-t" && i + 1 < argc) {
+            opts.transport = argv[++i];
+        } else if (arg == "-d" && i + 1 < argc) {
+            opts.device = argv[++i];
         } else if (arg == "--no-sim") {
             opts.no_sim = true;
         } else if (arg == "-v") {
@@ -95,6 +105,11 @@ Options parse_args(int argc, char **argv) {
     if (opts.work_dir.empty()) {
         logger.error("-work is required");
         print_usage(argv[0]);
+        std::exit(1);
+    }
+    if (opts.transport != "socket" && opts.transport != "xdma") {
+        logger.error("Unknown transport: %s (expected 'socket' or 'xdma')",
+                     opts.transport.c_str());
         std::exit(1);
     }
     return opts;
@@ -132,8 +147,21 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Auto socket path: PID-based for parallel safety
-    if (opts.socket_path.empty()) {
+    // XDMA transport: validate flags
+    bool use_xdma = (opts.transport == "xdma");
+    if (use_xdma) {
+        if (opts.sim_explicit) {
+            logger.error("Cannot launch simulation with XDMA transport");
+            return 1;
+        }
+        opts.no_sim = true;
+        if (opts.device.empty()) {
+            opts.device = "/dev/xdma0_user";
+        }
+    }
+
+    // Auto socket path: PID-based for parallel safety (socket mode only)
+    if (!use_xdma && opts.socket_path.empty()) {
         opts.socket_path =
             "/tmp/loom_sim_" + std::to_string(getpid()) + ".sock";
     }
@@ -261,7 +289,17 @@ int main(int argc, char **argv) {
     // Connect and run shell
     // ========================================================================
 
-    auto transport = loom::create_socket_transport();
+    std::unique_ptr<loom::Transport> transport;
+    std::string connect_target;
+
+    if (use_xdma) {
+        transport = loom::create_xdma_transport();
+        connect_target = opts.device;
+    } else {
+        transport = loom::create_socket_transport();
+        connect_target = opts.socket_path;
+    }
+
     if (!transport) {
         logger.error("Failed to create transport");
         if (sim_pid > 0) {
@@ -273,10 +311,10 @@ int main(int argc, char **argv) {
 
     loom::Context ctx(std::move(transport));
 
-    logger.info("Connecting to %s...", opts.socket_path.c_str());
-    auto rc = ctx.connect(opts.socket_path);
+    logger.info("Connecting to %s...", connect_target.c_str());
+    auto rc = ctx.connect(connect_target);
     if (!rc.ok()) {
-        logger.error("Failed to connect to simulation");
+        logger.error("Failed to connect to %s", connect_target.c_str());
         if (sim_pid > 0) {
             kill(sim_pid, SIGTERM);
             waitpid(sim_pid, nullptr, 0);

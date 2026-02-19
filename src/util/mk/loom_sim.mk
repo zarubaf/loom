@@ -32,7 +32,7 @@ endif
 
 LOOM_SIM_RTL := \
     $(_LOOM_RTL)/loom_emu_ctrl.sv \
-    $(_LOOM_RTL)/loom_axi_interconnect.sv \
+    $(_LOOM_RTL)/loom_axil_demux.sv \
     $(_LOOM_RTL)/loom_dpi_regfile.sv \
     $(_LOOM_RTL)/loom_scan_ctrl.sv \
     $(_LOOM_BFM)/loom_axil_socket_bfm.sv \

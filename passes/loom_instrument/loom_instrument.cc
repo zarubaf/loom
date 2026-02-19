@@ -34,7 +34,7 @@ PRIVATE_NAMESPACE_BEGIN
 
 // Address map constants (per DPI bridge spec)
 constexpr int LOOM_MAILBOX_BASE = 0x00000;
-constexpr int LOOM_DPI_BASE = 0x00100;
+constexpr int LOOM_DPI_BASE = 0x10000;
 constexpr int FUNC_BLOCK_ALIGN = 64;  // Bytes per function block
 
 // Argument descriptor
@@ -310,7 +310,7 @@ struct LoomInstrumentPass : public Pass {
             write_json_metadata(dpi_functions, json_out_path);
         }
 
-        if (!header_out_path.empty() && !dpi_functions.empty()) {
+        if (!header_out_path.empty()) {
             write_c_header(dpi_functions, header_out_path);
         }
 

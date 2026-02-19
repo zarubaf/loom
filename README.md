@@ -37,15 +37,17 @@ on the host. `$finish` triggers clean simulation shutdown.
 **Interactive Shell** - `loomx` provides a REPL with tab completion,
 history, and the following commands:
 
-| Command    | Description                                                                |
-| ---------- | -------------------------------------------------------------------------- |
-| `run [N]`  | Release reset and start emulation; service DPI calls. Ctrl+C to interrupt. |
-| `stop`     | Freeze emulation, preserving state.                                        |
-| `step [N]` | Advance N clock cycles (default 1).                                        |
-| `status`   | Print state, cycle count, design info, DPI statistics.                     |
-| `dump`     | Capture and display scan chain contents.                                   |
-| `reset`    | Assert DUT reset.                                                          |
-| `exit`     | Disconnect and exit.                                                       |
+| Command           | Description                                                                |
+| ----------------- | -------------------------------------------------------------------------- |
+| `run [N]`         | Release reset and start emulation; service DPI calls. Ctrl+C to interrupt. |
+| `stop`            | Freeze emulation, preserving state.                                        |
+| `step [N]`        | Advance N clock cycles (default 1).                                        |
+| `status`          | Print state, cycle count, design info, DPI statistics.                     |
+| `read <addr>`     | Read a 32-bit register at the given hex address.                           |
+| `write <a> <d>`   | Write 32-bit hex value to the given hex address. Alias: `wr`.              |
+| `dump`            | Capture and display scan chain contents.                                   |
+| `reset`           | Assert DUT reset.                                                          |
+| `exit`            | Disconnect and exit.                                                       |
 
 ## Prerequisites
 
@@ -167,9 +169,25 @@ Options:
 -sim BINARY     Simulation binary name (default: Vloom_sim_top)
 -f SCRIPT       Run commands from script file
 -s SOCKET       Socket path (default: auto PID-based)
+-t TRANSPORT    Transport: socket (default) or xdma
+-d DEVICE       XDMA device path or PCI BDF (default: /dev/xdma0_user)
 --no-sim        Don't launch sim (connect to existing)
 -v              Verbose output
 ```
+
+#### XDMA mode (FPGA)
+
+When using `-t xdma`, `loomx` connects directly to an FPGA over PCIe
+instead of launching a simulation:
+
+```bash
+loomx -work build/ -t xdma                        # default /dev/xdma0_user
+loomx -work build/ -t xdma -d 0000:17:00.0        # PCI BDF (mmap BAR0)
+loomx -work build/ -t xdma -f fpga_script.txt      # scripted FPGA control
+```
+
+The `-work` directory is always required (for loading the DPI dispatch table).
+The `-sim` flag cannot be combined with `-t xdma`.
 
 ## Examples
 

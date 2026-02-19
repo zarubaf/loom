@@ -75,6 +75,30 @@ Only source files should be committed:
 - `build/` - Build directory
 - `*_dpi.h` - Generated headers (in test directories)
 
+## FPGA Build (Alveo U250)
+
+```bash
+# Prerequisites: Vivado 2024.1
+export PATH=/opt/eda/ubuntu-24.04/xilinx/Vivado/2024.1/bin:$PATH
+
+# Generate Xilinx IPs (one-time)
+make -C fpga ip
+
+# Build bitstream (requires transformed DUT)
+make -C fpga bitstream TRANSFORMED_V=path/to/transformed.v
+
+# Program FPGA via JTAG
+make -C fpga program
+```
+
+**FPGA Architecture:**
+- `src/fpga/loom_fpga_top.sv` — FPGA top-level (PCIe XDMA + CDC + loom_emu_top)
+- `src/rtl/loom_axil_demux.sv` — Shared parameterizable AXI-Lite 1:N demux
+- `fpga/` — Vivado scripts, IP generation, board constraints
+- `src/host/loom_transport_xdma.cpp` — PCIe/XDMA host transport
+
+See `doc/fpga-support.md` for detailed architecture documentation.
+
 ## Implementation Notes
 
 **Plugin linking on macOS:** Yosys plugins must NOT link against libyosys.so directly. Use `-undefined dynamic_lookup` to resolve symbols at runtime. See `passes/CMakeLists.txt`.

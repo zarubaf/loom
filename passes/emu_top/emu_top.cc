@@ -5,7 +5,7 @@
  * This pass generates a complete emulation top-level module `loom_emu_top` that includes:
  *   1. The transformed DUT (after loom_instrument pass)
  *   2. loom_emu_ctrl: emulation controller + DPI bridge
- *   3. loom_axi_interconnect: routes AXI-Lite to ctrl and regfile
+ *   3. loom_axil_demux: routes AXI-Lite to ctrl, regfile, and scan
  *   4. loom_dpi_regfile: DPI call registers
  *   5. loom_scan_ctrl: scan chain controller
  *
@@ -224,62 +224,37 @@ struct EmuTopPass : public Pass {
         wrapper->fixup_ports();
 
         // =========================================================================
-        // Create internal wires
+        // Create internal wires for demux master ports (flat arrays)
         // =========================================================================
+        const int n_demux_masters = 3;
 
-        // Interconnect -> emu_ctrl (slave 0)
-        RTLIL::Wire *m0_araddr = wrapper->addWire(ID(m0_araddr), 8);
-        RTLIL::Wire *m0_arvalid = wrapper->addWire(ID(m0_arvalid), 1);
-        RTLIL::Wire *m0_arready = wrapper->addWire(ID(m0_arready), 1);
-        RTLIL::Wire *m0_rdata = wrapper->addWire(ID(m0_rdata), 32);
-        RTLIL::Wire *m0_rresp = wrapper->addWire(ID(m0_rresp), 2);
-        RTLIL::Wire *m0_rvalid = wrapper->addWire(ID(m0_rvalid), 1);
-        RTLIL::Wire *m0_rready = wrapper->addWire(ID(m0_rready), 1);
-        RTLIL::Wire *m0_awaddr = wrapper->addWire(ID(m0_awaddr), 8);
-        RTLIL::Wire *m0_awvalid = wrapper->addWire(ID(m0_awvalid), 1);
-        RTLIL::Wire *m0_awready = wrapper->addWire(ID(m0_awready), 1);
-        RTLIL::Wire *m0_wdata = wrapper->addWire(ID(m0_wdata), 32);
-        RTLIL::Wire *m0_wvalid = wrapper->addWire(ID(m0_wvalid), 1);
-        RTLIL::Wire *m0_wready = wrapper->addWire(ID(m0_wready), 1);
-        RTLIL::Wire *m0_bresp = wrapper->addWire(ID(m0_bresp), 2);
-        RTLIL::Wire *m0_bvalid = wrapper->addWire(ID(m0_bvalid), 1);
-        RTLIL::Wire *m0_bready = wrapper->addWire(ID(m0_bready), 1);
+        // Flat bus wires for demux
+        RTLIL::Wire *demux_araddr  = wrapper->addWire(ID(demux_araddr),  n_demux_masters * addr_width);
+        RTLIL::Wire *demux_arvalid = wrapper->addWire(ID(demux_arvalid), n_demux_masters);
+        RTLIL::Wire *demux_arready = wrapper->addWire(ID(demux_arready), n_demux_masters);
+        RTLIL::Wire *demux_rdata   = wrapper->addWire(ID(demux_rdata),   n_demux_masters * 32);
+        RTLIL::Wire *demux_rresp   = wrapper->addWire(ID(demux_rresp),   n_demux_masters * 2);
+        RTLIL::Wire *demux_rvalid  = wrapper->addWire(ID(demux_rvalid),  n_demux_masters);
+        RTLIL::Wire *demux_rready  = wrapper->addWire(ID(demux_rready),  n_demux_masters);
 
-        // Interconnect -> dpi_regfile (slave 1)
-        RTLIL::Wire *m1_araddr = wrapper->addWire(ID(m1_araddr), 16);
-        RTLIL::Wire *m1_arvalid = wrapper->addWire(ID(m1_arvalid), 1);
-        RTLIL::Wire *m1_arready = wrapper->addWire(ID(m1_arready), 1);
-        RTLIL::Wire *m1_rdata = wrapper->addWire(ID(m1_rdata), 32);
-        RTLIL::Wire *m1_rresp = wrapper->addWire(ID(m1_rresp), 2);
-        RTLIL::Wire *m1_rvalid = wrapper->addWire(ID(m1_rvalid), 1);
-        RTLIL::Wire *m1_rready = wrapper->addWire(ID(m1_rready), 1);
-        RTLIL::Wire *m1_awaddr = wrapper->addWire(ID(m1_awaddr), 16);
-        RTLIL::Wire *m1_awvalid = wrapper->addWire(ID(m1_awvalid), 1);
-        RTLIL::Wire *m1_awready = wrapper->addWire(ID(m1_awready), 1);
-        RTLIL::Wire *m1_wdata = wrapper->addWire(ID(m1_wdata), 32);
-        RTLIL::Wire *m1_wvalid = wrapper->addWire(ID(m1_wvalid), 1);
-        RTLIL::Wire *m1_wready = wrapper->addWire(ID(m1_wready), 1);
-        RTLIL::Wire *m1_bresp = wrapper->addWire(ID(m1_bresp), 2);
-        RTLIL::Wire *m1_bvalid = wrapper->addWire(ID(m1_bvalid), 1);
-        RTLIL::Wire *m1_bready = wrapper->addWire(ID(m1_bready), 1);
+        RTLIL::Wire *demux_awaddr  = wrapper->addWire(ID(demux_awaddr),  n_demux_masters * addr_width);
+        RTLIL::Wire *demux_awvalid = wrapper->addWire(ID(demux_awvalid), n_demux_masters);
+        RTLIL::Wire *demux_awready = wrapper->addWire(ID(demux_awready), n_demux_masters);
+        RTLIL::Wire *demux_wdata   = wrapper->addWire(ID(demux_wdata),   n_demux_masters * 32);
+        RTLIL::Wire *demux_wstrb   = wrapper->addWire(ID(demux_wstrb),   n_demux_masters * 4);
+        RTLIL::Wire *demux_wvalid  = wrapper->addWire(ID(demux_wvalid),  n_demux_masters);
+        RTLIL::Wire *demux_wready  = wrapper->addWire(ID(demux_wready),  n_demux_masters);
+        RTLIL::Wire *demux_bresp   = wrapper->addWire(ID(demux_bresp),   n_demux_masters * 2);
+        RTLIL::Wire *demux_bvalid  = wrapper->addWire(ID(demux_bvalid),  n_demux_masters);
+        RTLIL::Wire *demux_bready  = wrapper->addWire(ID(demux_bready),  n_demux_masters);
 
-        // Interconnect -> scan_ctrl (slave 2)
-        RTLIL::Wire *m2_araddr = wrapper->addWire(ID(m2_araddr), 12);
-        RTLIL::Wire *m2_arvalid = wrapper->addWire(ID(m2_arvalid), 1);
-        RTLIL::Wire *m2_arready = wrapper->addWire(ID(m2_arready), 1);
-        RTLIL::Wire *m2_rdata = wrapper->addWire(ID(m2_rdata), 32);
-        RTLIL::Wire *m2_rresp = wrapper->addWire(ID(m2_rresp), 2);
-        RTLIL::Wire *m2_rvalid = wrapper->addWire(ID(m2_rvalid), 1);
-        RTLIL::Wire *m2_rready = wrapper->addWire(ID(m2_rready), 1);
-        RTLIL::Wire *m2_awaddr = wrapper->addWire(ID(m2_awaddr), 12);
-        RTLIL::Wire *m2_awvalid = wrapper->addWire(ID(m2_awvalid), 1);
-        RTLIL::Wire *m2_awready = wrapper->addWire(ID(m2_awready), 1);
-        RTLIL::Wire *m2_wdata = wrapper->addWire(ID(m2_wdata), 32);
-        RTLIL::Wire *m2_wvalid = wrapper->addWire(ID(m2_wvalid), 1);
-        RTLIL::Wire *m2_wready = wrapper->addWire(ID(m2_wready), 1);
-        RTLIL::Wire *m2_bresp = wrapper->addWire(ID(m2_bresp), 2);
-        RTLIL::Wire *m2_bvalid = wrapper->addWire(ID(m2_bvalid), 1);
-        RTLIL::Wire *m2_bready = wrapper->addWire(ID(m2_bready), 1);
+        // Helper lambda: extract a slice from a flat bus wire
+        auto slice = [&](RTLIL::Wire *bus, int idx, int width) -> RTLIL::SigSpec {
+            return RTLIL::SigSpec(bus, idx * width, width);
+        };
+        auto bit = [&](RTLIL::Wire *bus, int idx) -> RTLIL::SigSpec {
+            return RTLIL::SigSpec(bus, idx, 1);
+        };
 
         // Scan chain signals
         RTLIL::Wire *scan_enable = wrapper->addWire(ID(scan_enable), 1);
@@ -335,10 +310,31 @@ struct EmuTopPass : public Pass {
         RTLIL::Wire *dut_dpi_result = wrapper->addWire(ID(dut_dpi_result), dut_result_width);
 
         // =========================================================================
-        // Instantiate AXI Interconnect
+        // Instantiate AXI-Lite Demux
         // =========================================================================
-        RTLIL::Cell *interconnect = wrapper->addCell(ID(u_interconnect), ID(loom_axi_interconnect));
+        // Address map: slave 0 = emu_ctrl  (0x00000, mask 0xF0000)
+        //              slave 1 = dpi_regfile (0x10000, mask 0xF0000)
+        //              slave 2 = scan_ctrl   (0x20000, mask 0xF0000)
+        RTLIL::Cell *interconnect = wrapper->addCell(ID(u_interconnect), ID(loom_axil_demux));
         interconnect->setParam(ID(ADDR_WIDTH), addr_width);
+        interconnect->setParam(ID(N_MASTERS), n_demux_masters);
+
+        // BASE_ADDR: {scan=0x20000, dpi=0x10000, ctrl=0x00000} — packed [N-1:0][AW-1:0]
+        RTLIL::Const base_addr_val(0, n_demux_masters * addr_width);
+        // Master 0: BASE=0x00000 (already zero)
+        // Master 1: BASE=0x10000
+        base_addr_val.bits()[1 * addr_width + 16] = RTLIL::State::S1; // bit 16 of master 1
+        // Master 2: BASE=0x20000
+        base_addr_val.bits()[2 * addr_width + 17] = RTLIL::State::S1; // bit 17 of master 2
+        interconnect->setParam(ID(BASE_ADDR), base_addr_val);
+
+        // ADDR_MASK: all slaves use 0xF0000 (bits [19:16])
+        RTLIL::Const addr_mask_val(0, n_demux_masters * addr_width);
+        for (int m = 0; m < n_demux_masters; m++)
+            for (int b = 16; b < addr_width; b++)
+                addr_mask_val.bits()[m * addr_width + b] = RTLIL::State::S1;
+        interconnect->setParam(ID(ADDR_MASK), addr_mask_val);
+
         interconnect->setPort(ID(clk_i), clk_i);
         interconnect->setPort(ID(rst_ni), rst_ni);
         // Slave interface (from BFM)
@@ -359,57 +355,24 @@ struct EmuTopPass : public Pass {
         interconnect->setPort(ID(s_axil_bresp_o), s_axil_bresp);
         interconnect->setPort(ID(s_axil_bvalid_o), s_axil_bvalid);
         interconnect->setPort(ID(s_axil_bready_i), s_axil_bready);
-        // Master 0 (to emu_ctrl)
-        interconnect->setPort(ID(m0_axil_araddr_o), m0_araddr);
-        interconnect->setPort(ID(m0_axil_arvalid_o), m0_arvalid);
-        interconnect->setPort(ID(m0_axil_arready_i), m0_arready);
-        interconnect->setPort(ID(m0_axil_rdata_i), m0_rdata);
-        interconnect->setPort(ID(m0_axil_rresp_i), m0_rresp);
-        interconnect->setPort(ID(m0_axil_rvalid_i), m0_rvalid);
-        interconnect->setPort(ID(m0_axil_rready_o), m0_rready);
-        interconnect->setPort(ID(m0_axil_awaddr_o), m0_awaddr);
-        interconnect->setPort(ID(m0_axil_awvalid_o), m0_awvalid);
-        interconnect->setPort(ID(m0_axil_awready_i), m0_awready);
-        interconnect->setPort(ID(m0_axil_wdata_o), m0_wdata);
-        interconnect->setPort(ID(m0_axil_wvalid_o), m0_wvalid);
-        interconnect->setPort(ID(m0_axil_wready_i), m0_wready);
-        interconnect->setPort(ID(m0_axil_bresp_i), m0_bresp);
-        interconnect->setPort(ID(m0_axil_bvalid_i), m0_bvalid);
-        interconnect->setPort(ID(m0_axil_bready_o), m0_bready);
-        // Master 1 (to dpi_regfile)
-        interconnect->setPort(ID(m1_axil_araddr_o), m1_araddr);
-        interconnect->setPort(ID(m1_axil_arvalid_o), m1_arvalid);
-        interconnect->setPort(ID(m1_axil_arready_i), m1_arready);
-        interconnect->setPort(ID(m1_axil_rdata_i), m1_rdata);
-        interconnect->setPort(ID(m1_axil_rresp_i), m1_rresp);
-        interconnect->setPort(ID(m1_axil_rvalid_i), m1_rvalid);
-        interconnect->setPort(ID(m1_axil_rready_o), m1_rready);
-        interconnect->setPort(ID(m1_axil_awaddr_o), m1_awaddr);
-        interconnect->setPort(ID(m1_axil_awvalid_o), m1_awvalid);
-        interconnect->setPort(ID(m1_axil_awready_i), m1_awready);
-        interconnect->setPort(ID(m1_axil_wdata_o), m1_wdata);
-        interconnect->setPort(ID(m1_axil_wvalid_o), m1_wvalid);
-        interconnect->setPort(ID(m1_axil_wready_i), m1_wready);
-        interconnect->setPort(ID(m1_axil_bresp_i), m1_bresp);
-        interconnect->setPort(ID(m1_axil_bvalid_i), m1_bvalid);
-        interconnect->setPort(ID(m1_axil_bready_o), m1_bready);
-        // Master 2 (to scan_ctrl)
-        interconnect->setPort(ID(m2_axil_araddr_o), m2_araddr);
-        interconnect->setPort(ID(m2_axil_arvalid_o), m2_arvalid);
-        interconnect->setPort(ID(m2_axil_arready_i), m2_arready);
-        interconnect->setPort(ID(m2_axil_rdata_i), m2_rdata);
-        interconnect->setPort(ID(m2_axil_rresp_i), m2_rresp);
-        interconnect->setPort(ID(m2_axil_rvalid_i), m2_rvalid);
-        interconnect->setPort(ID(m2_axil_rready_o), m2_rready);
-        interconnect->setPort(ID(m2_axil_awaddr_o), m2_awaddr);
-        interconnect->setPort(ID(m2_axil_awvalid_o), m2_awvalid);
-        interconnect->setPort(ID(m2_axil_awready_i), m2_awready);
-        interconnect->setPort(ID(m2_axil_wdata_o), m2_wdata);
-        interconnect->setPort(ID(m2_axil_wvalid_o), m2_wvalid);
-        interconnect->setPort(ID(m2_axil_wready_i), m2_wready);
-        interconnect->setPort(ID(m2_axil_bresp_i), m2_bresp);
-        interconnect->setPort(ID(m2_axil_bvalid_i), m2_bvalid);
-        interconnect->setPort(ID(m2_axil_bready_o), m2_bready);
+        // Master ports (flat arrays)
+        interconnect->setPort(ID(m_axil_araddr_o), demux_araddr);
+        interconnect->setPort(ID(m_axil_arvalid_o), demux_arvalid);
+        interconnect->setPort(ID(m_axil_arready_i), demux_arready);
+        interconnect->setPort(ID(m_axil_rdata_i), demux_rdata);
+        interconnect->setPort(ID(m_axil_rresp_i), demux_rresp);
+        interconnect->setPort(ID(m_axil_rvalid_i), demux_rvalid);
+        interconnect->setPort(ID(m_axil_rready_o), demux_rready);
+        interconnect->setPort(ID(m_axil_awaddr_o), demux_awaddr);
+        interconnect->setPort(ID(m_axil_awvalid_o), demux_awvalid);
+        interconnect->setPort(ID(m_axil_awready_i), demux_awready);
+        interconnect->setPort(ID(m_axil_wdata_o), demux_wdata);
+        interconnect->setPort(ID(m_axil_wstrb_o), demux_wstrb);
+        interconnect->setPort(ID(m_axil_wvalid_o), demux_wvalid);
+        interconnect->setPort(ID(m_axil_wready_i), demux_wready);
+        interconnect->setPort(ID(m_axil_bresp_i), demux_bresp);
+        interconnect->setPort(ID(m_axil_bvalid_i), demux_bvalid);
+        interconnect->setPort(ID(m_axil_bready_o), demux_bready);
 
         // =========================================================================
         // Instantiate Emulation Controller (includes DPI bridge)
@@ -426,23 +389,23 @@ struct EmuTopPass : public Pass {
         emu_ctrl->setParam(ID(LOOM_VERSION), 0x000100);
         emu_ctrl->setPort(ID(clk_i), clk_i);
         emu_ctrl->setPort(ID(rst_ni), rst_ni);
-        // AXI-Lite
-        emu_ctrl->setPort(ID(axil_araddr_i), m0_araddr);
-        emu_ctrl->setPort(ID(axil_arvalid_i), m0_arvalid);
-        emu_ctrl->setPort(ID(axil_arready_o), m0_arready);
-        emu_ctrl->setPort(ID(axil_rdata_o), m0_rdata);
-        emu_ctrl->setPort(ID(axil_rresp_o), m0_rresp);
-        emu_ctrl->setPort(ID(axil_rvalid_o), m0_rvalid);
-        emu_ctrl->setPort(ID(axil_rready_i), m0_rready);
-        emu_ctrl->setPort(ID(axil_awaddr_i), m0_awaddr);
-        emu_ctrl->setPort(ID(axil_awvalid_i), m0_awvalid);
-        emu_ctrl->setPort(ID(axil_awready_o), m0_awready);
-        emu_ctrl->setPort(ID(axil_wdata_i), m0_wdata);
-        emu_ctrl->setPort(ID(axil_wvalid_i), m0_wvalid);
-        emu_ctrl->setPort(ID(axil_wready_o), m0_wready);
-        emu_ctrl->setPort(ID(axil_bresp_o), m0_bresp);
-        emu_ctrl->setPort(ID(axil_bvalid_o), m0_bvalid);
-        emu_ctrl->setPort(ID(axil_bready_i), m0_bready);
+        // AXI-Lite (from demux master 0)
+        emu_ctrl->setPort(ID(axil_araddr_i), slice(demux_araddr, 0, addr_width));
+        emu_ctrl->setPort(ID(axil_arvalid_i), bit(demux_arvalid, 0));
+        emu_ctrl->setPort(ID(axil_arready_o), bit(demux_arready, 0));
+        emu_ctrl->setPort(ID(axil_rdata_o), slice(demux_rdata, 0, 32));
+        emu_ctrl->setPort(ID(axil_rresp_o), slice(demux_rresp, 0, 2));
+        emu_ctrl->setPort(ID(axil_rvalid_o), bit(demux_rvalid, 0));
+        emu_ctrl->setPort(ID(axil_rready_i), bit(demux_rready, 0));
+        emu_ctrl->setPort(ID(axil_awaddr_i), slice(demux_awaddr, 0, addr_width));
+        emu_ctrl->setPort(ID(axil_awvalid_i), bit(demux_awvalid, 0));
+        emu_ctrl->setPort(ID(axil_awready_o), bit(demux_awready, 0));
+        emu_ctrl->setPort(ID(axil_wdata_i), slice(demux_wdata, 0, 32));
+        emu_ctrl->setPort(ID(axil_wvalid_i), bit(demux_wvalid, 0));
+        emu_ctrl->setPort(ID(axil_wready_o), bit(demux_wready, 0));
+        emu_ctrl->setPort(ID(axil_bresp_o), slice(demux_bresp, 0, 2));
+        emu_ctrl->setPort(ID(axil_bvalid_o), bit(demux_bvalid, 0));
+        emu_ctrl->setPort(ID(axil_bready_i), bit(demux_bready, 0));
         // DUT DPI interface
         emu_ctrl->setPort(ID(dut_dpi_valid_i), dut_dpi_valid_w);
         emu_ctrl->setPort(ID(dut_dpi_func_id_i), dut_dpi_func_id);
@@ -474,22 +437,22 @@ struct EmuTopPass : public Pass {
         dpi_regfile->setParam(ID(MAX_ARGS), max_args);
         dpi_regfile->setPort(ID(clk_i), clk_i);
         dpi_regfile->setPort(ID(rst_ni), rst_ni);
-        dpi_regfile->setPort(ID(axil_araddr_i), m1_araddr);
-        dpi_regfile->setPort(ID(axil_arvalid_i), m1_arvalid);
-        dpi_regfile->setPort(ID(axil_arready_o), m1_arready);
-        dpi_regfile->setPort(ID(axil_rdata_o), m1_rdata);
-        dpi_regfile->setPort(ID(axil_rresp_o), m1_rresp);
-        dpi_regfile->setPort(ID(axil_rvalid_o), m1_rvalid);
-        dpi_regfile->setPort(ID(axil_rready_i), m1_rready);
-        dpi_regfile->setPort(ID(axil_awaddr_i), m1_awaddr);
-        dpi_regfile->setPort(ID(axil_awvalid_i), m1_awvalid);
-        dpi_regfile->setPort(ID(axil_awready_o), m1_awready);
-        dpi_regfile->setPort(ID(axil_wdata_i), m1_wdata);
-        dpi_regfile->setPort(ID(axil_wvalid_i), m1_wvalid);
-        dpi_regfile->setPort(ID(axil_wready_o), m1_wready);
-        dpi_regfile->setPort(ID(axil_bresp_o), m1_bresp);
-        dpi_regfile->setPort(ID(axil_bvalid_o), m1_bvalid);
-        dpi_regfile->setPort(ID(axil_bready_i), m1_bready);
+        dpi_regfile->setPort(ID(axil_araddr_i), slice(demux_araddr, 1, addr_width));
+        dpi_regfile->setPort(ID(axil_arvalid_i), bit(demux_arvalid, 1));
+        dpi_regfile->setPort(ID(axil_arready_o), bit(demux_arready, 1));
+        dpi_regfile->setPort(ID(axil_rdata_o), slice(demux_rdata, 1, 32));
+        dpi_regfile->setPort(ID(axil_rresp_o), slice(demux_rresp, 1, 2));
+        dpi_regfile->setPort(ID(axil_rvalid_o), bit(demux_rvalid, 1));
+        dpi_regfile->setPort(ID(axil_rready_i), bit(demux_rready, 1));
+        dpi_regfile->setPort(ID(axil_awaddr_i), slice(demux_awaddr, 1, addr_width));
+        dpi_regfile->setPort(ID(axil_awvalid_i), bit(demux_awvalid, 1));
+        dpi_regfile->setPort(ID(axil_awready_o), bit(demux_awready, 1));
+        dpi_regfile->setPort(ID(axil_wdata_i), slice(demux_wdata, 1, 32));
+        dpi_regfile->setPort(ID(axil_wvalid_i), bit(demux_wvalid, 1));
+        dpi_regfile->setPort(ID(axil_wready_o), bit(demux_wready, 1));
+        dpi_regfile->setPort(ID(axil_bresp_o), slice(demux_bresp, 1, 2));
+        dpi_regfile->setPort(ID(axil_bvalid_o), bit(demux_bvalid, 1));
+        dpi_regfile->setPort(ID(axil_bready_i), bit(demux_bready, 1));
         dpi_regfile->setPort(ID(dpi_call_valid_i), dpi_call_valid);
         dpi_regfile->setPort(ID(dpi_call_ready_o), dpi_call_ready);
         dpi_regfile->setPort(ID(dpi_call_args_i), dpi_call_args);
@@ -505,22 +468,22 @@ struct EmuTopPass : public Pass {
         scan_ctrl->setParam(ID(CHAIN_LENGTH), scan_chain_length);
         scan_ctrl->setPort(ID(clk_i), clk_i);
         scan_ctrl->setPort(ID(rst_ni), rst_ni);
-        scan_ctrl->setPort(ID(axil_araddr_i), m2_araddr);
-        scan_ctrl->setPort(ID(axil_arvalid_i), m2_arvalid);
-        scan_ctrl->setPort(ID(axil_arready_o), m2_arready);
-        scan_ctrl->setPort(ID(axil_rdata_o), m2_rdata);
-        scan_ctrl->setPort(ID(axil_rresp_o), m2_rresp);
-        scan_ctrl->setPort(ID(axil_rvalid_o), m2_rvalid);
-        scan_ctrl->setPort(ID(axil_rready_i), m2_rready);
-        scan_ctrl->setPort(ID(axil_awaddr_i), m2_awaddr);
-        scan_ctrl->setPort(ID(axil_awvalid_i), m2_awvalid);
-        scan_ctrl->setPort(ID(axil_awready_o), m2_awready);
-        scan_ctrl->setPort(ID(axil_wdata_i), m2_wdata);
-        scan_ctrl->setPort(ID(axil_wvalid_i), m2_wvalid);
-        scan_ctrl->setPort(ID(axil_wready_o), m2_wready);
-        scan_ctrl->setPort(ID(axil_bresp_o), m2_bresp);
-        scan_ctrl->setPort(ID(axil_bvalid_o), m2_bvalid);
-        scan_ctrl->setPort(ID(axil_bready_i), m2_bready);
+        scan_ctrl->setPort(ID(axil_araddr_i), slice(demux_araddr, 2, addr_width));
+        scan_ctrl->setPort(ID(axil_arvalid_i), bit(demux_arvalid, 2));
+        scan_ctrl->setPort(ID(axil_arready_o), bit(demux_arready, 2));
+        scan_ctrl->setPort(ID(axil_rdata_o), slice(demux_rdata, 2, 32));
+        scan_ctrl->setPort(ID(axil_rresp_o), slice(demux_rresp, 2, 2));
+        scan_ctrl->setPort(ID(axil_rvalid_o), bit(demux_rvalid, 2));
+        scan_ctrl->setPort(ID(axil_rready_i), bit(demux_rready, 2));
+        scan_ctrl->setPort(ID(axil_awaddr_i), slice(demux_awaddr, 2, addr_width));
+        scan_ctrl->setPort(ID(axil_awvalid_i), bit(demux_awvalid, 2));
+        scan_ctrl->setPort(ID(axil_awready_o), bit(demux_awready, 2));
+        scan_ctrl->setPort(ID(axil_wdata_i), slice(demux_wdata, 2, 32));
+        scan_ctrl->setPort(ID(axil_wvalid_i), bit(demux_wvalid, 2));
+        scan_ctrl->setPort(ID(axil_wready_o), bit(demux_wready, 2));
+        scan_ctrl->setPort(ID(axil_bresp_o), slice(demux_bresp, 2, 2));
+        scan_ctrl->setPort(ID(axil_bvalid_o), bit(demux_bvalid, 2));
+        scan_ctrl->setPort(ID(axil_bready_i), bit(demux_bready, 2));
         scan_ctrl->setPort(ID(scan_enable_o), scan_enable);
         scan_ctrl->setPort(ID(scan_in_o), scan_in);
         scan_ctrl->setPort(ID(scan_out_i), scan_out);
@@ -638,7 +601,7 @@ struct EmuTopPass : public Pass {
         wrapper->fixup_ports();
 
         log("Generated loom_emu_top module\n");
-        log("  Instantiated: loom_axi_interconnect (u_interconnect)\n");
+        log("  Instantiated: loom_axil_demux (u_interconnect)\n");
         log("  Instantiated: loom_emu_ctrl (u_emu_ctrl) - controls loom_en + DPI bridge\n");
         log("  Instantiated: loom_dpi_regfile (u_dpi_regfile)\n");
         log("  Instantiated: loom_scan_ctrl (u_scan_ctrl) - %d bits\n", scan_chain_length);

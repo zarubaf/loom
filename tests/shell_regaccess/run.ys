@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+# Test emu_top transformation of shell_regaccess design
+
+read_slang --loom shell_regaccess.sv
+
+hierarchy -check -top shell_regaccess
+proc
+
+scan_insert
+loom_instrument
+emu_top -top shell_regaccess -clk clk_i -rst rst_ni
+
+check
+write_verilog shell_regaccess_output.v

@@ -76,6 +76,22 @@ function(add_emu_top_test TEST_NAME)
     )
 endfunction()
 
+# Helper function for slang-only tests (no loom passes)
+function(add_yosys_slang_test TEST_NAME)
+    set(TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/${TEST_NAME})
+    add_test(
+        NAME yosys_${TEST_NAME}
+        COMMAND ${YOSYS_BIN}
+            -m ${YOSYS_SLANG_PLUGIN}
+            -s ${TEST_DIR}/run.ys
+        WORKING_DIRECTORY ${TEST_DIR}
+    )
+    set_tests_properties(yosys_${TEST_NAME} PROPERTIES
+        DEPENDS "yosys_ext;yosys_slang_ext"
+        TIMEOUT 60
+    )
+endfunction()
+
 # FSM extraction test (uses slang frontend)
 add_yosys_slang_test(fsm_extract)
 
@@ -91,6 +107,7 @@ set_tests_properties(fsm_extract_equiv PROPERTIES
 
 # emu_top tests
 add_emu_top_test(emu_top)
+add_emu_top_test(shell_regaccess)
 
 # End-to-end DPI open array test using loomc/loomx
 add_test(NAME e2e_dpi_open_array
@@ -131,3 +148,14 @@ endfunction()
 
 # mem_shadow E2E test
 add_mem_shadow_e2e_test(mem_shadow_e2e)
+
+# End-to-end shell register access test using loomc/loomx
+add_test(NAME e2e_shell_regaccess
+    COMMAND make test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/shell_regaccess
+)
+set_tests_properties(e2e_shell_regaccess PROPERTIES
+    DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;loom_instrument;emu_top;loomc;loomx"
+    TIMEOUT 120
+    ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR}"
+)
