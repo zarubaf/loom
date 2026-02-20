@@ -15,6 +15,9 @@ VIVADO_FLAGS := -mode batch -nojournal -nolog
 # Transformed DUT (user must supply or use tests/e2e to generate)
 TRANSFORMED_V ?= $(LOOM_ROOT)/tests/e2e/build/transformed.v
 
+# XDMA driver source
+XDMA_DIR     := $(LOOM_ROOT)/third_party/dma_ip_drivers/XDMA/linux-kernel
+
 # Board settings
 export XILINX_PART       := xcu250-figd2104-2L-e
 export XILINX_BOARD_PART := xilinx.com:au250:part0:1.3
@@ -26,7 +29,7 @@ export IP_DIR
 export WORK_DIR
 export TRANSFORMED_V
 
-.PHONY: all ip synth bitstream program clean
+.PHONY: all ip synth bitstream program driver driver-load driver-unload rescan clean
 
 all: bitstream
 
@@ -76,11 +79,34 @@ $(WORK_DIR)/results/loom_shell.bit: $(WORK_DIR)/results/synth.dcp
 	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/impl.tcl
 
 # ----------------------------------------------------------------
-# Program
+# Program + Rescan
 # ----------------------------------------------------------------
 
 program:
 	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/program.tcl
+
+rescan:
+	sudo $(SCRIPTS_DIR)/pcie_rescan.sh
+
+# ----------------------------------------------------------------
+# XDMA Driver
+# ----------------------------------------------------------------
+
+driver:
+	$(MAKE) -C $(XDMA_DIR)/xdma
+	$(MAKE) -C $(XDMA_DIR)/tools
+
+driver-load: driver
+	sudo insmod $(XDMA_DIR)/xdma/xdma.ko
+	@sleep 1
+	@if [ -e /dev/xdma0_user ]; then \
+		echo "OK: /dev/xdma0_user available"; \
+	else \
+		echo "WARNING: /dev/xdma0_user not found"; \
+	fi
+
+driver-unload:
+	-sudo rmmod xdma
 
 # ----------------------------------------------------------------
 # Clean

@@ -6,8 +6,13 @@
 # This script re-enumerates the device and reloads the XDMA driver.
 #
 # Usage: sudo ./pcie_rescan.sh
+#    or: make -C fpga rescan
 
 set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOOM_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+XDMA_KO="$LOOM_ROOT/third_party/dma_ip_drivers/XDMA/linux-kernel/xdma/xdma.ko"
 
 # Remove XDMA driver (if loaded)
 if lsmod | grep -q xdma; then
@@ -27,22 +32,25 @@ if [ -z "$xlnx_dev" ]; then
     exit 1
 fi
 echo "Found: $xlnx_dev"
+bdf=$(echo "$xlnx_dev" | cut -d' ' -f1)
 
-# Reload XDMA driver
+# Try loading XDMA driver
 if modinfo xdma &>/dev/null; then
-    echo "Loading xdma driver..."
+    echo "Loading xdma driver (system)..."
     modprobe xdma
-    sleep 1
-
-    if [ -e /dev/xdma0_user ]; then
-        echo "OK: /dev/xdma0_user is available"
-    else
-        echo "WARNING: /dev/xdma0_user not found — driver may not have bound"
-        echo "Try: loomx -t xdma -d $(echo "$xlnx_dev" | cut -d' ' -f1)"
-    fi
+elif [ -f "$XDMA_KO" ]; then
+    echo "Loading xdma driver (third_party)..."
+    insmod "$XDMA_KO"
 else
-    bdf=$(echo "$xlnx_dev" | cut -d' ' -f1)
-    echo "xdma driver not installed — enabling sysfs BAR access"
+    echo "No xdma driver found — enabling sysfs BAR access"
     echo 1 > "/sys/bus/pci/devices/0000:$bdf/enable"
     echo "OK: use loomx -t xdma -d 0000:$bdf"
+    exit 0
+fi
+
+sleep 1
+if [ -e /dev/xdma0_user ]; then
+    echo "OK: /dev/xdma0_user available"
+else
+    echo "WARNING: /dev/xdma0_user not found — try sysfs: loomx -t xdma -d 0000:$bdf"
 fi
