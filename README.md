@@ -1,7 +1,13 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-![Loom Logo](doc/fig/logo.png)
+<p align="center">
+  <img src="./doc/fig/logo_large.jpeg" alt="Loom Logo" width="400">
+</p>
 
-# Loom
+<h1 align="center">Loom</h1>
+
+<p align="center">
+  <i>Weaving simulation into silicon, one thread at a time.</i>
+</p>
 
 Loom is an open-source FPGA emulation toolchain. It transforms
 simulation-grade SystemVerilog (including DPI-C function calls) into
