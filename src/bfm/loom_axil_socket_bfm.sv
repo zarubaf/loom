@@ -5,8 +5,6 @@
 // It bridges a Unix domain socket to AXI-Lite transactions.
 // Compatible with Verilator --binary --timing.
 
-`timescale 1ns/1ps
-
 module loom_axil_socket_bfm #(
     parameter string SOCKET_PATH = "/tmp/loom_sim.sock",
     parameter int    ADDR_WIDTH  = 20,

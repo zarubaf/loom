@@ -29,4 +29,4 @@ report_drc -file $work_dir/results/impl_drc.rpt
 # Write outputs
 # ----------------------------------------------------------------
 write_checkpoint -force $work_dir/results/impl.dcp
-write_bitstream -force $work_dir/results/loom_fpga_top.bit
+write_bitstream -force $work_dir/results/loom_shell.bit

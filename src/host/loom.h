@@ -102,6 +102,8 @@ namespace addr {
     constexpr uint32_t EmuCtrl = 0x00000;
     constexpr uint32_t DpiRegfile = 0x10000;
     constexpr uint32_t ScanCtrl = 0x20000;
+    constexpr uint32_t ClkGen = 0x40000;
+    constexpr uint32_t ShellCtrl = 0x50000;
 }
 
 namespace reg {
@@ -135,6 +137,9 @@ namespace reg {
     // DpiResultLo/Hi follow after MAX_ARGS arg registers:
     //   DpiResultLo = DpiArg0 + max_args * 4
     //   DpiResultHi = DpiResultLo + 4
+
+    // shell control register offsets
+    constexpr uint32_t DecouplerCtrl = 0x00;
 
     // scan_ctrl register offsets
     constexpr uint32_t ScanStatus = 0x00;
@@ -261,6 +266,14 @@ public:
     Result<void> scan_write_data(const std::vector<uint32_t>& data);
     Result<bool> scan_is_busy();
     Result<void> scan_clear_done();
+
+    // ========================================================================
+    // Decoupler Control
+    // ========================================================================
+
+    Result<void> couple();
+    Result<void> decouple();
+    Result<bool> is_coupled();
 
     // ========================================================================
     // Low-level Register Access

@@ -47,6 +47,8 @@ history, and the following commands:
 | `write <a> <d>`   | Write 32-bit hex value to the given hex address. Alias: `wr`.              |
 | `dump`            | Capture and display scan chain contents.                                   |
 | `reset`           | Assert DUT reset.                                                          |
+| `couple`          | Clear decoupler — connect emu_top to AXI bus.                              |
+| `decouple`        | Assert decoupler — isolate emu_top (transactions return SLVERR).           |
 | `exit`            | Disconnect and exit.                                                       |
 
 ## Prerequisites
@@ -141,12 +143,17 @@ verilator --binary --timing \
     src/rtl/loom_axil_demux.sv \
     src/rtl/loom_dpi_regfile.sv \
     src/rtl/loom_scan_ctrl.sv \
+    src/rtl/loom_shell.sv \
     src/bfm/loom_axil_socket_bfm.sv \
-    src/test/loom_sim_top.sv \
+    src/bfm/xlnx_xdma.sv \
+    src/bfm/xlnx_clk_gen.sv \
+    src/bfm/xlnx_cdc.sv \
+    src/bfm/xlnx_decoupler.sv \
+    src/bfm/xilinx_primitives.sv \
     build/transformed.v \
     src/bfm/loom_sock_dpi.c \
-    --top-module loom_sim_top \
-    --Mdir build/sim/obj_dir -o Vloom_sim_top
+    --top-module loom_shell \
+    --Mdir build/sim/obj_dir -o Vloom_shell
 ```
 
 ### 4. Execute with `loomx`
@@ -156,17 +163,17 @@ simulation, and provides an interactive shell (or runs a script):
 
 ```bash
 # Interactive
-loomx -work build/ -sv_lib dpi -sim Vloom_sim_top
+loomx -work build/ -sv_lib dpi -sim Vloom_shell
 
 # Scripted
-loomx -work build/ -sv_lib dpi -sim Vloom_sim_top -f test_script.txt
+loomx -work build/ -sv_lib dpi -sim Vloom_shell -f test_script.txt
 ```
 
 Options:
 ```
 -work DIR       Work directory from loomc (required)
 -sv_lib NAME    User DPI shared library (without lib prefix / .so suffix)
--sim BINARY     Simulation binary name (default: Vloom_sim_top)
+-sim BINARY     Simulation binary name (default: Vloom_shell)
 -f SCRIPT       Run commands from script file
 -s SOCKET       Socket path (default: auto PID-based)
 -t TRANSPORT    Transport: socket (default) or xdma

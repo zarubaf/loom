@@ -217,7 +217,7 @@ module loom_scan_ctrl #(
             shift_count_q <= '0;
             done_q        <= 1'b0;
             error_code_q  <= 4'd0;
-            for (int i = 0; i < N_DATA_WORDS; i++) begin
+            for (int i = 0; i < int'(N_DATA_WORDS); i++) begin
                 scan_data_q[i] <= 32'd0;
             end
         end else begin

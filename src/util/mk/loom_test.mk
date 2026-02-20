@@ -61,7 +61,7 @@ $(BUILD)/transformed.v: $(DUT_SRC)
 	$(LOOMC) -top $(TOP) -work $(BUILD) $(LOOMC_FLAGS) $^
 
 # ---------- Step 2: Build Verilator sim (pattern rule from loom_sim.mk) ----------
-$(BUILD)/sim/obj_dir/Vloom_sim_top: $(BUILD)/transformed.v
+$(BUILD)/sim/obj_dir/Vloom_shell: $(BUILD)/transformed.v
 
 # ---------- Step 3: Compile user DPI sources into libdpi.so ----------
 ifdef DPI_SRCS
@@ -88,16 +88,16 @@ $(BUILD):
 	@mkdir -p $@
 
 # ---------- Step 4: Test (script mode) ----------
-_TEST_DEPS := $(BUILD)/sim/obj_dir/Vloom_sim_top $(if $(DPI_SRCS),$(BUILD)/libdpi.so)
+_TEST_DEPS := $(BUILD)/sim/obj_dir/Vloom_shell $(if $(DPI_SRCS),$(BUILD)/libdpi.so)
 
 test: $(_TEST_DEPS)
 	@echo "run" > $(BUILD)/test_script.txt
 	@echo "exit" >> $(BUILD)/test_script.txt
-	$(LOOMX) -work $(BUILD) $(_LOOMX_DPI) $(_LOOMX_TIMEOUT) -sim Vloom_sim_top -f $(BUILD)/test_script.txt
+	$(LOOMX) -work $(BUILD) $(_LOOMX_DPI) $(_LOOMX_TIMEOUT) -sim Vloom_shell -f $(BUILD)/test_script.txt
 
 # ---------- Step 5: Interactive ----------
 interactive: $(_TEST_DEPS)
-	$(LOOMX) -work $(BUILD) $(_LOOMX_DPI) $(_LOOMX_TIMEOUT) -sim Vloom_sim_top
+	$(LOOMX) -work $(BUILD) $(_LOOMX_DPI) $(_LOOMX_TIMEOUT) -sim Vloom_shell
 
 # ---------- Clean ----------
 clean:

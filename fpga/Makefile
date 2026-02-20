@@ -34,7 +34,7 @@ all: bitstream
 # IP Generation
 # ----------------------------------------------------------------
 
-ip: $(IP_DIR)/xlnx_xdma/.done $(IP_DIR)/xlnx_clk_gen/.done $(IP_DIR)/xlnx_axi_clock_converter/.done
+ip: $(IP_DIR)/xlnx_xdma/.done $(IP_DIR)/xlnx_clk_gen/.done $(IP_DIR)/xlnx_cdc/.done $(IP_DIR)/xlnx_decoupler/.done
 
 $(IP_DIR)/xlnx_xdma/.done:
 	cd $(IP_DIR)/xlnx_xdma && $(VIVADO) $(VIVADO_FLAGS) -source tcl/run.tcl
@@ -44,15 +44,19 @@ $(IP_DIR)/xlnx_clk_gen/.done:
 	cd $(IP_DIR)/xlnx_clk_gen && $(VIVADO) $(VIVADO_FLAGS) -source tcl/run.tcl
 	touch $@
 
-$(IP_DIR)/xlnx_axi_clock_converter/.done:
-	cd $(IP_DIR)/xlnx_axi_clock_converter && $(VIVADO) $(VIVADO_FLAGS) -source tcl/run.tcl
+$(IP_DIR)/xlnx_cdc/.done:
+	cd $(IP_DIR)/xlnx_cdc && $(VIVADO) $(VIVADO_FLAGS) -source tcl/run.tcl
+	touch $@
+
+$(IP_DIR)/xlnx_decoupler/.done:
+	cd $(IP_DIR)/xlnx_decoupler && $(VIVADO) $(VIVADO_FLAGS) -source tcl/run.tcl
 	touch $@
 
 # ----------------------------------------------------------------
 # Synthesis
 # ----------------------------------------------------------------
 
-IP_DONE := $(IP_DIR)/xlnx_xdma/.done $(IP_DIR)/xlnx_clk_gen/.done $(IP_DIR)/xlnx_axi_clock_converter/.done
+IP_DONE := $(IP_DIR)/xlnx_xdma/.done $(IP_DIR)/xlnx_clk_gen/.done $(IP_DIR)/xlnx_cdc/.done $(IP_DIR)/xlnx_decoupler/.done
 
 synth: $(WORK_DIR)/results/synth.dcp
 
@@ -66,9 +70,9 @@ $(WORK_DIR):
 # Bitstream
 # ----------------------------------------------------------------
 
-bitstream: $(WORK_DIR)/results/loom_fpga_top.bit
+bitstream: $(WORK_DIR)/results/loom_shell.bit
 
-$(WORK_DIR)/results/loom_fpga_top.bit: $(WORK_DIR)/results/synth.dcp
+$(WORK_DIR)/results/loom_shell.bit: $(WORK_DIR)/results/synth.dcp
 	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/impl.tcl
 
 # ----------------------------------------------------------------
@@ -84,4 +88,4 @@ program:
 
 clean:
 	rm -rf $(WORK_DIR)
-	rm -f $(IP_DIR)/xlnx_xdma/.done $(IP_DIR)/xlnx_clk_gen/.done $(IP_DIR)/xlnx_axi_clock_converter/.done
+	rm -f $(IP_DIR)/xlnx_xdma/.done $(IP_DIR)/xlnx_clk_gen/.done $(IP_DIR)/xlnx_cdc/.done $(IP_DIR)/xlnx_decoupler/.done

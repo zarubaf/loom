@@ -6,7 +6,7 @@ include ../../src/util/mk/loom_test.mk
 
 # Override test target to exercise scan dump with named variables
 test: $(_TEST_DEPS)
-	$(LOOMX) -work $(BUILD) -sim Vloom_sim_top -timeout -1 \
+	$(LOOMX) -work $(BUILD) -sim Vloom_shell -timeout -1 \
 		-f $(CURDIR)/test_script.txt 2>&1 | tee $(BUILD)/test.log
 	@echo "--- Checking output ---"
 	@grep -q 'counter_q.*0xcafe' $(BUILD)/test.log

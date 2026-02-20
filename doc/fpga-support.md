@@ -4,61 +4,108 @@
 ## Overview
 
 Loom supports running transformed DUTs on an Alveo U250 FPGA with PCIe host
-communication. The same `loom_emu_top` module used in simulation is reused
-on FPGA — only the transport layer and top-level wrapper differ.
+communication. A single `loom_shell` module serves as the top-level for both
+simulation and FPGA — only the sub-module implementations differ (behavioral
+BFMs for simulation, Xilinx IPs for FPGA).
 
 ## Architecture
 
 ```
-loom_fpga_top.sv
+loom_shell.sv (SINGLE top-level for both sim and FPGA)
 ├── IBUFDS_GTE4         (PCIe 100 MHz refclk buffer)
-├── IBUFDS              (300 MHz emulation refclk buffer)
-├── xlnx_xdma           (PCIe X2 Gen3 → AXI-Lite master @ 125 MHz)
-├── loom_axil_demux #(N_MASTERS=2)
-│   ├── [0x0_0000] → xlnx_axi_clock_converter → loom_emu_top (@ emu_clk)
-│   └── [0x8_0000] → xlnx_clk_gen DRP slave (@ 125 MHz, no CDC)
-├── xlnx_clk_gen        (300 MHz → programmable emu_clk, DRP reconfigurable)
-├── xlnx_axi_clock_converter (AXI-Lite CDC: 125 MHz ↔ emu_clk)
-├── reset synchronizer  (clk_gen locked + pcie_aresetn → emu_rst_n)
-└── loom_emu_top        (UNCHANGED — same module as simulation)
+├── IBUFDS              (emulation refclk buffer)
+├── xlnx_xdma           (SIM: socket BFM wrapper | FPGA: PCIe XDMA IP)
+│   └── Produces: aclk, aresetn, AXI-Lite master, AXI4 full master
+├── loom_axil_demux #(N_MASTERS=3, aclk domain)
+│   ├── [0x0_0000] → xlnx_decoupler (AXI-Lite) → xlnx_cdc → loom_emu_top
+│   ├── [0x4_0000] → xlnx_clk_gen AXI-Lite DRP
+│   └── [0x5_0000] → shell control register (decouple pin control)
+├── xlnx_decoupler      (SIM: behavioral | FPGA: DFX Decoupler IP)
+│   ├── AXI-Lite interface (register access path)
+│   └── AXI4 full interface (DMA path — unconnected RP side for now)
+├── xlnx_cdc            (SIM: wire passthrough | FPGA: AXI Clock Converter IP)
+│   └── AXI-Lite CDC: aclk ↔ emu_clk
+├── xlnx_clk_gen        (SIM: behavioral clock gen | FPGA: Clocking Wizard IP)
+│   └── emu_refclk → emu_clk + locked
+├── reset synchronizer  (aclk domain → emu_clk domain)
+└── loom_emu_top        (UNCHANGED — same module as always, on emu_clk)
 ```
+
+**Sub-module implementations (same module name, different source files):**
+
+| Module | Simulation (behavioral) | FPGA (Xilinx IP) |
+|--------|------------------------|-------------------|
+| `xlnx_xdma` | Wraps socket BFM, generates aclk (100MHz) | PCIe XDMA IP |
+| `xlnx_clk_gen` | Generates emu_clk (100MHz), locked after 10 cycles | Clocking Wizard with DRP |
+| `xlnx_cdc` | Wire passthrough (single clock domain in sim) | AXI Clock Converter IP |
+| `xlnx_decoupler` | Behavioral pass/block | Xilinx DFX Decoupler IP |
 
 ## Address Map
 
-The PCIe BAR exposes a 1 MB AXI-Lite address space:
+The PCIe BAR / simulation AXI-Lite space uses a 20-bit address with 3 masters:
 
 | Range | Target | Clock Domain |
 |-------|--------|-------------|
-| `0x0_0000 – 0x7_FFFF` | loom_emu_top (via CDC) | emu_clk |
-| `0x8_0000 – 0xF_FFFF` | Clock generator DRP | pcie_aclk (125 MHz) |
+| `0x0_0000 – 0x3_FFFF` | xlnx_decoupler → xlnx_cdc → loom_emu_top | emu_clk |
+| `0x4_0000 – 0x4_FFFF` | Clock generator DRP | aclk |
+| `0x5_0000 – 0x5_FFFF` | Shell control register | aclk |
 
-Within the emu_top range (same as simulation):
+Within the emu_top range (same as before):
 
 | Range | Target |
 |-------|--------|
 | `0x0_0000 – 0x0_00FF` | emu_ctrl |
-| `0x0_0100 – 0x0_FFFF` | dpi_regfile |
+| `0x1_0000 – 0x1_FFFF` | dpi_regfile |
 | `0x2_0000 – 0x2_FFFF` | scan_ctrl |
+
+### Shell Control Register (0x5_0000)
+
+| Offset | Name | Access | Description |
+|--------|------|--------|-------------|
+| `0x00` | DECOUPLE_CTRL | RW | Bit 0: `decouple` (1 = isolate emu_top, 0 = connected) |
+
+The AXI4 DMA path bypasses the demux — it goes directly from XDMA AXI4
+master → xlnx_decoupler AXI4 interface → (future DMA slave in emu_top).
+
+## Decoupler
+
+The DFX decoupler safely isolates `loom_emu_top` from AXI traffic. This is
+controlled by the shell control register at `0x5_0000`.
+
+- **Coupled** (decouple=0): Normal operation. AXI-Lite and AXI4 traffic
+  passes through to `loom_emu_top`.
+- **Decoupled** (decouple=1): `loom_emu_top` is isolated. Transactions to
+  the emu_top address range return SLVERR. The RP side sees no activity.
+
+Shell commands:
+- `couple` — Clear decoupler, connect emu_top
+- `decouple` — Assert decoupler, isolate emu_top
+
+The `run` command automatically calls `couple` before starting emulation.
 
 ## Key Design Decisions
 
+- **Unified shell**: Single `loom_shell` top-level for both sim and FPGA.
+  Only sub-module implementations change (behavioral BFMs vs Xilinx IPs).
 - **Unified demux**: `loom_axil_demux` is parameterizable with `N_MASTERS`,
   `BASE_ADDR`/`ADDR_MASK`. Used both inside `loom_emu_top` (3 masters) and
-  in `loom_fpga_top` (2 masters).
-- **CDC**: Xilinx `axi_clock_converter` IP handles clock crossing between
-  PCIe (125 MHz) and emulation domains.
-- **No DDR4**: v1 uses register-only AXI-Lite access.
-- **No ifdefs**: Separate top-levels (`loom_sim_top` vs `loom_fpga_top`),
-  shared everything else.
+  in `loom_shell` (3 masters).
+- **CDC**: Xilinx `axi_clock_converter` IP (or wire passthrough in sim)
+  handles clock crossing between PCIe/aclk and emulation domains.
+- **DFX Decoupler**: Safely isolates emu_top for clock reprogramming or
+  partial reconfiguration.
+- **No DDR4**: v1 uses register-only AXI-Lite access (AXI4 DMA path plumbed
+  but RP side unconnected).
 - **Polling**: v1 uses polling for DPI service (no IRQ).
 
 ## Clock Generator
 
 The emulation clock is generated by a Xilinx `clk_wiz` IP with DRP
 (Dynamic Reconfiguration Port) enabled. The host can reprogram the emulation
-clock frequency at runtime by writing to the DRP registers at `0x8_0000`.
+clock frequency at runtime by writing to the DRP registers at `0x4_0000`.
 
 Default output frequency: 50 MHz (from 300 MHz input).
+In simulation: 100 MHz (from behavioral BFM).
 
 ## Host Transport
 
@@ -71,7 +118,7 @@ accesses the FPGA via:
 
 The `Context`, `DpiService`, and shell are shared with simulation mode.
 The shell `read`/`write` commands provide direct register access for
-debugging.
+debugging. The `couple`/`decouple` commands control the DFX decoupler.
 
 ## Build Flow
 
@@ -96,8 +143,13 @@ loomx -work tests/e2e/build -t xdma -sv_lib tests/e2e/build/dpi
 
 | File | Purpose |
 |------|---------|
-| `src/fpga/loom_fpga_top.sv` | FPGA top-level |
+| `src/rtl/loom_shell.sv` | Unified top-level (sim + FPGA) |
 | `src/rtl/loom_axil_demux.sv` | Parameterizable AXI-Lite 1:N demux |
+| `src/bfm/xlnx_xdma.sv` | Behavioral XDMA (socket BFM wrapper) |
+| `src/bfm/xlnx_clk_gen.sv` | Behavioral clock wizard |
+| `src/bfm/xlnx_cdc.sv` | Behavioral AXI-Lite CDC (passthrough) |
+| `src/bfm/xlnx_decoupler.sv` | Behavioral DFX decoupler |
+| `src/bfm/xilinx_primitives.sv` | Behavioral IBUFDS/IBUFDS_GTE4 stubs |
 | `src/host/loom_transport_xdma.cpp` | PCIe/XDMA transport |
 | `fpga/Makefile` | Build orchestration |
 | `fpga/boards/u250/` | Board settings and constraints |

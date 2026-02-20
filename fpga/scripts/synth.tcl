@@ -17,7 +17,8 @@ set_property board_part $XILINX_BOARD_PART [current_project]
 # ----------------------------------------------------------------
 read_ip $ip_dir/xlnx_xdma/xlnx_xdma.srcs/sources_1/ip/xlnx_xdma/xlnx_xdma.xci
 read_ip $ip_dir/xlnx_clk_gen/xlnx_clk_gen.srcs/sources_1/ip/xlnx_clk_gen/xlnx_clk_gen.xci
-read_ip $ip_dir/xlnx_axi_clock_converter/xlnx_axi_clock_converter.srcs/sources_1/ip/xlnx_axi_clock_converter/xlnx_axi_clock_converter.xci
+read_ip $ip_dir/xlnx_cdc/xlnx_cdc.srcs/sources_1/ip/xlnx_cdc/xlnx_cdc.xci
+read_ip $ip_dir/xlnx_decoupler/xlnx_decoupler.srcs/sources_1/ip/xlnx_decoupler/xlnx_decoupler.xci
 
 # ----------------------------------------------------------------
 # Read RTL
@@ -28,13 +29,11 @@ read_verilog -sv \
   $loom_src/rtl/loom_axil_demux.sv \
   $loom_src/rtl/loom_emu_ctrl.sv \
   $loom_src/rtl/loom_dpi_regfile.sv \
-  $loom_src/rtl/loom_scan_ctrl.sv
+  $loom_src/rtl/loom_scan_ctrl.sv \
+  $loom_src/rtl/loom_shell.sv
 
 # Transformed DUT (generated Verilog)
 read_verilog $::env(TRANSFORMED_V)
-
-# FPGA top-level
-read_verilog -sv $loom_src/fpga/loom_fpga_top.sv
 
 # ----------------------------------------------------------------
 # Read constraints
@@ -45,7 +44,7 @@ read_xdc $board_dir/u250_timing.xdc
 # ----------------------------------------------------------------
 # Synthesize
 # ----------------------------------------------------------------
-synth_design -top loom_fpga_top -flatten_hierarchy rebuilt
+synth_design -top loom_shell -flatten_hierarchy rebuilt
 
 # ----------------------------------------------------------------
 # Write checkpoint

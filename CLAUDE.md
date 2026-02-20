@@ -96,9 +96,10 @@ make -C fpga bitstream TRANSFORMED_V=path/to/transformed.v
 make -C fpga program
 ```
 
-**FPGA Architecture:**
-- `src/fpga/loom_fpga_top.sv` — FPGA top-level (PCIe XDMA + CDC + loom_emu_top)
+**Architecture:**
+- `src/rtl/loom_shell.sv` — Unified top-level for sim + FPGA (XDMA, demux, decoupler, CDC, clk_gen, emu_top)
 - `src/rtl/loom_axil_demux.sv` — Shared parameterizable AXI-Lite 1:N demux
+- `src/bfm/` — Behavioral models (xlnx_xdma, xlnx_clk_gen, xlnx_cdc, xlnx_decoupler, xilinx_primitives)
 - `fpga/` — Vivado scripts, IP generation, board constraints
 - `src/host/loom_transport_xdma.cpp` — PCIe/XDMA host transport
 

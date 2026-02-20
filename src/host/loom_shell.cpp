@@ -227,6 +227,21 @@ void Shell::register_commands() {
         [this](const auto& args) { return cmd_help(args); }
     });
     commands_.push_back({
+        "couple", {},
+        "Couple decoupler (connect emu_top)",
+        "Usage: couple\n"
+        "  Clear the decoupler to allow AXI traffic to reach loom_emu_top.",
+        [this](const auto& args) { return cmd_couple(args); }
+    });
+    commands_.push_back({
+        "decouple", {},
+        "Decouple (isolate emu_top)",
+        "Usage: decouple\n"
+        "  Assert the decoupler to isolate loom_emu_top from AXI traffic.\n"
+        "  Transactions to the emu_top range will return SLVERR.",
+        [this](const auto& args) { return cmd_decouple(args); }
+    });
+    commands_.push_back({
         "exit", {"quit", "q"},
         "Disconnect and exit",
         "Usage: exit\n"
@@ -436,6 +451,9 @@ int Shell::cmd_run(const std::vector<std::string>& args) {
         logger.error("Failed to set time compare");
         return -1;
     }
+
+    // Ensure decoupler is coupled before starting
+    ctx_.couple();
 
     // Release DUT reset and start emulation
     auto state_result = ctx_.get_state();
@@ -1012,6 +1030,34 @@ int Shell::cmd_help(const std::vector<std::string>& args) {
         std::printf("  %-16s%s  %s\n", cmd.name.c_str(),
                     aliases_str.c_str(), cmd.brief.c_str());
     }
+    return 0;
+}
+
+// ============================================================================
+// Command: couple
+// ============================================================================
+
+int Shell::cmd_couple(const std::vector<std::string>& /*args*/) {
+    auto rc = ctx_.couple();
+    if (!rc.ok()) {
+        logger.error("Failed to couple");
+        return -1;
+    }
+    logger.info("Decoupler cleared — emu_top connected");
+    return 0;
+}
+
+// ============================================================================
+// Command: decouple
+// ============================================================================
+
+int Shell::cmd_decouple(const std::vector<std::string>& /*args*/) {
+    auto rc = ctx_.decouple();
+    if (!rc.ok()) {
+        logger.error("Failed to decouple");
+        return -1;
+    }
+    logger.info("Decoupler asserted — emu_top isolated");
     return 0;
 }
 

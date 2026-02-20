@@ -55,6 +55,12 @@ Result<void> Context::connect(std::string_view target) {
     logger.info("Connected. Design ID: 0x%08x, Version: 0x%08x, DPI funcs: %u, Scan bits: %u",
              design_id_, loom_version_, n_dpi_funcs_, scan_chain_length_);
 
+    // Ensure emu_top is coupled (accessible through decoupler)
+    auto couple_rc = couple();
+    if (!couple_rc.ok()) {
+        logger.warning("Failed to couple decoupler (may not be present)");
+    }
+
     return {};
 }
 
@@ -315,6 +321,24 @@ Result<bool> Context::scan_is_busy() {
     auto status_result = read32(addr::ScanCtrl + reg::ScanStatus);
     if (!status_result.ok()) return status_result.error();
     return (status_result.value() & status::ScanBusy) != 0;
+}
+
+// ============================================================================
+// Decoupler Control
+// ============================================================================
+
+Result<void> Context::couple() {
+    return write32(addr::ShellCtrl + reg::DecouplerCtrl, 0x0);
+}
+
+Result<void> Context::decouple() {
+    return write32(addr::ShellCtrl + reg::DecouplerCtrl, 0x1);
+}
+
+Result<bool> Context::is_coupled() {
+    auto val = read32(addr::ShellCtrl + reg::DecouplerCtrl);
+    if (!val.ok()) return val.error();
+    return (val.value() & 0x1) == 0;
 }
 
 } // namespace loom

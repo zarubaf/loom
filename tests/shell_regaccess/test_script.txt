@@ -1,5 +1,5 @@
 # Shell register access test script
-# Exercises read, write, and status commands against a live design.
+# Exercises read, write, status, and couple/decouple commands.
 
 status
 
@@ -20,6 +20,10 @@ step 5
 
 # Read cycle counter low
 read 0x08
+
+# Verify couple/decouple commands
+decouple
+couple
 
 # Ensure emulation is stopped
 stop

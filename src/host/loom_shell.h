@@ -75,6 +75,8 @@ private:
     int cmd_deposit_script(const std::vector<std::string>& args);
     int cmd_help(const std::vector<std::string>& args);
     int cmd_exit(const std::vector<std::string>& args);
+    int cmd_couple(const std::vector<std::string>& args);
+    int cmd_decouple(const std::vector<std::string>& args);
 
     // Value extraction helpers
     static uint64_t extract_variable(const std::vector<uint32_t>& raw,

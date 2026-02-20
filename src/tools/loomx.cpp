@@ -7,7 +7,7 @@
 //
 // Usage:
 //   loomx -work build/                                  # no user DPI
-//   loomx -work build/ -sv_lib dpi -sim Vloom_sim_top   # with user DPI
+//   loomx -work build/ -sv_lib dpi -sim Vloom_shell   # with user DPI
 
 #include "loom_paths.h"
 
@@ -36,7 +36,7 @@ loom::Logger logger = loom::make_logger("loomx");
 struct Options {
     fs::path work_dir;
     std::string sv_lib;         // User DPI lib name (without lib prefix / .so)
-    std::string sim_name = "Vloom_sim_top";
+    std::string sim_name = "Vloom_shell";
     std::string script_file;
     std::string socket_path;    // Empty = auto PID-based
     std::string timeout;        // Sim timeout in ns (empty = sim default, "-1" = infinite)
@@ -54,7 +54,7 @@ void print_usage(const char *prog) {
         "Options:\n"
         "  -work DIR       Work directory from loomc (required)\n"
         "  -sv_lib NAME    User DPI shared library (without lib/.so)\n"
-        "  -sim BINARY     Simulation binary name (default: Vloom_sim_top)\n"
+        "  -sim BINARY     Simulation binary name (default: Vloom_shell)\n"
         "  -f SCRIPT       Run commands from script file\n"
         "  -s SOCKET       Socket path (default: auto PID-based)\n"
         "  -timeout NS     Simulation timeout in ns (-1 for infinite)\n"
@@ -363,13 +363,25 @@ int main(int argc, char **argv) {
     }
     dpi_service.print_stats();
 
+    // Tell simulation to finish cleanly (allows trace flush)
+    if (sim_pid > 0 && ctx.is_connected()) {
+        ctx.finish(exit_code);
+        // Give sim time to process $finish and flush traces
+        usleep(100000);  // 100ms
+    }
+
     // Disconnect
     ctx.disconnect();
 
     // Clean up simulation process
     if (sim_pid > 0) {
-        kill(sim_pid, SIGTERM);
-        waitpid(sim_pid, nullptr, 0);
+        // Wait briefly for clean exit, then force kill
+        int status;
+        pid_t rc = waitpid(sim_pid, &status, WNOHANG);
+        if (rc == 0) {
+            kill(sim_pid, SIGTERM);
+            waitpid(sim_pid, nullptr, 0);
+        }
         // Remove socket file
         if (fs::exists(opts.socket_path)) {
             fs::remove(opts.socket_path);

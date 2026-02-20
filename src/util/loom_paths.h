@@ -103,7 +103,7 @@ struct LoomPaths {
                 "mem_shadow.so";
             paths.rtl_dir = paths.root / "src" / "rtl";
             paths.bfm_dir = paths.root / "src" / "bfm";
-            paths.sim_top = paths.root / "src" / "test" / "loom_sim_top.sv";
+            paths.sim_top = paths.root / "src" / "rtl" / "loom_shell.sv";
             paths.include_dir = paths.root / "src" / "dpi";
         } else {
             // Install tree layout
@@ -118,7 +118,7 @@ struct LoomPaths {
             paths.rtl_dir = paths.root / "share" / "loom" / "rtl";
             paths.bfm_dir = paths.root / "share" / "loom" / "bfm";
             paths.sim_top =
-                paths.root / "share" / "loom" / "test" / "loom_sim_top.sv";
+                paths.root / "share" / "loom" / "rtl" / "loom_shell.sv";
             paths.include_dir = paths.root / "include" / "loom";
         }
 

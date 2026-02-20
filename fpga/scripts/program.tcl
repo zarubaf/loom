@@ -2,7 +2,7 @@
 # Loom — Vivado JTAG programming script
 
 set work_dir $::env(WORK_DIR)
-set bit_file $work_dir/results/loom_fpga_top.bit
+set bit_file $work_dir/results/loom_shell.bit
 
 open_hw_manager
 connect_hw_server

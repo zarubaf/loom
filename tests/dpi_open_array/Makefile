@@ -10,7 +10,7 @@ include ../../src/util/mk/loom_test.mk
 test: $(_TEST_DEPS)
 	@echo "run" > $(BUILD)/test_script.txt
 	@echo "exit" >> $(BUILD)/test_script.txt
-	$(LOOMX) -work $(BUILD) $(_LOOMX_DPI) -sim Vloom_sim_top \
+	$(LOOMX) -work $(BUILD) $(_LOOMX_DPI) -sim Vloom_shell \
 		-f $(BUILD)/test_script.txt 2>&1 | tee $(BUILD)/test.log
 	@echo "--- Checking output ---"
 	@grep -q 'dpi_sum_array("init", n=4)' $(BUILD)/test.log
