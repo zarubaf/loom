@@ -28,8 +28,6 @@ read_verilog -sv \
   $loom_src/rtl/loom_axil_demux.sv \
   $loom_src/rtl/loom_emu_ctrl.sv \
   $loom_src/rtl/loom_dpi_regfile.sv \
-  $loom_src/rtl/loom_emu_wrapper.sv \
-  $loom_src/rtl/loom_clk_gate.sv \
   $loom_src/rtl/loom_scan_ctrl.sv
 
 # Transformed DUT (generated Verilog)

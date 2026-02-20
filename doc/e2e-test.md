@@ -91,7 +91,7 @@ tests/e2e/
 ├── Makefile         # Build and run automation
 └── build/           # Generated (not committed)
     ├── run.ys               # Yosys script
-    ├── transformed_dpi_test.v  # Transformed Verilog
+    ├── transformed.v           # Transformed Verilog
     ├── dpi_test_dpi.h       # Generated C header
     ├── dpi_meta.json        # DPI metadata
     └── obj_dir/             # Verilator output

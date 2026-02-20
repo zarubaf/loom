@@ -86,7 +86,7 @@ The `emu_top` pass wraps the DUT with:
 - `loom_emu_ctrl` — state machine, DPI handshake, FF enable
 - `loom_dpi_regfile` — per-function AXI-Lite registers
 - `loom_scan_ctrl` — scan chain controller
-- `loom_axi_interconnect` — routes host AXI-Lite to ctrl/regfile/scan
+- `loom_axil_demux` — routes host AXI-Lite to ctrl/regfile/scan
 
 ### DPI regfile register map (per function, 64 bytes)
 

@@ -138,7 +138,7 @@ build manually:
 ```bash
 verilator --binary --timing \
     src/rtl/loom_emu_ctrl.sv \
-    src/rtl/loom_axi_interconnect.sv \
+    src/rtl/loom_axil_demux.sv \
     src/rtl/loom_dpi_regfile.sv \
     src/rtl/loom_scan_ctrl.sv \
     src/bfm/loom_axil_socket_bfm.sv \

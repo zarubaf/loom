@@ -13,7 +13,7 @@ VIVADO       ?= /opt/eda/ubuntu-24.04/xilinx/Vivado/2024.1/bin/vivado
 VIVADO_FLAGS := -mode batch -nojournal -nolog
 
 # Transformed DUT (user must supply or use tests/e2e to generate)
-TRANSFORMED_V ?= $(LOOM_ROOT)/tests/e2e/build/transformed_dpi_test.v
+TRANSFORMED_V ?= $(LOOM_ROOT)/tests/e2e/build/transformed.v
 
 # Board settings
 export XILINX_PART       := xcu250-figd2104-2L-e

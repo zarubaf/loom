@@ -83,7 +83,7 @@ make -C fpga ip
 make -C tests/e2e transform
 
 # 3. Build bitstream
-make -C fpga bitstream TRANSFORMED_V=tests/e2e/build/transformed_dpi_test.v
+make -C fpga bitstream TRANSFORMED_V=tests/e2e/build/transformed.v
 
 # 4. Program FPGA
 make -C fpga program
