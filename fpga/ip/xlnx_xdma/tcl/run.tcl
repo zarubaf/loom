@@ -18,6 +18,7 @@ set_property -dict [list \
   CONFIG.axilite_master_en {true} \
   CONFIG.axilite_master_scale {Megabytes} \
   CONFIG.axilite_master_size {1} \
+  CONFIG.axil_master_64bit_en {true} \
   CONFIG.axisten_freq {125} \
   CONFIG.coreclk_freq {250} \
   CONFIG.en_gt_selection {true} \
@@ -30,6 +31,8 @@ set_property -dict [list \
   CONFIG.xdma_axilite_slave {false} \
   CONFIG.xdma_rnum_chnl {1} \
   CONFIG.xdma_wnum_chnl {1} \
+  CONFIG.xdma_rnum_rids {2} \
+  CONFIG.xdma_wnum_rids {2} \
 ] [get_ips $ipName]
 
 generate_target {instantiation_template} [get_files ./$ipName.srcs/sources_1/ip/$ipName/$ipName.xci]
