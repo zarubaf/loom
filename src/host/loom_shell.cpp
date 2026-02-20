@@ -92,8 +92,8 @@ void Shell::load_scan_map(const std::string& path) {
     }
 
     scan_map_loaded_ = true;
-    logger.info("Loaded scan map: %d variables, %u bits",
-                scan_map_.variables_size(), scan_map_.chain_length());
+    logger.debug("Loaded scan map: %d variables, %u bits",
+                 scan_map_.variables_size(), scan_map_.chain_length());
 
     // Unpack initial scan image if present
     const auto& img = scan_map_.initial_scan_image();
@@ -108,7 +108,7 @@ void Shell::load_scan_map(const std::string& path) {
               | (static_cast<uint8_t>(img[i * 4 + 3]) << 24);
         }
         has_initial_image_ = true;
-        logger.info("Initial scan image: %zu words", n_words);
+        logger.debug("Initial scan image: %zu words", n_words);
     }
 
     // Unpack initial DPI calls
@@ -137,8 +137,8 @@ void Shell::load_scan_map(const std::string& path) {
         }
 
         initial_dpi_calls_.push_back(std::move(call));
-        logger.info("Initial DPI call: %s (ret_width=%u, scan_offset=%u)",
-                     pb_call.func_name().c_str(), pb_call.return_width(), pb_call.scan_offset());
+        logger.debug("Initial DPI call: %s (ret_width=%u, scan_offset=%u)",
+                      pb_call.func_name().c_str(), pb_call.return_width(), pb_call.scan_offset());
     }
 }
 
