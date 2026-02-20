@@ -18,136 +18,136 @@ module xlnx_decoupler (
     // =====================================================================
 
     // AW channel
-    input  wire [19:0] s_intf0_awaddr,
-    input  wire [2:0]  s_intf0_awprot,
-    input  wire        s_intf0_awvalid,
-    output wire        s_intf0_awready,
-    output wire [19:0] rp_intf0_awaddr,
-    output wire [2:0]  rp_intf0_awprot,
-    output wire        rp_intf0_awvalid,
-    input  wire        rp_intf0_awready,
+    input  wire [19:0] s_intf0_AWADDR,
+    input  wire [2:0]  s_intf0_AWPROT,
+    input  wire        s_intf0_AWVALID,
+    output wire        s_intf0_AWREADY,
+    output wire [19:0] rp_intf0_AWADDR,
+    output wire [2:0]  rp_intf0_AWPROT,
+    output wire        rp_intf0_AWVALID,
+    input  wire        rp_intf0_AWREADY,
 
     // W channel
-    input  wire [31:0] s_intf0_wdata,
-    input  wire [3:0]  s_intf0_wstrb,
-    input  wire        s_intf0_wvalid,
-    output wire        s_intf0_wready,
-    output wire [31:0] rp_intf0_wdata,
-    output wire [3:0]  rp_intf0_wstrb,
-    output wire        rp_intf0_wvalid,
-    input  wire        rp_intf0_wready,
+    input  wire [31:0] s_intf0_WDATA,
+    input  wire [3:0]  s_intf0_WSTRB,
+    input  wire        s_intf0_WVALID,
+    output wire        s_intf0_WREADY,
+    output wire [31:0] rp_intf0_WDATA,
+    output wire [3:0]  rp_intf0_WSTRB,
+    output wire        rp_intf0_WVALID,
+    input  wire        rp_intf0_WREADY,
 
     // B channel
-    output wire [1:0]  s_intf0_bresp,
-    output wire        s_intf0_bvalid,
-    input  wire        s_intf0_bready,
-    input  wire [1:0]  rp_intf0_bresp,
-    input  wire        rp_intf0_bvalid,
-    output wire        rp_intf0_bready,
+    output wire [1:0]  s_intf0_BRESP,
+    output wire        s_intf0_BVALID,
+    input  wire        s_intf0_BREADY,
+    input  wire [1:0]  rp_intf0_BRESP,
+    input  wire        rp_intf0_BVALID,
+    output wire        rp_intf0_BREADY,
 
     // AR channel
-    input  wire [19:0] s_intf0_araddr,
-    input  wire [2:0]  s_intf0_arprot,
-    input  wire        s_intf0_arvalid,
-    output wire        s_intf0_arready,
-    output wire [19:0] rp_intf0_araddr,
-    output wire [2:0]  rp_intf0_arprot,
-    output wire        rp_intf0_arvalid,
-    input  wire        rp_intf0_arready,
+    input  wire [19:0] s_intf0_ARADDR,
+    input  wire [2:0]  s_intf0_ARPROT,
+    input  wire        s_intf0_ARVALID,
+    output wire        s_intf0_ARREADY,
+    output wire [19:0] rp_intf0_ARADDR,
+    output wire [2:0]  rp_intf0_ARPROT,
+    output wire        rp_intf0_ARVALID,
+    input  wire        rp_intf0_ARREADY,
 
     // R channel
-    output wire [31:0] s_intf0_rdata,
-    output wire [1:0]  s_intf0_rresp,
-    output wire        s_intf0_rvalid,
-    input  wire        s_intf0_rready,
-    input  wire [31:0] rp_intf0_rdata,
-    input  wire [1:0]  rp_intf0_rresp,
-    input  wire        rp_intf0_rvalid,
-    output wire        rp_intf0_rready,
+    output wire [31:0] s_intf0_RDATA,
+    output wire [1:0]  s_intf0_RRESP,
+    output wire        s_intf0_RVALID,
+    input  wire        s_intf0_RREADY,
+    input  wire [31:0] rp_intf0_RDATA,
+    input  wire [1:0]  rp_intf0_RRESP,
+    input  wire        rp_intf0_RVALID,
+    output wire        rp_intf0_RREADY,
 
     // =====================================================================
     // Interface 1: AXI4 full (static side = s_intf1, RP side = rp_intf1)
     // =====================================================================
 
     // AW channel
-    input  wire [3:0]  s_intf1_awid,
-    input  wire [63:0] s_intf1_awaddr,
-    input  wire [7:0]  s_intf1_awlen,
-    input  wire [2:0]  s_intf1_awsize,
-    input  wire [1:0]  s_intf1_awburst,
-    input  wire        s_intf1_awlock,
-    input  wire [3:0]  s_intf1_awcache,
-    input  wire [2:0]  s_intf1_awprot,
-    input  wire        s_intf1_awvalid,
-    output wire        s_intf1_awready,
-    output wire [3:0]  rp_intf1_awid,
-    output wire [63:0] rp_intf1_awaddr,
-    output wire [7:0]  rp_intf1_awlen,
-    output wire [2:0]  rp_intf1_awsize,
-    output wire [1:0]  rp_intf1_awburst,
-    output wire        rp_intf1_awlock,
-    output wire [3:0]  rp_intf1_awcache,
-    output wire [2:0]  rp_intf1_awprot,
-    output wire        rp_intf1_awvalid,
-    input  wire        rp_intf1_awready,
+    input  wire [3:0]  s_intf1_AWID,
+    input  wire [63:0] s_intf1_AWADDR,
+    input  wire [7:0]  s_intf1_AWLEN,
+    input  wire [2:0]  s_intf1_AWSIZE,
+    input  wire [1:0]  s_intf1_AWBURST,
+    input  wire [0:0]  s_intf1_AWLOCK,
+    input  wire [3:0]  s_intf1_AWCACHE,
+    input  wire [2:0]  s_intf1_AWPROT,
+    input  wire        s_intf1_AWVALID,
+    output wire        s_intf1_AWREADY,
+    output wire [3:0]  rp_intf1_AWID,
+    output wire [63:0] rp_intf1_AWADDR,
+    output wire [7:0]  rp_intf1_AWLEN,
+    output wire [2:0]  rp_intf1_AWSIZE,
+    output wire [1:0]  rp_intf1_AWBURST,
+    output wire [0:0]  rp_intf1_AWLOCK,
+    output wire [3:0]  rp_intf1_AWCACHE,
+    output wire [2:0]  rp_intf1_AWPROT,
+    output wire        rp_intf1_AWVALID,
+    input  wire        rp_intf1_AWREADY,
 
     // W channel
-    input  wire [127:0] s_intf1_wdata,
-    input  wire [15:0]  s_intf1_wstrb,
-    input  wire         s_intf1_wlast,
-    input  wire         s_intf1_wvalid,
-    output wire         s_intf1_wready,
-    output wire [127:0] rp_intf1_wdata,
-    output wire [15:0]  rp_intf1_wstrb,
-    output wire         rp_intf1_wlast,
-    output wire         rp_intf1_wvalid,
-    input  wire         rp_intf1_wready,
+    input  wire [127:0] s_intf1_WDATA,
+    input  wire [15:0]  s_intf1_WSTRB,
+    input  wire         s_intf1_WLAST,
+    input  wire         s_intf1_WVALID,
+    output wire         s_intf1_WREADY,
+    output wire [127:0] rp_intf1_WDATA,
+    output wire [15:0]  rp_intf1_WSTRB,
+    output wire         rp_intf1_WLAST,
+    output wire         rp_intf1_WVALID,
+    input  wire         rp_intf1_WREADY,
 
     // B channel
-    output wire [3:0]  s_intf1_bid,
-    output wire [1:0]  s_intf1_bresp,
-    output wire        s_intf1_bvalid,
-    input  wire        s_intf1_bready,
-    input  wire [3:0]  rp_intf1_bid,
-    input  wire [1:0]  rp_intf1_bresp,
-    input  wire        rp_intf1_bvalid,
-    output wire        rp_intf1_bready,
+    output wire [3:0]  s_intf1_BID,
+    output wire [1:0]  s_intf1_BRESP,
+    output wire        s_intf1_BVALID,
+    input  wire        s_intf1_BREADY,
+    input  wire [3:0]  rp_intf1_BID,
+    input  wire [1:0]  rp_intf1_BRESP,
+    input  wire        rp_intf1_BVALID,
+    output wire        rp_intf1_BREADY,
 
     // AR channel
-    input  wire [3:0]  s_intf1_arid,
-    input  wire [63:0] s_intf1_araddr,
-    input  wire [7:0]  s_intf1_arlen,
-    input  wire [2:0]  s_intf1_arsize,
-    input  wire [1:0]  s_intf1_arburst,
-    input  wire        s_intf1_arlock,
-    input  wire [3:0]  s_intf1_arcache,
-    input  wire [2:0]  s_intf1_arprot,
-    input  wire        s_intf1_arvalid,
-    output wire        s_intf1_arready,
-    output wire [3:0]  rp_intf1_arid,
-    output wire [63:0] rp_intf1_araddr,
-    output wire [7:0]  rp_intf1_arlen,
-    output wire [2:0]  rp_intf1_arsize,
-    output wire [1:0]  rp_intf1_arburst,
-    output wire        rp_intf1_arlock,
-    output wire [3:0]  rp_intf1_arcache,
-    output wire [2:0]  rp_intf1_arprot,
-    output wire        rp_intf1_arvalid,
-    input  wire        rp_intf1_arready,
+    input  wire [3:0]  s_intf1_ARID,
+    input  wire [63:0] s_intf1_ARADDR,
+    input  wire [7:0]  s_intf1_ARLEN,
+    input  wire [2:0]  s_intf1_ARSIZE,
+    input  wire [1:0]  s_intf1_ARBURST,
+    input  wire [0:0]  s_intf1_ARLOCK,
+    input  wire [3:0]  s_intf1_ARCACHE,
+    input  wire [2:0]  s_intf1_ARPROT,
+    input  wire        s_intf1_ARVALID,
+    output wire        s_intf1_ARREADY,
+    output wire [3:0]  rp_intf1_ARID,
+    output wire [63:0] rp_intf1_ARADDR,
+    output wire [7:0]  rp_intf1_ARLEN,
+    output wire [2:0]  rp_intf1_ARSIZE,
+    output wire [1:0]  rp_intf1_ARBURST,
+    output wire [0:0]  rp_intf1_ARLOCK,
+    output wire [3:0]  rp_intf1_ARCACHE,
+    output wire [2:0]  rp_intf1_ARPROT,
+    output wire        rp_intf1_ARVALID,
+    input  wire        rp_intf1_ARREADY,
 
     // R channel
-    output wire [3:0]   s_intf1_rid,
-    output wire [127:0] s_intf1_rdata,
-    output wire [1:0]   s_intf1_rresp,
-    output wire         s_intf1_rlast,
-    output wire         s_intf1_rvalid,
-    input  wire         s_intf1_rready,
-    input  wire [3:0]   rp_intf1_rid,
-    input  wire [127:0] rp_intf1_rdata,
-    input  wire [1:0]   rp_intf1_rresp,
-    input  wire         rp_intf1_rlast,
-    input  wire         rp_intf1_rvalid,
-    output wire         rp_intf1_rready
+    output wire [3:0]   s_intf1_RID,
+    output wire [127:0] s_intf1_RDATA,
+    output wire [1:0]   s_intf1_RRESP,
+    output wire         s_intf1_RLAST,
+    output wire         s_intf1_RVALID,
+    input  wire         s_intf1_RREADY,
+    input  wire [3:0]   rp_intf1_RID,
+    input  wire [127:0] rp_intf1_RDATA,
+    input  wire [1:0]   rp_intf1_RRESP,
+    input  wire         rp_intf1_RLAST,
+    input  wire         rp_intf1_RVALID,
+    output wire         rp_intf1_RREADY
 );
 
     assign decouple_status = decouple;
@@ -159,85 +159,85 @@ module xlnx_decoupler (
     // --- Coupled: pass through. Decoupled: absorb on static, silence RP ---
 
     // AW channel
-    assign rp_intf0_awaddr  = s_intf0_awaddr;
-    assign rp_intf0_awprot  = s_intf0_awprot;
-    assign rp_intf0_awvalid = decouple ? 1'b0 : s_intf0_awvalid;
-    assign s_intf0_awready  = decouple ? 1'b1 : rp_intf0_awready;
+    assign rp_intf0_AWADDR  = s_intf0_AWADDR;
+    assign rp_intf0_AWPROT  = s_intf0_AWPROT;
+    assign rp_intf0_AWVALID = decouple ? 1'b0 : s_intf0_AWVALID;
+    assign s_intf0_AWREADY  = decouple ? 1'b1 : rp_intf0_AWREADY;
 
     // W channel
-    assign rp_intf0_wdata   = s_intf0_wdata;
-    assign rp_intf0_wstrb   = s_intf0_wstrb;
-    assign rp_intf0_wvalid  = decouple ? 1'b0 : s_intf0_wvalid;
-    assign s_intf0_wready   = decouple ? 1'b1 : rp_intf0_wready;
+    assign rp_intf0_WDATA   = s_intf0_WDATA;
+    assign rp_intf0_WSTRB   = s_intf0_WSTRB;
+    assign rp_intf0_WVALID  = decouple ? 1'b0 : s_intf0_WVALID;
+    assign s_intf0_WREADY   = decouple ? 1'b1 : rp_intf0_WREADY;
 
     // B channel — when decoupled, generate SLVERR for absorbed writes
     // Simple approach: in coupled mode pass through; in decoupled mode
     // return SLVERR whenever a write address+data are absorbed.
     // For full correctness we use a small FSM, but for behavioral sim
     // we use combinational logic that mirrors the Xilinx IP behavior.
-    assign s_intf0_bresp    = decouple ? 2'b10 : rp_intf0_bresp;  // SLVERR when decoupled
-    assign s_intf0_bvalid   = decouple ? (s_intf0_awvalid & s_intf0_wvalid) : rp_intf0_bvalid;
-    assign rp_intf0_bready  = decouple ? 1'b0 : s_intf0_bready;
+    assign s_intf0_BRESP    = decouple ? 2'b10 : rp_intf0_BRESP;  // SLVERR when decoupled
+    assign s_intf0_BVALID   = decouple ? (s_intf0_AWVALID & s_intf0_WVALID) : rp_intf0_BVALID;
+    assign rp_intf0_BREADY  = decouple ? 1'b0 : s_intf0_BREADY;
 
     // AR channel
-    assign rp_intf0_araddr  = s_intf0_araddr;
-    assign rp_intf0_arprot  = s_intf0_arprot;
-    assign rp_intf0_arvalid = decouple ? 1'b0 : s_intf0_arvalid;
-    assign s_intf0_arready  = decouple ? 1'b1 : rp_intf0_arready;
+    assign rp_intf0_ARADDR  = s_intf0_ARADDR;
+    assign rp_intf0_ARPROT  = s_intf0_ARPROT;
+    assign rp_intf0_ARVALID = decouple ? 1'b0 : s_intf0_ARVALID;
+    assign s_intf0_ARREADY  = decouple ? 1'b1 : rp_intf0_ARREADY;
 
     // R channel — when decoupled, return SLVERR with 0 data for absorbed reads
-    assign s_intf0_rdata    = decouple ? 32'd0         : rp_intf0_rdata;
-    assign s_intf0_rresp    = decouple ? 2'b10         : rp_intf0_rresp;  // SLVERR
-    assign s_intf0_rvalid   = decouple ? s_intf0_arvalid : rp_intf0_rvalid;
-    assign rp_intf0_rready  = decouple ? 1'b0          : s_intf0_rready;
+    assign s_intf0_RDATA    = decouple ? 32'd0         : rp_intf0_RDATA;
+    assign s_intf0_RRESP    = decouple ? 2'b10         : rp_intf0_RRESP;  // SLVERR
+    assign s_intf0_RVALID   = decouple ? s_intf0_ARVALID : rp_intf0_RVALID;
+    assign rp_intf0_RREADY  = decouple ? 1'b0          : s_intf0_RREADY;
 
     // =====================================================================
     // Interface 1: AXI4 full
     // =====================================================================
 
     // AW channel
-    assign rp_intf1_awid    = s_intf1_awid;
-    assign rp_intf1_awaddr  = s_intf1_awaddr;
-    assign rp_intf1_awlen   = s_intf1_awlen;
-    assign rp_intf1_awsize  = s_intf1_awsize;
-    assign rp_intf1_awburst = s_intf1_awburst;
-    assign rp_intf1_awlock  = s_intf1_awlock;
-    assign rp_intf1_awcache = s_intf1_awcache;
-    assign rp_intf1_awprot  = s_intf1_awprot;
-    assign rp_intf1_awvalid = decouple ? 1'b0 : s_intf1_awvalid;
-    assign s_intf1_awready  = decouple ? 1'b1 : rp_intf1_awready;
+    assign rp_intf1_AWID    = s_intf1_AWID;
+    assign rp_intf1_AWADDR  = s_intf1_AWADDR;
+    assign rp_intf1_AWLEN   = s_intf1_AWLEN;
+    assign rp_intf1_AWSIZE  = s_intf1_AWSIZE;
+    assign rp_intf1_AWBURST = s_intf1_AWBURST;
+    assign rp_intf1_AWLOCK  = s_intf1_AWLOCK;
+    assign rp_intf1_AWCACHE = s_intf1_AWCACHE;
+    assign rp_intf1_AWPROT  = s_intf1_AWPROT;
+    assign rp_intf1_AWVALID = decouple ? 1'b0 : s_intf1_AWVALID;
+    assign s_intf1_AWREADY  = decouple ? 1'b1 : rp_intf1_AWREADY;
 
     // W channel
-    assign rp_intf1_wdata   = s_intf1_wdata;
-    assign rp_intf1_wstrb   = s_intf1_wstrb;
-    assign rp_intf1_wlast   = s_intf1_wlast;
-    assign rp_intf1_wvalid  = decouple ? 1'b0 : s_intf1_wvalid;
-    assign s_intf1_wready   = decouple ? 1'b1 : rp_intf1_wready;
+    assign rp_intf1_WDATA   = s_intf1_WDATA;
+    assign rp_intf1_WSTRB   = s_intf1_WSTRB;
+    assign rp_intf1_WLAST   = s_intf1_WLAST;
+    assign rp_intf1_WVALID  = decouple ? 1'b0 : s_intf1_WVALID;
+    assign s_intf1_WREADY   = decouple ? 1'b1 : rp_intf1_WREADY;
 
     // B channel
-    assign s_intf1_bid      = decouple ? s_intf1_awid  : rp_intf1_bid;
-    assign s_intf1_bresp    = decouple ? 2'b10         : rp_intf1_bresp;
-    assign s_intf1_bvalid   = decouple ? (s_intf1_awvalid & s_intf1_wvalid) : rp_intf1_bvalid;
-    assign rp_intf1_bready  = decouple ? 1'b0          : s_intf1_bready;
+    assign s_intf1_BID      = decouple ? s_intf1_AWID  : rp_intf1_BID;
+    assign s_intf1_BRESP    = decouple ? 2'b10         : rp_intf1_BRESP;
+    assign s_intf1_BVALID   = decouple ? (s_intf1_AWVALID & s_intf1_WVALID) : rp_intf1_BVALID;
+    assign rp_intf1_BREADY  = decouple ? 1'b0          : s_intf1_BREADY;
 
     // AR channel
-    assign rp_intf1_arid    = s_intf1_arid;
-    assign rp_intf1_araddr  = s_intf1_araddr;
-    assign rp_intf1_arlen   = s_intf1_arlen;
-    assign rp_intf1_arsize  = s_intf1_arsize;
-    assign rp_intf1_arburst = s_intf1_arburst;
-    assign rp_intf1_arlock  = s_intf1_arlock;
-    assign rp_intf1_arcache = s_intf1_arcache;
-    assign rp_intf1_arprot  = s_intf1_arprot;
-    assign rp_intf1_arvalid = decouple ? 1'b0 : s_intf1_arvalid;
-    assign s_intf1_arready  = decouple ? 1'b1 : rp_intf1_arready;
+    assign rp_intf1_ARID    = s_intf1_ARID;
+    assign rp_intf1_ARADDR  = s_intf1_ARADDR;
+    assign rp_intf1_ARLEN   = s_intf1_ARLEN;
+    assign rp_intf1_ARSIZE  = s_intf1_ARSIZE;
+    assign rp_intf1_ARBURST = s_intf1_ARBURST;
+    assign rp_intf1_ARLOCK  = s_intf1_ARLOCK;
+    assign rp_intf1_ARCACHE = s_intf1_ARCACHE;
+    assign rp_intf1_ARPROT  = s_intf1_ARPROT;
+    assign rp_intf1_ARVALID = decouple ? 1'b0 : s_intf1_ARVALID;
+    assign s_intf1_ARREADY  = decouple ? 1'b1 : rp_intf1_ARREADY;
 
     // R channel
-    assign s_intf1_rid      = decouple ? s_intf1_arid  : rp_intf1_rid;
-    assign s_intf1_rdata    = decouple ? 128'd0        : rp_intf1_rdata;
-    assign s_intf1_rresp    = decouple ? 2'b10         : rp_intf1_rresp;
-    assign s_intf1_rlast    = decouple ? 1'b1          : rp_intf1_rlast;
-    assign s_intf1_rvalid   = decouple ? s_intf1_arvalid : rp_intf1_rvalid;
-    assign rp_intf1_rready  = decouple ? 1'b0          : s_intf1_rready;
+    assign s_intf1_RID      = decouple ? s_intf1_ARID  : rp_intf1_RID;
+    assign s_intf1_RDATA    = decouple ? 128'd0        : rp_intf1_RDATA;
+    assign s_intf1_RRESP    = decouple ? 2'b10         : rp_intf1_RRESP;
+    assign s_intf1_RLAST    = decouple ? 1'b1          : rp_intf1_RLAST;
+    assign s_intf1_RVALID   = decouple ? s_intf1_ARVALID : rp_intf1_RVALID;
+    assign rp_intf1_RREADY  = decouple ? 1'b0          : s_intf1_RREADY;
 
 endmodule

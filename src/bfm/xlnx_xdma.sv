@@ -80,8 +80,8 @@ module xlnx_xdma (
     output wire        m_axil_bready,
 
     // IRQ
-    input  wire [15:0] usr_irq_req,
-    output wire [15:0] usr_irq_ack,
+    input  wire [0:0]  usr_irq_req,
+    output wire [0:0]  usr_irq_ack,
     output wire        msi_enable,
     output wire [2:0]  msi_vector_width,
 
@@ -170,7 +170,7 @@ module xlnx_xdma (
     // =========================================================================
     // IRQ — acknowledge immediately
     // =========================================================================
-    assign usr_irq_ack     = 16'd0;
+    assign usr_irq_ack     = 1'b0;
     assign msi_enable      = 1'b0;
     assign msi_vector_width = 3'd0;
 
@@ -230,7 +230,7 @@ module xlnx_xdma (
         .m_axil_bvalid_i  (bfm_bvalid),
         .m_axil_bready_o  (bfm_bready),
 
-        .irq_i     (usr_irq_req),
+        .irq_i     ({16{1'b0}}),
         .finish_i  (usr_irq_req[0]),
         .shutdown_o(bfm_shutdown)
     );
