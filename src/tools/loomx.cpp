@@ -329,8 +329,8 @@ int main(int argc, char **argv) {
     // Verify DPI function count and register (only if we have DPI)
     auto &dpi_service = loom::global_dpi_service();
     if (funcs && n_funcs) {
-        if (ctx.n_dpi_funcs() != static_cast<uint32_t>(*n_funcs)) {
-            logger.warning("Design has %u DPI funcs, dispatch has %d",
+        if (ctx.n_dpi_funcs() > static_cast<uint32_t>(*n_funcs)) {
+            logger.warning("Design has %u DPI funcs but dispatch only has %d",
                            ctx.n_dpi_funcs(), *n_funcs);
         }
         dpi_service.register_funcs(funcs, *n_funcs);
