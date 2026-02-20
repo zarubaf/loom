@@ -14,17 +14,19 @@ static Logger logger = make_logger("dpi");
 // ============================================================================
 
 void DpiService::register_func(int func_id, std::string_view name, int n_args,
-                                int ret_width, int out_arg_words, DpiCallback callback) {
+                                int ret_width, int out_arg_words, bool call_at_init,
+                                DpiCallback callback) {
     funcs_.push_back({
         .func_id = func_id,
         .name = std::string(name),
         .n_args = n_args,
         .ret_width = ret_width,
         .out_arg_words = out_arg_words,
+        .call_at_init = call_at_init,
         .callback = std::move(callback)
     });
-    logger.debug("Registered function '%.*s' (id=%d, %d args, %d-bit return, %d out words)",
-              static_cast<int>(name.size()), name.data(), func_id, n_args, ret_width, out_arg_words);
+    logger.debug("Registered function '%.*s' (id=%d, %d args, %d-bit return, %d out words, init=%d)",
+              static_cast<int>(name.size()), name.data(), func_id, n_args, ret_width, out_arg_words, call_at_init);
 }
 
 const DpiFunc* DpiService::find_func(int func_id) const {
@@ -36,13 +38,8 @@ const DpiFunc* DpiService::find_func(int func_id) const {
     return nullptr;
 }
 
-const DpiFunc* DpiService::find_func_by_name(const std::string& name) const {
-    for (const auto& func : funcs_) {
-        if (func.name == name) {
-            return &func;
-        }
-    }
-    return nullptr;
+const DpiFunc* DpiService::find_func_by_id(int func_id) const {
+    return find_func(func_id);
 }
 
 int DpiService::service_once(Context& ctx) {

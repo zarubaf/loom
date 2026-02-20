@@ -62,6 +62,8 @@ struct DpiFunction {
     RTLIL::SigSpec result_sig;
     RTLIL::SigSpec valid_condition;  // Derived execution condition (populated after derive)
     bool builtin = false;            // true for loom-provided functions (__loom_display_*)
+    bool call_at_init = false;       // execute before emulation starts (initial/reset DPI)
+    std::vector<uint32_t> const_arg_words;  // pre-packed constant args (for call_at_init)
 };
 
 struct LoomInstrumentPass : public Pass {
@@ -270,11 +272,48 @@ struct LoomInstrumentPass : public Pass {
                     bool is_reset = cell->get_bool_attribute(ID(loom_dpi_reset));
 
                     if (is_initial || is_reset) {
-                        // Still include in dispatch table for host-side calling
+                        func.call_at_init = true;
                         func.valid_condition = RTLIL::SigSpec();
+
+                        // Capture constant args from ARGS port — baked into wrapper
+                        // so the host doesn't need to pass them at runtime.
+                        if (cell->hasPort(ID(ARGS))) {
+                            RTLIL::SigSpec args_sig = cell->getPort(ID(ARGS));
+                            if (args_sig.is_fully_const()) {
+                                RTLIL::Const c = args_sig.as_const();
+                                int bit_pos = 0;
+                                for (const auto &arg : func.args) {
+                                    if (arg.type == "string") continue;
+                                    if (arg.is_array && arg.direction == "output") continue;
+                                    int n_words = (arg.width + 31) / 32;
+                                    for (int w = 0; w < n_words; w++) {
+                                        uint32_t val = 0;
+                                        for (int b = 0; b < 32; b++) {
+                                            int idx = bit_pos + w * 32 + b;
+                                            if (idx < GetSize(c) && c[idx] == RTLIL::State::S1)
+                                                val |= (1u << b);
+                                        }
+                                        func.const_arg_words.push_back(val);
+                                    }
+                                    bit_pos += arg.width;
+                                }
+                                log("    Captured %zu constant arg word(s) for dispatch wrapper\n",
+                                    func.const_arg_words.size());
+                            }
+                        }
+
                         dpi_functions.push_back(func);
-                        module->remove(cell);
-                        log("  Initial/reset DPI call '%s' — dispatch only (no bridge)\n", dpi_name.c_str());
+
+                        if (is_reset) {
+                            // Store func_id on cell for scan_insert to read
+                            cell->set_string_attribute(ID(loom_dpi_func_id), std::to_string(func.func_id));
+                            log("  Reset DPI call '%s' — func_id %d (cell kept for scan_insert)\n",
+                                dpi_name.c_str(), func.func_id);
+                        } else {
+                            module->remove(cell);
+                            log("  Initial DPI call '%s' — func_id %d (dispatch only)\n",
+                                dpi_name.c_str(), func.func_id);
+                        }
                         continue;
                     }
 
@@ -350,20 +389,20 @@ struct LoomInstrumentPass : public Pass {
         RTLIL::Wire *loom_en = module->addWire(ID(loom_en), 1);
         loom_en->port_input = true;
 
-        // Find existing loom_scan_enable wire (from prior scan_insert pass)
+        // Create loom_scan_enable for later use by scan_insert
+        // (must exist before run_flop_enable builds combined enable)
         RTLIL::Wire *scan_enable = module->wire(ID(loom_scan_enable));
+        if (!scan_enable) {
+            scan_enable = module->addWire(ID(loom_scan_enable), 1);
+            scan_enable->port_input = true;
+            module->fixup_ports();
+        }
 
         // Build combined_en = loom_en | loom_scan_enable
-        RTLIL::SigSpec combined_en_1bit;
-        if (scan_enable) {
-            RTLIL::Wire *comb_wire = module->addWire(NEW_ID, 1);
-            module->addOr(NEW_ID, RTLIL::SigSpec(loom_en), RTLIL::SigSpec(scan_enable), RTLIL::SigSpec(comb_wire));
-            combined_en_1bit = RTLIL::SigSpec(comb_wire);
-            log("  Combined enable: loom_en | loom_scan_enable\n");
-        } else {
-            combined_en_1bit = RTLIL::SigSpec(loom_en);
-            log("  No scan_enable found, using loom_en alone\n");
-        }
+        RTLIL::Wire *comb_wire = module->addWire(NEW_ID, 1);
+        module->addOr(NEW_ID, RTLIL::SigSpec(loom_en), RTLIL::SigSpec(scan_enable), RTLIL::SigSpec(comb_wire));
+        RTLIL::SigSpec combined_en_1bit = RTLIL::SigSpec(comb_wire);
+        log("  Combined enable: loom_en | loom_scan_enable\n");
 
         for (auto cell : dffs) {
             if (!has_enable(cell)) {
@@ -406,14 +445,9 @@ struct LoomInstrumentPass : public Pass {
                 RTLIL::Wire *gated_wire = module->addWire(NEW_ID, 1);
                 module->addAnd(NEW_ID, active_en, RTLIL::SigSpec(loom_en), RTLIL::SigSpec(gated_wire));
 
-                RTLIL::SigSpec new_en;
-                if (scan_enable) {
-                    RTLIL::Wire *final_wire = module->addWire(NEW_ID, 1);
-                    module->addOr(NEW_ID, RTLIL::SigSpec(gated_wire), RTLIL::SigSpec(scan_enable), RTLIL::SigSpec(final_wire));
-                    new_en = RTLIL::SigSpec(final_wire);
-                } else {
-                    new_en = RTLIL::SigSpec(gated_wire);
-                }
+                RTLIL::Wire *final_wire = module->addWire(NEW_ID, 1);
+                module->addOr(NEW_ID, RTLIL::SigSpec(gated_wire), RTLIL::SigSpec(scan_enable), RTLIL::SigSpec(final_wire));
+                RTLIL::SigSpec new_en = RTLIL::SigSpec(final_wire);
 
                 cell->setPort(en_port, new_en);
                 cell->setParam(pol_param, RTLIL::Const(1, 1));
@@ -1102,8 +1136,13 @@ struct LoomInstrumentPass : public Pass {
                     if (arg.is_array && arg.direction == "input") {
                         int n = arg.n_elements;
                         for (int j = 0; j < n; j++) {
-                            ofs << "    " << arg.name << "_buf[" << j << "] = args["
-                                << (arg_offset + j) << "];\n";
+                            if (func.call_at_init && (arg_offset + j) < (int)func.const_arg_words.size()) {
+                                ofs << "    " << arg.name << "_buf[" << j << "] = "
+                                    << func.const_arg_words[arg_offset + j] << "u;\n";
+                            } else {
+                                ofs << "    " << arg.name << "_buf[" << j << "] = args["
+                                    << (arg_offset + j) << "];\n";
+                            }
                         }
                     }
                     arg_offset += (arg.width + 31) / 32;
@@ -1129,7 +1168,12 @@ struct LoomInstrumentPass : public Pass {
                             arg_offset += (arg.width + 31) / 32;
                     } else {
                         std::string c_type = sv_type_to_c(arg.type, arg.width);
-                        call_args += "(" + c_type + ")args[" + std::to_string(arg_offset) + "]";
+                        if (func.call_at_init && arg_offset < (int)func.const_arg_words.size()) {
+                            // Bake constant value into wrapper (host passes empty args)
+                            call_args += "(" + c_type + ")" + std::to_string(func.const_arg_words[arg_offset]) + "u";
+                        } else {
+                            call_args += "(" + c_type + ")args[" + std::to_string(arg_offset) + "]";
+                        }
                         arg_offset += (arg.width + 31) / 32;
                     }
                 }
@@ -1173,6 +1217,7 @@ struct LoomInstrumentPass : public Pass {
             ofs << "    { " << func.func_id << ", \"" << func.name << "\", "
                 << func.args.size() << ", " << func.ret_width << ", "
                 << out_arg_words(func) << ", "
+                << (func.call_at_init ? 1 : 0) << ", "
                 << "_loom_wrap_" << func.name << "_" << func.func_id << " }";
             if (i + 1 < functions.size()) ofs << ",";
             ofs << "\n";

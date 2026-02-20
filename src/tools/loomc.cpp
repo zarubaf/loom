@@ -2,7 +2,7 @@
 // loomc — Loom Compilation Driver
 //
 // Replaces bin/loom bash script.  Runs the Yosys transformation pipeline
-// (read_slang → scan_insert → loom_instrument → emu_top → write_verilog)
+// (read_slang → loom_instrument → scan_insert → emu_top → write_verilog)
 // then compiles the generated dispatch table into a shared object.
 //
 // Usage:
@@ -189,11 +189,11 @@ std::string build_yosys_script(const Options &opts,
     ys << "reset_extract -rst " << opts.rst << "\n";
     ys << "opt\n";
 
-    // Scan insert
-    ys << "scan_insert -map scan_map.pb\n";
-
-    // DPI instrument
+    // DPI instrument (before scan_insert — assigns func_ids, creates loom_en + scan_enable)
     ys << "loom_instrument -header_out loom_dpi_dispatch.c\n";
+
+    // Scan insert (after loom_instrument — builds chain, records reset DPI scan offsets)
+    ys << "scan_insert -map scan_map.pb\n";
 
     // Emulation top wrapper
     ys << "emu_top -top " << opts.top_module;

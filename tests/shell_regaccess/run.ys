@@ -7,8 +7,8 @@ hierarchy -check -top shell_regaccess
 proc
 
 reset_extract -rst rst_ni
-scan_insert
 loom_instrument
+scan_insert
 emu_top -top shell_regaccess -clk clk_i -rst rst_ni
 
 check

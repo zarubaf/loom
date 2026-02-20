@@ -179,9 +179,13 @@ struct ScanInsertPass : public Pass {
         }
         log("\n");
 
-        // Add scan ports (loom_ prefix for all generated signals)
-        RTLIL::Wire *scan_en = module->addWire(ID(loom_scan_enable), 1);
-        scan_en->port_input = true;
+        // Reuse existing loom_scan_enable wire if created by loom_instrument,
+        // otherwise create it
+        RTLIL::Wire *scan_en = module->wire(ID(loom_scan_enable));
+        if (!scan_en) {
+            scan_en = module->addWire(ID(loom_scan_enable), 1);
+            scan_en->port_input = true;
+        }
 
         RTLIL::Wire *scan_in = module->addWire(ID(loom_scan_in), 1);
         scan_in->port_input = true;
@@ -265,11 +269,12 @@ struct ScanInsertPass : public Pass {
                 log("    loom_reset_value: %s\n", rv.as_string().c_str());
             }
 
-            // Check for reset DPI call (Q wire has loom_reset_dpi_func attr)
+            // Check for reset DPI call (Q wire has loom_reset_dpi_func attr).
+            // loom_instrument has already assigned func_id and stored it as a cell attribute.
             if (q_wire && q_wire->has_attribute(ID(loom_reset_dpi_func))) {
                 std::string dpi_func_name = q_wire->get_string_attribute(ID(loom_reset_dpi_func));
 
-                // Find the corresponding $__loom_dpi_call cell
+                // Find the $__loom_dpi_call cell left by loom_instrument
                 RTLIL::Cell *dpi_cell = nullptr;
                 for (auto c : module->cells()) {
                     if (c->type == ID($__loom_dpi_call) && c->get_bool_attribute(ID(loom_dpi_reset))
@@ -280,37 +285,13 @@ struct ScanInsertPass : public Pass {
                 }
 
                 if (dpi_cell) {
-                    auto *dpi_call = scan_map.add_initial_dpi_calls();
-                    dpi_call->set_func_name(dpi_func_name);
-                    dpi_call->set_return_width(dpi_cell->getParam(ID(RET_WIDTH)).as_int());
-                    dpi_call->set_scan_offset(chain_pos);
-                    dpi_call->set_scan_width(width);
-                    dpi_call->set_arg_widths(dpi_cell->get_string_attribute(ID(loom_dpi_arg_widths)));
-                    dpi_call->set_arg_types(dpi_cell->get_string_attribute(ID(loom_dpi_arg_types)));
-                    dpi_call->set_arg_dirs(dpi_cell->get_string_attribute(ID(loom_dpi_arg_dirs)));
-
-                    // Pack constant ARGS into bytes
-                    RTLIL::SigSpec args = dpi_cell->getPort(ID(ARGS));
-                    if (args.is_fully_const()) {
-                        RTLIL::Const args_const = args.as_const();
-                        int n_words = (GetSize(args) + 31) / 32;
-                        std::string arg_bytes(n_words * 4, '\0');
-                        for (int i = 0; i < GetSize(args_const); i++) {
-                            if (args_const[i] == RTLIL::State::S1)
-                                arg_bytes[i / 8] |= (1 << (i % 8));
-                        }
-                        dpi_call->set_arg_data(arg_bytes);
-                    }
-
-                    // Copy string args
-                    for (int i = 0; ; i++) {
-                        auto key = RTLIL::IdString("\\loom_dpi_string_arg_" + std::to_string(i));
-                        if (!dpi_cell->has_attribute(key)) break;
-                        (*dpi_call->mutable_string_args())[i] = dpi_cell->get_string_attribute(key);
-                    }
-
-                    log("    Reset DPI call: %s (scan_offset=%d, scan_width=%d)\n",
-                        dpi_func_name.c_str(), chain_pos, width);
+                    auto *mapping = scan_map.add_reset_dpi_mappings();
+                    mapping->set_func_id(std::stoi(dpi_cell->get_string_attribute(ID(loom_dpi_func_id))));
+                    mapping->set_scan_offset(chain_pos);
+                    mapping->set_scan_width(width);
+                    module->remove(dpi_cell);
+                    log("    Reset DPI: func_id=%d scan[%d:%d]\n",
+                        mapping->func_id(), chain_pos, chain_pos + width - 1);
                 }
             }
 
@@ -350,43 +331,6 @@ struct ScanInsertPass : public Pass {
 
         // Update port list
         module->fixup_ports();
-
-        // Record void initial DPI calls ($__loom_dpi_call cells with loom_dpi_initial)
-        for (auto cell : module->cells()) {
-            if (cell->type != ID($__loom_dpi_call)) continue;
-            if (!cell->get_bool_attribute(ID(loom_dpi_initial))) continue;
-
-            auto *dpi_call = scan_map.add_initial_dpi_calls();
-            dpi_call->set_func_name(cell->get_string_attribute(ID(loom_dpi_func)));
-            dpi_call->set_return_width(0);
-            dpi_call->set_scan_offset(0);
-            dpi_call->set_scan_width(0);
-            dpi_call->set_arg_widths(cell->get_string_attribute(ID(loom_dpi_arg_widths)));
-            dpi_call->set_arg_types(cell->get_string_attribute(ID(loom_dpi_arg_types)));
-            dpi_call->set_arg_dirs(cell->get_string_attribute(ID(loom_dpi_arg_dirs)));
-
-            // Pack constant ARGS into bytes
-            RTLIL::SigSpec args = cell->getPort(ID(ARGS));
-            if (GetSize(args) > 0 && args.is_fully_const()) {
-                RTLIL::Const args_const = args.as_const();
-                int n_words = (GetSize(args) + 31) / 32;
-                std::string arg_bytes(n_words * 4, '\0');
-                for (int i = 0; i < GetSize(args_const); i++) {
-                    if (args_const[i] == RTLIL::State::S1)
-                        arg_bytes[i / 8] |= (1 << (i % 8));
-                }
-                dpi_call->set_arg_data(arg_bytes);
-            }
-
-            // Copy string args
-            for (int i = 0; ; i++) {
-                auto key = RTLIL::IdString("\\loom_dpi_string_arg_" + std::to_string(i));
-                if (!cell->has_attribute(key)) break;
-                (*dpi_call->mutable_string_args())[i] = cell->get_string_attribute(key);
-            }
-
-            log("  Void initial DPI call: %s\n", cell->get_string_attribute(ID(loom_dpi_func)).c_str());
-        }
 
         // Build initial scan image from accumulated reset entries
         if (!reset_entries.empty()) {

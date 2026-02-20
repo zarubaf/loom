@@ -30,6 +30,7 @@ typedef struct {
     int n_args;                     // Number of arguments
     int ret_width;                  // Return value width in bits (0 for void)
     int out_arg_words;              // Number of 32-bit output open array words (0 if none)
+    int call_at_init;               // Execute before emulation starts (initial/reset DPI)
     loom_dpi_callback_t callback;   // User-provided callback
 } loom_dpi_func_t;
 
@@ -67,6 +68,7 @@ struct DpiFunc {
     int n_args;                 // Number of arguments
     int ret_width;              // Return value width in bits (0 for void)
     int out_arg_words = 0;      // Number of 32-bit output open array words
+    bool call_at_init = false;  // Execute before emulation starts (initial/reset DPI)
     DpiCallback callback;       // User-provided callback
 };
 
@@ -94,7 +96,8 @@ public:
 
     // Register a DPI function
     void register_func(int func_id, std::string_view name, int n_args,
-                       int ret_width, int out_arg_words, DpiCallback callback);
+                       int ret_width, int out_arg_words, bool call_at_init,
+                       DpiCallback callback);
 
     // Register functions from a C-style array (for compatibility with generated code)
     template<typename T>
@@ -102,6 +105,7 @@ public:
         for (int i = 0; i < n_funcs; i++) {
             register_func(funcs[i].func_id, funcs[i].name, funcs[i].n_args,
                           funcs[i].ret_width, funcs[i].out_arg_words,
+                          funcs[i].call_at_init,
                           [cb = funcs[i].callback](std::span<const uint32_t> args,
                                                     std::span<uint32_t> out_args) {
                               return cb(args.data(), out_args.data());
@@ -124,8 +128,11 @@ public:
     uint64_t error_count() const { return error_count_; }
     size_t func_count() const { return funcs_.size(); }
 
-    // Find a function by name (for initial/reset DPI calls)
-    const DpiFunc* find_func_by_name(const std::string& name) const;
+    // Find a function by dispatch table index
+    const DpiFunc* find_func_by_id(int func_id) const;
+
+    // Access registered functions (for init DPI iteration)
+    const std::vector<DpiFunc>& funcs() const { return funcs_; }
 
     // Print service statistics
     void print_stats() const;

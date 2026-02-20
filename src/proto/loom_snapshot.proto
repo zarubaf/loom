@@ -18,24 +18,19 @@ message ScanVariable {
   bytes reset_value = 5;  // LE-packed reset value (empty = no reset / default 0)
 }
 
-// DPI call to execute at initialization time (before scan-in)
-message DpiInitCall {
-  string func_name = 1;        // DPI function name (lookup key in dispatch table)
-  bytes arg_data = 2;          // LE-packed constant arguments (uint32_t words)
-  string arg_widths = 3;       // comma-separated per-arg widths
-  string arg_types = 4;        // comma-separated arg types
-  string arg_dirs = 5;         // comma-separated arg directions
-  uint32 return_width = 6;     // 0 for void initial calls
-  uint32 scan_offset = 7;      // bit offset in scan chain (only if return_width > 0)
-  uint32 scan_width = 8;       // width of return value in scan chain
-  map<uint32, string> string_args = 9;  // index -> string value for string args
+// Reset DPI mapping: func_id → scan chain position
+// Used to inject DPI return values into the scan image before scan-in
+message ResetDpiMapping {
+  uint32 func_id = 1;       // dispatch table index
+  uint32 scan_offset = 2;   // bit position in scan chain
+  uint32 scan_width = 3;    // bit width in scan chain
 }
 
 message ScanMap {
   uint32 chain_length = 1;
   repeated ScanVariable variables = 2;
   bytes initial_scan_image = 3;  // pre-built full chain blob for scan-based init
-  repeated DpiInitCall initial_dpi_calls = 4;  // DPI calls to execute before scan-in
+  repeated ResetDpiMapping reset_dpi_mappings = 4;  // reset DPI → scan position mappings
 }
 
 // Single state snapshot (dump file)

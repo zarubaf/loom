@@ -12,7 +12,6 @@
 #include "loom_snapshot.pb.h"
 
 #include <functional>
-#include <map>
 #include <string>
 #include <vector>
 #include <atomic>
@@ -97,16 +96,13 @@ private:
     bool has_initial_image_ = false;
     bool initial_image_applied_ = false;
 
-    // Initial/reset DPI calls to execute before scan-in
-    struct InitialDpiCall {
-        std::string func_name;
-        std::vector<uint32_t> arg_words;
-        std::map<uint32_t, std::string> string_args;
-        uint32_t return_width = 0;
-        uint32_t scan_offset = 0;
-        uint32_t scan_width = 0;
+    // Reset DPI mappings: func_id → scan chain position
+    struct ResetDpiMapping {
+        uint32_t func_id;
+        uint32_t scan_offset;
+        uint32_t scan_width;
     };
-    std::vector<InitialDpiCall> initial_dpi_calls_;
+    std::vector<ResetDpiMapping> reset_dpi_mappings_;
     bool initial_dpi_executed_ = false;
 
     // Execute initial/reset DPI calls and patch scan image
