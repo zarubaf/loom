@@ -3,11 +3,18 @@ syntax = "proto3";
 package loom;
 option optimize_for = LITE_RUNTIME;
 
+// Enum member name-to-value mapping (for symbolic display)
+message EnumMember {
+  string name = 1;     // e.g. "StIdle"
+  uint64 value = 2;    // e.g. 0
+}
+
 // One per FF/register — already grouped at compile time
 message ScanVariable {
   string name = 1;     // original HDL path from hdlname attr, dot-separated
   uint32 width = 2;    // total bit width of the variable
   uint32 offset = 3;   // starting chain position (bits [offset..offset+width-1])
+  repeated EnumMember enum_members = 4;  // empty if not an enum type
 }
 
 message ScanMap {

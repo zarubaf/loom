@@ -82,6 +82,7 @@ private:
     static uint64_t extract_variable(const std::vector<uint32_t>& raw,
                                      uint32_t offset, uint32_t width);
     static std::string format_hex(uint64_t value, uint32_t width);
+    static std::string format_value(const ScanVariable& var, uint64_t value);
 
     Context& ctx_;
     DpiService& dpi_service_;

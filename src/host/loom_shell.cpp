@@ -130,6 +130,14 @@ std::string Shell::format_hex(uint64_t value, uint32_t width) {
     return buf;
 }
 
+std::string Shell::format_value(const ScanVariable& var, uint64_t value) {
+    for (const auto& mem : var.enum_members()) {
+        if (mem.value() == value)
+            return mem.name() + " (" + format_hex(value, var.width()) + ")";
+    }
+    return format_hex(value, var.width());
+}
+
 // ============================================================================
 // Command Registration
 // ============================================================================
@@ -686,7 +694,7 @@ int Shell::cmd_dump(const std::vector<std::string>& args) {
             uint64_t val = extract_variable(scan, var.offset(), var.width());
             std::printf("  %-*s [%2u] = %s\n",
                         static_cast<int>(max_name), var.name().c_str(),
-                        var.width(), format_hex(val, var.width()).c_str());
+                        var.width(), format_value(var, val).c_str());
         }
     } else {
         // Fallback: raw words
@@ -820,7 +828,7 @@ int Shell::cmd_inspect(const std::vector<std::string>& args) {
         uint64_t val = extract_variable(raw, var.offset(), var.width());
         std::printf("  %-*s [%2u] = %s\n",
                     static_cast<int>(max_name), var.name().c_str(),
-                    var.width(), format_hex(val, var.width()).c_str());
+                    var.width(), format_value(var, val).c_str());
     }
 
     return 0;

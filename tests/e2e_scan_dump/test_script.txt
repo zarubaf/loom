@@ -1,16 +1,40 @@
 # Scan dump test with DPI calls
-# Dump at reset: counter_q = 0xCAFE, DPI results all 0
-dump build/snap_reset.pb
+# Step through every FSM state one cycle at a time.
 
-# Step 5 cycles: Idle -> Add -> Notify -> Fill -> Sum -> Done
-step 5
-dump build/snap_dpi.pb
+# After reset: StIdle
+dump build/snap_idle.pb
 
-# Step 3 more cycles counting in StDone
+# StIdle -> StCallAdd
+step 1
+dump build/snap_call_add.pb
+
+# StCallAdd -> StCallNotify (dpi_add executes)
+step 1
+dump build/snap_call_notify.pb
+
+# StCallNotify -> StCallFill (dpi_notify executes)
+step 1
+dump build/snap_call_fill.pb
+
+# StCallFill -> StCallSum (dpi_fill_fixed executes)
+step 1
+dump build/snap_call_sum.pb
+
+# StCallSum -> StDone (dpi_sum_open executes)
+step 1
+dump build/snap_done.pb
+
+# 3 more cycles counting in StDone
 step 3
 dump build/snap_count.pb
 
-# Inspect the DPI snapshot
-inspect build/snap_dpi.pb
+# Inspect every snapshot
+inspect build/snap_idle.pb
+inspect build/snap_call_add.pb
+inspect build/snap_call_notify.pb
+inspect build/snap_call_fill.pb
+inspect build/snap_call_sum.pb
+inspect build/snap_done.pb
+inspect build/snap_count.pb
 
 exit

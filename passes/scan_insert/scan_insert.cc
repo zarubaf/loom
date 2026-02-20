@@ -19,6 +19,7 @@
 #include "kernel/sigtools.h"
 #include "loom_snapshot.pb.h"
 #include <fstream>
+#include <sstream>
 
 USING_YOSYS_NAMESPACE
 PRIVATE_NAMESPACE_BEGIN
@@ -223,6 +224,25 @@ struct ScanInsertPass : public Pass {
             var->set_name(full_name);
             var->set_width(width);
             var->set_offset(chain_pos);
+
+            // Propagate enum member metadata from wire attribute to protobuf
+            for (int i = 0; i < GetSize(q); i++) {
+                RTLIL::SigBit bit = q[i];
+                if (bit.wire && bit.wire->has_attribute(ID(loom_enum_members))) {
+                    std::string members_str = bit.wire->get_string_attribute(ID(loom_enum_members));
+                    // Parse "Name:Val,Name:Val,..." format
+                    std::istringstream stream(members_str);
+                    std::string token;
+                    while (std::getline(stream, token, ',')) {
+                        auto colon = token.find(':');
+                        if (colon == std::string::npos) continue;
+                        auto *em = var->add_enum_members();
+                        em->set_name(token.substr(0, colon));
+                        em->set_value(std::stoull(token.substr(colon + 1)));
+                    }
+                    break;
+                }
+            }
 
             chain_pos += width;
 
