@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+# Test script for reset_extract pass
+#
+# Verifies:
+#   1. All $adff/$adffe cells are stripped to $dff/$dffe
+#   2. After opt: sync reset cells are also cleaned up (dead logic)
+#   3. Module has loom_resets_extracted attribute
+#   4. rst_ni port is removed
+#   5. Design is structurally valid after transformation
+
+read_slang reset_extract_test.sv
+hierarchy -top reset_extract_test
+proc
+opt
+
+# Before: should have $adff and $sdff cells
+stat
+
+# Run reset_extract — strips async resets, ties rst_ni to inactive, removes port
+reset_extract -rst rst_ni
+
+# After reset_extract (before opt): async resets stripped
+select -assert-none t:$adff t:$adffe t:$dffsr t:$dffsre
+
+# Module attribute
+select -assert-any A:loom_resets_extracted=1
+
+# Propagate constant rst_ni=1 through sync-reset logic
+opt
+
+# After opt: sync-reset FFs should be simplified to plain $dff/$dffe
+# (rst_ni is constant 1, so sync reset condition is always false)
+select -assert-none t:$sdff t:$sdffe t:$sdffce
+
+# Only plain $dff/$dffe remain
+select -assert-any t:$dff
+
+# rst_ni should no longer be a port
+select -assert-none i:rst_ni
+
+# Verify design integrity
+check -assert
+
+stat
+write_verilog reset_extract_output.v

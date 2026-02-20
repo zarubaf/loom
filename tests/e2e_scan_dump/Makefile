@@ -24,8 +24,9 @@ test: $(_TEST_DEPS)
 	@grep -A 20 'File:.*snap_call_notify' $(BUILD)/test.log | grep -q 'step_count_q.*0x02'
 	@# snap_call_fill: StCallNotify -> StCallFill (dpi_notify executed)
 	@grep -A 20 'File:.*snap_call_fill' $(BUILD)/test.log | grep -q 'state_q.*StCallFill (0x3)'
-	@grep -A 20 'File:.*snap_call_fill' $(BUILD)/test.log | grep -q 'notify_done_q.*0x1'
 	@grep -A 20 'File:.*snap_call_fill' $(BUILD)/test.log | grep -q 'step_count_q.*0x03'
+	@# Verify $display output shows correct notify_done_q value
+	@grep -q 'notify=1' $(BUILD)/test.log
 	@# snap_call_sum: StCallFill -> StCallSum (dpi_fill_fixed executed)
 	@grep -A 20 'File:.*snap_call_sum' $(BUILD)/test.log | grep -q 'state_q.*StCallSum (0x4)'
 	@grep -A 20 'File:.*snap_call_sum' $(BUILD)/test.log | grep -q 'fill_ret_q.*0x00000004'

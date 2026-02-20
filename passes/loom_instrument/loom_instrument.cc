@@ -747,7 +747,8 @@ struct LoomInstrumentPass : public Pass {
         for (const auto &arg : func.args) {
             if (arg.type == "string") continue;
             if (arg.is_array && arg.direction == "output") continue;
-            w += arg.width;
+            // Each arg occupies a 32-bit word slot (matching regfile layout)
+            w += ((arg.width + 31) / 32) * 32;
         }
         return w;
     }
@@ -796,7 +797,9 @@ struct LoomInstrumentPass : public Pass {
         // Helper: split a function's args_sig into input-only portion and
         // connect output array wires from the result bus.
         auto connect_func_args_result = [&](const DpiFunction &func) {
-            // Build input-only args signal (skip output arrays)
+            // Build input-only args signal (skip output arrays).
+            // Each arg is zero-padded to a 32-bit word boundary to match
+            // the regfile's word-addressed layout and host dispatch.
             RTLIL::SigSpec input_args;
             int bit_offset = 0;
             for (const auto &arg : func.args) {
@@ -806,6 +809,9 @@ struct LoomInstrumentPass : public Pass {
                     continue;
                 }
                 input_args.append(func.args_sig.extract(bit_offset, arg.width));
+                int pad = ((arg.width + 31) / 32) * 32 - arg.width;
+                if (pad > 0)
+                    input_args.append(RTLIL::SigSpec(RTLIL::State::S0, pad));
                 bit_offset += arg.width;
             }
 

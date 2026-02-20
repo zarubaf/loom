@@ -138,11 +138,16 @@ struct EmuTopPass : public Pass {
             }
         }
 
-        // Ensure clock and reset are input ports on the DUT.
+        bool resets_extracted = dut->get_bool_attribute(ID(loom_resets_extracted));
+
+        // Ensure clock (and reset, if not extracted) are input ports on the DUT.
         // This handles the "tbx clkgen" pattern where the clock is driven by
         // an initial block (skipped by --ignore-initial) and may have been
         // optimized away or left as an internal wire.
-        for (auto &sig_name : {clk_name, rst_name}) {
+        std::vector<std::string> ensure_ports = {clk_name};
+        if (!resets_extracted)
+            ensure_ports.push_back(rst_name);
+        for (auto &sig_name : ensure_ports) {
             RTLIL::Wire *w = dut->wire(RTLIL::escape_id(sig_name));
             if (!w) {
                 // Wire was optimized away — recreate as input port
@@ -495,6 +500,8 @@ struct EmuTopPass : public Pass {
         RTLIL::Cell *dut_inst = wrapper->addCell(ID(u_dut), dut->name);
 
         // Connect DUT ports
+        bool dut_has_finish = false;
+        bool dut_has_dpi = false;
         for (auto wire : dut->wires()) {
             if (!wire->port_input && !wire->port_output)
                 continue;
@@ -507,7 +514,7 @@ struct EmuTopPass : public Pass {
                 continue;
             }
 
-            // Handle reset - connect to dut_rst_n from emu_ctrl
+            // Handle reset — port only exists when resets were NOT extracted
             if (wire->name == RTLIL::escape_id(rst_name)) {
                 dut_inst->setPort(wire->name, RTLIL::SigSpec(dut_rst_n));
                 continue;
@@ -523,6 +530,7 @@ struct EmuTopPass : public Pass {
             // Handle DPI signals
             if (wire_name.find("loom_dpi_valid") != std::string::npos) {
                 dut_inst->setPort(wire->name, RTLIL::SigSpec(dut_dpi_valid_w));
+                dut_has_dpi = true;
                 continue;
             }
             if (wire_name.find("loom_dpi_func_id") != std::string::npos) {
@@ -545,6 +553,7 @@ struct EmuTopPass : public Pass {
             // Handle finish signal from DUT
             if (wire_name.find("loom_finish_o") != std::string::npos) {
                 dut_inst->setPort(wire->name, RTLIL::SigSpec(dut_finish));
+                dut_has_finish = true;
                 continue;
             }
 
@@ -573,6 +582,16 @@ struct EmuTopPass : public Pass {
                 dut_inst->setPort(wire->name, RTLIL::SigSpec(unused));
                 log("  Leaving DUT output '%s' unconnected\n", wire_name.c_str());
             }
+        }
+
+        // Tie off undriven DUT output signals (prevents random init issues)
+        if (!dut_has_finish) {
+            wrapper->connect(RTLIL::SigSpec(dut_finish), RTLIL::SigSpec(RTLIL::State::S0));
+        }
+        if (!dut_has_dpi) {
+            wrapper->connect(RTLIL::SigSpec(dut_dpi_valid_w), RTLIL::SigSpec(RTLIL::State::S0));
+            wrapper->connect(RTLIL::SigSpec(dut_dpi_func_id), RTLIL::SigSpec(RTLIL::State::S0, 8));
+            wrapper->connect(RTLIL::SigSpec(dut_dpi_args), RTLIL::SigSpec(RTLIL::State::S0, dut_args_width));
         }
 
         // =========================================================================

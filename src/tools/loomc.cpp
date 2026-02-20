@@ -185,6 +185,10 @@ std::string build_yosys_script(const Options &opts,
     ys << "flatten\n";
     ys << "opt\n";
 
+    // Extract reset values, strip async resets, remove reset port
+    ys << "reset_extract -rst " << opts.rst << "\n";
+    ys << "opt\n";
+
     // Scan insert
     ys << "scan_insert -map scan_map.pb\n";
 

@@ -15,7 +15,8 @@ VERILATOR_FLAGS := \
     --binary --timing -Wall -Wno-fatal \
     -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM \
     -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-BLKSEQ -Wno-TIMESCALEMOD \
-    --trace-fst -CFLAGS "-g -O0" -LDFLAGS "-lpthread"
+    --trace-fst --x-initial unique \
+    -CFLAGS "-g -O0" -LDFLAGS "-lpthread"
 
 # Infrastructure RTL (adapt for build tree vs install tree)
 ifneq ($(wildcard $(LOOM_HOME)/src/rtl),)

@@ -192,6 +192,10 @@ struct ScanInsertPass : public Pass {
         // Track the previous Q output to chain to next FF
         RTLIL::SigSpec prev_q = RTLIL::SigSpec(scan_in);
 
+        // Accumulate reset entries for building the initial scan image
+        struct ResetEntry { int offset; int width; RTLIL::Const value; };
+        std::vector<ResetEntry> reset_entries;
+
         // Process each flip-flop
         for (auto dff : dffs) {
             // Get the D and Q signals
@@ -203,10 +207,12 @@ struct ScanInsertPass : public Pass {
 
             // Resolve the HDL name via the Q output wire's hdlname attribute
             std::string var_name;
+            RTLIL::Wire *q_wire = nullptr;
             for (int i = 0; i < GetSize(q); i++) {
                 RTLIL::SigBit bit = q[i];
                 if (bit.wire) {
                     var_name = get_hdl_name(bit.wire);
+                    q_wire = bit.wire;
                     break;
                 }
             }
@@ -242,6 +248,21 @@ struct ScanInsertPass : public Pass {
                     }
                     break;
                 }
+            }
+
+            // Check for loom_reset_value attribute (set by reset_extract pass)
+            if (q_wire && q_wire->has_attribute(ID(loom_reset_value))) {
+                RTLIL::Const rv = q_wire->attributes.at(ID(loom_reset_value));
+                // Store in protobuf: pack as LE bytes
+                int rv_bytes = (width + 7) / 8;
+                std::string rv_packed(rv_bytes, '\0');
+                for (int i = 0; i < width && i < GetSize(rv); i++) {
+                    if (rv[i] == RTLIL::State::S1)
+                        rv_packed[i / 8] |= (1 << (i % 8));
+                }
+                var->set_reset_value(rv_packed);
+                reset_entries.push_back({chain_pos, width, rv});
+                log("    loom_reset_value: %s\n", rv.as_string().c_str());
             }
 
             chain_pos += width;
@@ -280,6 +301,30 @@ struct ScanInsertPass : public Pass {
 
         // Update port list
         module->fixup_ports();
+
+        // Build initial scan image from accumulated reset entries
+        if (!reset_entries.empty()) {
+            int n_words = (chain_pos + 31) / 32;
+            std::vector<uint32_t> init_words(n_words, 0);
+            for (auto &e : reset_entries) {
+                for (int i = 0; i < e.width && i < GetSize(e.value); i++) {
+                    if (e.value[i] == RTLIL::State::S1)
+                        init_words[(e.offset + i) / 32] |= (1u << ((e.offset + i) % 32));
+                }
+            }
+            // Pack as LE bytes
+            int n_bytes = n_words * 4;
+            std::string img(n_bytes, '\0');
+            for (int i = 0; i < n_words; i++) {
+                img[i * 4 + 0] = static_cast<char>((init_words[i] >>  0) & 0xFF);
+                img[i * 4 + 1] = static_cast<char>((init_words[i] >>  8) & 0xFF);
+                img[i * 4 + 2] = static_cast<char>((init_words[i] >> 16) & 0xFF);
+                img[i * 4 + 3] = static_cast<char>((init_words[i] >> 24) & 0xFF);
+            }
+            scan_map.set_initial_scan_image(img);
+            log("  Built initial scan image (%d bytes, %zu reset entries)\n",
+                n_bytes, reset_entries.size());
+        }
 
         // Stamp chain length on the module so emu_top can read it
         module->set_string_attribute(ID(loom_scan_chain_length), std::to_string(chain_pos));

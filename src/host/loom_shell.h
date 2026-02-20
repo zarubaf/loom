@@ -92,6 +92,9 @@ private:
     bool exit_requested_ = false;
     ScanMap scan_map_;
     bool scan_map_loaded_ = false;
+    std::vector<uint32_t> initial_scan_image_;
+    bool has_initial_image_ = false;
+    bool initial_image_applied_ = false;
 };
 
 } // namespace loom

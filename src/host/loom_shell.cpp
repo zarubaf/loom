@@ -94,6 +94,22 @@ void Shell::load_scan_map(const std::string& path) {
     scan_map_loaded_ = true;
     logger.info("Loaded scan map: %d variables, %u bits",
                 scan_map_.variables_size(), scan_map_.chain_length());
+
+    // Unpack initial scan image if present
+    const auto& img = scan_map_.initial_scan_image();
+    if (!img.empty()) {
+        size_t n_words = img.size() / 4;
+        initial_scan_image_.resize(n_words);
+        for (size_t i = 0; i < n_words; i++) {
+            initial_scan_image_[i] =
+                static_cast<uint8_t>(img[i * 4 + 0])
+              | (static_cast<uint8_t>(img[i * 4 + 1]) << 8)
+              | (static_cast<uint8_t>(img[i * 4 + 2]) << 16)
+              | (static_cast<uint8_t>(img[i * 4 + 3]) << 24);
+        }
+        has_initial_image_ = true;
+        logger.info("Initial scan image: %zu words", n_words);
+    }
 }
 
 // ============================================================================
@@ -471,7 +487,15 @@ int Shell::cmd_run(const std::vector<std::string>& args) {
     }
 
     if (state_result.value() == State::Idle || state_result.value() == State::Frozen) {
-        ctx_.dut_reset(false);
+        // Scan-based init: scan in initial image before first run
+        if (has_initial_image_ && !initial_image_applied_) {
+            logger.info("Scanning in initial state...");
+            ctx_.scan_write_data(initial_scan_image_);
+            ctx_.scan_restore();
+            initial_image_applied_ = true;
+        } else if (!has_initial_image_) {
+            ctx_.dut_reset(false);
+        }
         auto rc = ctx_.start();
         if (!rc.ok()) {
             logger.error("Failed to start emulation");
@@ -572,8 +596,15 @@ int Shell::cmd_step(const std::vector<std::string>& args) {
         n = static_cast<uint32_t>(std::stoul(args[1]));
     }
 
-    // Ensure DUT reset is released
-    ctx_.dut_reset(false);
+    // Scan-based init on first step, or release DUT reset (legacy)
+    if (has_initial_image_ && !initial_image_applied_) {
+        logger.info("Scanning in initial state...");
+        ctx_.scan_write_data(initial_scan_image_);
+        ctx_.scan_restore();
+        initial_image_applied_ = true;
+    } else if (!has_initial_image_) {
+        ctx_.dut_reset(false);
+    }
 
     // SW-based step: set time_cmp = time + N, then CMD_START
     auto rc = ctx_.step(n);
@@ -654,8 +685,16 @@ int Shell::cmd_dump(const std::vector<std::string>& args) {
         return 0;
     }
 
-    // Ensure DUT reset is released (scan chain doesn't shift while reset is asserted)
-    ctx_.dut_reset(false);
+    // Scan-based init: apply initial image if not yet applied
+    if (has_initial_image_ && !initial_image_applied_) {
+        logger.info("Scanning in initial state...");
+        ctx_.scan_write_data(initial_scan_image_);
+        ctx_.scan_restore();
+        initial_image_applied_ = true;
+    } else if (!has_initial_image_) {
+        // Legacy: release DUT reset
+        ctx_.dut_reset(false);
+    }
 
     // Stop if running
     auto st = ctx_.get_state();
@@ -932,12 +971,21 @@ int Shell::cmd_deposit_script(const std::vector<std::string>& args) {
 // ============================================================================
 
 int Shell::cmd_reset(const std::vector<std::string>& /*args*/) {
-    auto rc = ctx_.dut_reset(true);
-    if (!rc.ok()) {
-        logger.error("Failed to assert reset");
-        return -1;
+    if (has_initial_image_) {
+        // Scan-based reset: re-scan the initial image
+        ctx_.stop();
+        ctx_.scan_write_data(initial_scan_image_);
+        ctx_.scan_restore();
+        initial_image_applied_ = true;
+        logger.info("DUT reset via scan chain");
+    } else {
+        auto rc = ctx_.dut_reset(true);
+        if (!rc.ok()) {
+            logger.error("Failed to assert reset");
+            return -1;
+        }
+        logger.info("DUT reset asserted");
     }
-    logger.info("DUT reset asserted");
     return 0;
 }
 

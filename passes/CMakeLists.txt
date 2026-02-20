@@ -13,3 +13,6 @@ add_subdirectory(emu_top)
 
 # mem_shadow pass - shadow port insertion for memories
 add_subdirectory(mem_shadow)
+
+# reset_extract pass - extract reset values, strip async resets
+add_subdirectory(reset_extract)

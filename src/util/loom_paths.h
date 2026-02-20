@@ -37,6 +37,7 @@ struct LoomPaths {
 
     // Plugin paths (may be scattered in build tree)
     fs::path slang_plugin;
+    fs::path reset_extract_plugin;
     fs::path scan_insert_plugin;
     fs::path loom_instrument_plugin;
     fs::path emu_top_plugin;
@@ -90,6 +91,9 @@ struct LoomPaths {
             paths.yosys_bin = paths.root / "build" / "yosys" / "bin" / "yosys";
             paths.slang_plugin =
                 paths.root / "build" / "yosys-slang" / "slang.so";
+            paths.reset_extract_plugin =
+                paths.root / "build" / "passes" / "reset_extract" /
+                "reset_extract.so";
             paths.scan_insert_plugin =
                 paths.root / "build" / "passes" / "scan_insert" /
                 "scan_insert.so";
@@ -110,6 +114,7 @@ struct LoomPaths {
             paths.yosys_bin = paths.root / "bin" / "yosys";
             paths.plugin_dir = paths.root / "lib" / "loom";
             paths.slang_plugin = paths.plugin_dir / "slang.so";
+            paths.reset_extract_plugin = paths.plugin_dir / "reset_extract.so";
             paths.scan_insert_plugin = paths.plugin_dir / "scan_insert.so";
             paths.loom_instrument_plugin =
                 paths.plugin_dir / "loom_instrument.so";
@@ -130,6 +135,8 @@ struct LoomPaths {
         std::vector<std::string> args;
         args.push_back("-m");
         args.push_back(slang_plugin.string());
+        args.push_back("-m");
+        args.push_back(reset_extract_plugin.string());
         args.push_back("-m");
         args.push_back(scan_insert_plugin.string());
         args.push_back("-m");

@@ -15,11 +15,13 @@ message ScanVariable {
   uint32 width = 2;    // total bit width of the variable
   uint32 offset = 3;   // starting chain position (bits [offset..offset+width-1])
   repeated EnumMember enum_members = 4;  // empty if not an enum type
+  bytes reset_value = 5;  // LE-packed reset value (empty = no reset / default 0)
 }
 
 message ScanMap {
   uint32 chain_length = 1;
   repeated ScanVariable variables = 2;
+  bytes initial_scan_image = 3;  // pre-built full chain blob for scan-based init
 }
 
 // Single state snapshot (dump file)

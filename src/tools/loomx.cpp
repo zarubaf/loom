@@ -264,7 +264,8 @@ int main(int argc, char **argv) {
         if (sim_pid == 0) {
             // Child: exec simulation with plusargs
             std::vector<std::string> sim_args = {
-                sim_bin, "+socket=" + opts.socket_path
+                sim_bin, "+socket=" + opts.socket_path,
+                "+verilator+rand+reset+2"
             };
             if (!opts.timeout.empty())
                 sim_args.push_back("+timeout=" + opts.timeout);

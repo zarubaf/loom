@@ -259,7 +259,7 @@ module xlnx_xdma (
     // Shutdown handling
     // =========================================================================
     always @(posedge axi_aclk) begin
-        if (bfm_shutdown) begin
+        if (axi_aresetn && bfm_shutdown) begin
             $display("[xdma_bfm] Shutdown complete, ending simulation");
             // Let a few cycles elapse so Verilator can flush the trace
             repeat (4) @(posedge axi_aclk);

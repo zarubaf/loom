@@ -35,6 +35,26 @@ function(add_loom_instrument_test TEST_NAME)
     )
 endfunction()
 
+# Helper function for reset_extract tests (uses slang + reset_extract)
+function(add_reset_extract_test TEST_NAME)
+    set(TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/${TEST_NAME})
+    add_test(
+        NAME yosys_${TEST_NAME}
+        COMMAND ${YOSYS_BIN}
+            -m ${YOSYS_SLANG_PLUGIN}
+            -m ${CMAKE_BINARY_DIR}/passes/reset_extract/reset_extract.so
+            -s ${TEST_DIR}/run.ys
+        WORKING_DIRECTORY ${TEST_DIR}
+    )
+    set_tests_properties(yosys_${TEST_NAME} PROPERTIES
+        DEPENDS "yosys_ext;yosys_slang_ext;reset_extract"
+        TIMEOUT 60
+    )
+endfunction()
+
+# Reset extract test
+add_reset_extract_test(reset_extract)
+
 # Register Yosys script tests
 add_yosys_test(scan_basic)
 add_yosys_test(scan_equiv)
@@ -65,6 +85,7 @@ function(add_emu_top_test TEST_NAME)
         NAME yosys_${TEST_NAME}
         COMMAND ${YOSYS_BIN}
             -m ${YOSYS_SLANG_PLUGIN}
+            -m ${CMAKE_BINARY_DIR}/passes/reset_extract/reset_extract.so
             -m ${CMAKE_BINARY_DIR}/passes/scan_insert/scan_insert.so
             -m ${CMAKE_BINARY_DIR}/passes/loom_instrument/loom_instrument.so
             -m ${CMAKE_BINARY_DIR}/passes/emu_top/emu_top.so
@@ -72,7 +93,7 @@ function(add_emu_top_test TEST_NAME)
         WORKING_DIRECTORY ${TEST_DIR}
     )
     set_tests_properties(yosys_${TEST_NAME} PROPERTIES
-        DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;loom_instrument;emu_top"
+        DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top"
         TIMEOUT 60
     )
 endfunction()
@@ -117,7 +138,7 @@ add_test(NAME e2e_dpi_open_array
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/dpi_open_array
 )
 set_tests_properties(e2e_dpi_open_array PROPERTIES
-    DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
+    DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
     TIMEOUT 120
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
@@ -128,7 +149,7 @@ add_test(NAME e2e_dpi_fixed_array
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/dpi_fixed_array
 )
 set_tests_properties(e2e_dpi_fixed_array PROPERTIES
-    DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
+    DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
     TIMEOUT 120
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
@@ -139,7 +160,7 @@ add_test(NAME e2e_dpi_test
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/e2e
 )
 set_tests_properties(e2e_dpi_test PROPERTIES
-    DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
+    DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
     TIMEOUT 120
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
@@ -168,7 +189,7 @@ add_test(NAME e2e_scan_dump
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/e2e_scan_dump
 )
 set_tests_properties(e2e_scan_dump PROPERTIES
-    DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
+    DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
     TIMEOUT 120
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
@@ -179,7 +200,7 @@ add_test(NAME e2e_shell_regaccess
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/shell_regaccess
 )
 set_tests_properties(e2e_shell_regaccess PROPERTIES
-    DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
+    DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
     TIMEOUT 120
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
