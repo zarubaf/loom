@@ -1,16 +1,16 @@
-# Scan dump test script
-# Dump at reset: counter_q = 0xCAFE, step_count_q = 0x00
-dump build/snap0.pb
+# Scan dump test with DPI calls
+# Dump at reset: counter_q = 0xCAFE, DPI results all 0
+dump build/snap_reset.pb
 
-# Step 4 cycles from reset: counter_q = 0xCAFE + 4 = 0xCB02
-step 4
-dump build/snap4.pb
+# Step 5 cycles: Idle -> Add -> Notify -> Fill -> Sum -> Done
+step 5
+dump build/snap_dpi.pb
 
-# Step 2 more cycles: counter_q = 0xCB02 + 2 = 0xCB04
-step 2
-dump build/snap6.pb
+# Step 3 more cycles counting in StDone
+step 3
+dump build/snap_count.pb
 
-# Inspect the first snapshot offline
-inspect build/snap4.pb
+# Inspect the DPI snapshot
+inspect build/snap_dpi.pb
 
 exit
