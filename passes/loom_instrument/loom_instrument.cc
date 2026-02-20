@@ -81,9 +81,6 @@ struct LoomInstrumentPass : public Pass {
         log("IMPORTANT: DPI calls must only appear in clocked (always_ff) blocks.\n");
         log("\n");
         log("Options:\n");
-        log("    -json_out <file>\n");
-        log("        Write DPI metadata to JSON file.\n");
-        log("\n");
         log("    -header_out <file>\n");
         log("        Write C header file with DPI function prototypes.\n");
         log("        Users implement these functions for host-side dispatch.\n");
@@ -135,17 +132,12 @@ struct LoomInstrumentPass : public Pass {
         log_header(design, "Executing LOOM_INSTRUMENT pass.\n");
 
         bool gen_wrapper = false;
-        std::string json_out_path;
         std::string header_out_path;
 
         size_t argidx;
         for (argidx = 1; argidx < args.size(); argidx++) {
             if (args[argidx] == "-gen_wrapper") {
                 gen_wrapper = true;
-                continue;
-            }
-            if (args[argidx] == "-json_out" && argidx + 1 < args.size()) {
-                json_out_path = args[++argidx];
                 continue;
             }
             if (args[argidx] == "-header_out" && argidx + 1 < args.size()) {
@@ -320,10 +312,6 @@ struct LoomInstrumentPass : public Pass {
 
         if (gen_wrapper && !dpi_functions.empty()) {
             generate_host_wrapper(dpi_functions);
-        }
-
-        if (!json_out_path.empty() && !dpi_functions.empty()) {
-            write_json_metadata(dpi_functions, json_out_path);
         }
 
         if (!header_out_path.empty()) {
@@ -956,67 +944,6 @@ struct LoomInstrumentPass : public Pass {
                 addr + 0x04 + ((func.arg_width + 31) / 32) * 4, func.ret_width);
             log("\n");
         }
-    }
-
-    void write_json_metadata(const std::vector<DpiFunction> &functions, const std::string &path) {
-        std::ofstream ofs(path);
-        if (!ofs.is_open()) {
-            log_error("Cannot open JSON output file: %s\n", path.c_str());
-            return;
-        }
-
-        ofs << "{\n";
-        ofs << "  \"mailbox_base\": \"0x" << std::hex << LOOM_MAILBOX_BASE << "\",\n";
-        ofs << "  \"dpi_base\": \"0x" << LOOM_DPI_BASE << "\",\n";
-        ofs << "  \"func_block_size\": " << std::dec << FUNC_BLOCK_ALIGN << ",\n";
-        ofs << "  \"dpi_functions\": [\n";
-
-        for (size_t i = 0; i < functions.size(); i++) {
-            const auto &func = functions[i];
-            int base_addr = LOOM_DPI_BASE + func.func_id * FUNC_BLOCK_ALIGN;
-
-            ofs << "    {\n";
-            ofs << "      \"id\": " << func.func_id << ",\n";
-            ofs << "      \"name\": \"" << func.name << "\",\n";
-            ofs << "      \"base_addr\": \"0x" << std::hex << base_addr << std::dec << "\",\n";
-
-            if (func.ret_width > 0) {
-                ofs << "      \"return\": {\n";
-                ofs << "        \"type\": \"" << func.ret_type << "\",\n";
-                ofs << "        \"width\": " << func.ret_width << "\n";
-                ofs << "      },\n";
-            } else {
-                ofs << "      \"return\": null,\n";
-            }
-
-            ofs << "      \"args\": [\n";
-            for (size_t j = 0; j < func.args.size(); j++) {
-                const auto &arg = func.args[j];
-                ofs << "        {\n";
-                ofs << "          \"name\": \"" << arg.name << "\",\n";
-                ofs << "          \"direction\": \"" << arg.direction << "\",\n";
-                ofs << "          \"type\": \"" << arg.type << "\",\n";
-                ofs << "          \"width\": " << arg.width;
-                if (!arg.string_value.empty()) {
-                    ofs << ",\n          \"value\": \"" << arg.string_value << "\"";
-                }
-                ofs << "\n";
-                ofs << "        }";
-                if (j + 1 < func.args.size()) ofs << ",";
-                ofs << "\n";
-            }
-            ofs << "      ]\n";
-
-            ofs << "    }";
-            if (i + 1 < functions.size()) ofs << ",";
-            ofs << "\n";
-        }
-
-        ofs << "  ]\n";
-        ofs << "}\n";
-
-        ofs.close();
-        log("Wrote DPI metadata to: %s\n", path.c_str());
     }
 
     // Map SV/DPI type to C type

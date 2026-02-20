@@ -193,8 +193,7 @@ std::string build_yosys_script(const Options &opts,
     ys << "scan_insert -map scan_map.pb\n";
 
     // DPI instrument
-    ys << "loom_instrument -json_out dpi_meta.json"
-       << " -header_out loom_dpi_dispatch.c\n";
+    ys << "loom_instrument -header_out loom_dpi_dispatch.c\n";
 
     // Emulation top wrapper
     ys << "emu_top -top " << opts.top_module;
@@ -258,7 +257,7 @@ int main(int argc, char **argv) {
         args.push_back(script_path.string());
 
         // Run Yosys with CWD = work directory so relative output paths
-        // (transformed.v, dpi_meta.json, etc.) land in the right place.
+        // (transformed.v, scan_map.pb, etc.) land in the right place.
         int rc = run(args, work.string());
         if (rc != 0) {
             logger.error("Yosys failed (exit %d)", rc);
@@ -328,7 +327,6 @@ int main(int argc, char **argv) {
     logger.info("Done. Work directory: %s", work.c_str());
     logger.info("  transformed.v");
     logger.info("  loom_dpi_dispatch.so");
-    logger.info("  dpi_meta.json");
     logger.info("  scan_map.pb");
 
     return 0;
