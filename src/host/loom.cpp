@@ -135,11 +135,6 @@ Result<uint64_t> Context::get_cycle_count() {
     return (static_cast<uint64_t>(hi.value()) << 32) | lo.value();
 }
 
-Result<void> Context::dut_reset(bool assert_reset) {
-    uint32_t val = assert_reset ? 0x1 : 0x2;
-    return write32(addr::EmuCtrl + reg::DutReset, val);
-}
-
 Result<void> Context::finish(int exit_code) {
     uint32_t val = 0x01 | ((exit_code & 0xFF) << 8);
     return write32(addr::EmuCtrl + reg::Finish, val);

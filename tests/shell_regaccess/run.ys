@@ -6,6 +6,7 @@ read_slang --loom shell_regaccess.sv
 hierarchy -check -top shell_regaccess
 proc
 
+reset_extract -rst rst_ni
 scan_insert
 loom_instrument
 emu_top -top shell_regaccess -clk clk_i -rst rst_ni

@@ -178,6 +178,78 @@ dpi_write_arg(func_id, i, v)  → write output array data to ARG registers
 dpi_complete(func_id, result) → write RESULT_LO/HI + CONTROL(set_done)
 ```
 
+## Initial and Reset DPI Calls
+
+DPI calls can appear in two non-runtime contexts that Loom handles specially:
+
+### Void DPI calls in `initial` blocks
+
+```systemverilog
+initial begin
+    init_setup("config.txt");  // side-effect only, no return value used
+end
+```
+
+These execute at simulation t=0 for side effects (opening files, initializing
+state). The frontend (`initial_eval.cc`) captures these during constant
+evaluation, recording the function name and compile-time constant arguments.
+A `$__loom_dpi_call` cell is created with `loom_dpi_initial=true`.
+
+**Pipeline:**
+- `scan_insert` records a `DpiInitCall` entry (return_width=0) in `scan_map.pb`
+- `loom_instrument` adds the function to the dispatch table but creates no
+  hardware bridge (the cell is removed)
+- At runtime, the host executes the call before scanning in the initial image
+
+### DPI calls in reset blocks
+
+```systemverilog
+always_ff @(posedge clk_i or negedge rst_ni)
+    if (!rst_ni) reg_q <= get_init_val(42);
+    else         reg_q <= reg_q + 1;
+```
+
+These provide DPI-computed initial values for registers. Yosys represents them
+as `$aldff`/`$aldffe` cells where the AD (async data) port is driven by a
+DPI call result.
+
+**Pipeline:**
+- `reset_extract` traces the AD port to the `$__loom_dpi_call` cell, marks it
+  with `loom_dpi_reset=true`, stores `loom_reset_dpi_func` on the Q wire, and
+  strips the cell to `$dff`/`$dffe`
+- `scan_insert` records a `DpiInitCall` with the FF's scan chain offset and width
+- `loom_instrument` adds the function to the dispatch table (no hardware bridge)
+- At runtime, the host calls the DPI function, then patches the return value
+  into the scan image at the recorded bit offset before scanning in
+
+### Error case: DPI with used result in `initial` block
+
+```systemverilog
+initial begin
+    x = get_value();  // ERROR: result assigned to variable
+end
+```
+
+This is unsupported because there is no scan chain target for the return value
+(unlike the reset block case where the target FF is known). The frontend
+produces an error: "DPI call with used result in initial block is not supported."
+
+### `DpiInitCall` protobuf message
+
+Stored in `ScanMap.initial_dpi_calls`:
+
+| Field          | Type              | Description                              |
+| -------------- | ----------------- | ---------------------------------------- |
+| `func_name`    | string            | DPI function name (dispatch table key)   |
+| `arg_data`     | bytes             | LE-packed constant arguments             |
+| `arg_widths`   | string            | Comma-separated per-arg bit widths       |
+| `arg_types`    | string            | Comma-separated arg types                |
+| `arg_dirs`     | string            | Comma-separated arg directions           |
+| `return_width` | uint32            | 0 for void initial calls                 |
+| `scan_offset`  | uint32            | Bit offset in scan chain (reset DPI)     |
+| `scan_width`   | uint32            | Width of return value in scan chain      |
+| `string_args`  | map<uint32,string>| Index → compile-time string value        |
+
 ## `$print` → DPI Transformation
 
 `$display`/`$write` cells are converted to builtin DPI calls:

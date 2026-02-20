@@ -11,6 +11,9 @@ proc
 log "=== Before transformation ==="
 stat
 
+# Run reset extraction (strip async resets, remove reset port)
+reset_extract -rst rst
+
 # Run scan insertion
 scan_insert
 

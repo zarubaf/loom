@@ -17,21 +17,21 @@
 //   0x04  EMU_CONTROL      W     Command register
 //   0x08  EMU_CYCLE_LO     R     DUT cycle counter [31:0]
 //   0x0C  EMU_CYCLE_HI     R     DUT cycle counter [63:32]
-//   0x14  EMU_CLK_DIV      W     Clock divider (0 = full speed)
-//   0x18  DUT_RESET_CTRL   W     Bit 0: assert reset, Bit 1: release reset
-//   0x20  N_DPI_FUNCS      R     Number of DPI functions
-//   0x24  N_MEMORIES       R     Number of shadow-ported memories
-//   0x28  N_SCAN_CHAINS    R     Number of scan chains
-//   0x2C  TOTAL_SCAN_BITS  R     Total scan chain length
-//   0x34  DESIGN_ID        R     Design CRC32 (version check)
-//   0x38  LOOM_VERSION     R     Toolchain version
-//   0x40  IRQ_STATUS       R     Aggregated IRQ status
-//   0x44  IRQ_ENABLE       W     Aggregated IRQ enable
-//   0x4C  EMU_FINISH       RW    Finish request: [0]=req, [15:8]=exit_code
-//   0x50  EMU_TIME_LO      R     DUT time counter [31:0]
-//   0x54  EMU_TIME_HI      R     DUT time counter [63:32]
-//   0x58  EMU_TIME_CMP_LO  RW    Time compare [31:0]
-//   0x5C  EMU_TIME_CMP_HI  RW    Time compare [63:32]
+//   0x10  EMU_CLK_DIV      W     Clock divider (0 = full speed)
+//   0x14  N_DPI_FUNCS      R     Number of DPI functions
+//   0x18  N_MEMORIES       R     Number of shadow-ported memories
+//   0x1C  N_SCAN_CHAINS    R     Number of scan chains
+//   0x20  TOTAL_SCAN_BITS  R     Total scan chain length
+//   0x24  MAX_ARGS         R     Max DPI arguments per function
+//   0x28  DESIGN_ID        R     Design CRC32 (version check)
+//   0x2C  LOOM_VERSION     R     Toolchain version
+//   0x30  IRQ_STATUS       R     Aggregated IRQ status
+//   0x34  IRQ_ENABLE       W     Aggregated IRQ enable
+//   0x38  EMU_FINISH       RW    Finish request: [0]=req, [15:8]=exit_code
+//   0x3C  EMU_TIME_LO      R     DUT time counter [31:0]
+//   0x40  EMU_TIME_HI      R     DUT time counter [63:32]
+//   0x44  EMU_TIME_CMP_LO  RW    Time compare [31:0]
+//   0x48  EMU_TIME_CMP_HI  RW    Time compare [63:32]
 
 `timescale 1ns/1ps
 
@@ -90,9 +90,6 @@ module loom_emu_ctrl #(
     // DUT FF enable output
     output logic        loom_en_o,
 
-    // DUT reset output
-    output logic        dut_rst_no,
-
     // Cycle counter output
     output logic [63:0] cycle_count_o,
 
@@ -139,7 +136,6 @@ module loom_emu_ctrl #(
     logic [63:0] time_count_d,  time_count_q;
     logic [63:0] time_cmp_d,    time_cmp_q;
     logic [31:0] clk_div_d,     clk_div_q;
-    logic        dut_reset_d,   dut_reset_q;
     logic [31:0] irq_enable_d,  irq_enable_q;
     logic        state_changed_d, state_changed_q;
     logic [15:0] finish_reg_d,  finish_reg_q;
@@ -177,8 +173,6 @@ module loom_emu_ctrl #(
     logic [7:0]  wr_cmd_data;
     logic        wr_clk_div_en;
     logic [31:0] wr_clk_div_data;
-    logic        wr_reset_assert;
-    logic        wr_reset_release;
     logic        wr_irq_enable_en;
     logic [31:0] wr_irq_enable_data;
     logic        wr_time_cmp_lo_en;
@@ -339,7 +333,6 @@ module loom_emu_ctrl #(
         cmd_valid_d      = 1'b0;  // one-shot
         cmd_reg_d        = cmd_reg_q;
         finish_reg_d     = finish_reg_q;
-        dut_reset_d      = dut_reset_q;
         clk_div_d        = clk_div_q;
         irq_enable_d     = irq_enable_q;
         time_cmp_d       = time_cmp_q;
@@ -356,13 +349,6 @@ module loom_emu_ctrl #(
             time_count_d = 64'd0;
         end else if (loom_en_o) begin
             time_count_d = time_count_q + 64'd1;
-        end
-
-        // DUT reset
-        if (wr_reset_assert) begin
-            dut_reset_d = 1'b1;
-        end else if (wr_reset_release) begin
-            dut_reset_d = 1'b0;
         end
 
         // DUT-initiated finish
@@ -396,7 +382,6 @@ module loom_emu_ctrl #(
             time_count_q     <= 64'd0;
             time_cmp_q       <= 64'd0;
             clk_div_q        <= 32'd0;
-            dut_reset_q      <= 1'b1;
             irq_enable_q     <= 32'd0;
             cmd_reg_q        <= 8'd0;
             cmd_valid_q      <= 1'b0;
@@ -410,7 +395,6 @@ module loom_emu_ctrl #(
             time_count_q     <= time_count_d;
             time_cmp_q       <= time_cmp_d;
             clk_div_q        <= clk_div_d;
-            dut_reset_q      <= dut_reset_d;
             irq_enable_q     <= irq_enable_d;
             cmd_reg_q        <= cmd_reg_d;
             cmd_valid_q      <= cmd_valid_d;
@@ -426,7 +410,6 @@ module loom_emu_ctrl #(
     // =========================================================================
 
     assign cycle_count_o     = cycle_count_q;
-    assign dut_rst_no        = ~dut_reset_q;
     assign finish_o          = finish_reg_q[0];
     assign irq_state_change_o = state_changed_q && irq_enable_q[2];
 
@@ -456,21 +439,21 @@ module loom_emu_ctrl #(
                 6'h00:   rdata_d = {29'd0, state_q};
                 6'h02:   rdata_d = cycle_count_q[31:0];
                 6'h03:   rdata_d = cycle_count_q[63:32];
-                6'h05:   rdata_d = clk_div_q;
-                6'h08:   rdata_d = N_DPI_FUNCS;
-                6'h09:   rdata_d = N_MEMORIES;
-                6'h0A:   rdata_d = N_SCAN_CHAINS;
-                6'h0B:   rdata_d = TOTAL_SCAN_BITS;
-                6'h0C:   rdata_d = MAX_ARGS;
-                6'h0D:   rdata_d = DESIGN_ID;
-                6'h0E:   rdata_d = LOOM_VERSION;
-                6'h10:   rdata_d = {29'd0, state_changed_q, (dpi_state_q != StDpiIdle), 1'b0};
-                6'h11:   rdata_d = irq_enable_q;
-                6'h13:   rdata_d = {16'd0, finish_reg_q};
-                6'h14:   rdata_d = time_count_q[31:0];
-                6'h15:   rdata_d = time_count_q[63:32];
-                6'h16:   rdata_d = time_cmp_q[31:0];
-                6'h17:   rdata_d = time_cmp_q[63:32];
+                6'h04:   rdata_d = clk_div_q;
+                6'h05:   rdata_d = N_DPI_FUNCS;
+                6'h06:   rdata_d = N_MEMORIES;
+                6'h07:   rdata_d = N_SCAN_CHAINS;
+                6'h08:   rdata_d = TOTAL_SCAN_BITS;
+                6'h09:   rdata_d = MAX_ARGS;
+                6'h0A:   rdata_d = DESIGN_ID;
+                6'h0B:   rdata_d = LOOM_VERSION;
+                6'h0C:   rdata_d = {29'd0, state_changed_q, (dpi_state_q != StDpiIdle), 1'b0};
+                6'h0D:   rdata_d = irq_enable_q;
+                6'h0E:   rdata_d = {16'd0, finish_reg_q};
+                6'h0F:   rdata_d = time_count_q[31:0];
+                6'h10:   rdata_d = time_count_q[63:32];
+                6'h11:   rdata_d = time_cmp_q[31:0];
+                6'h12:   rdata_d = time_cmp_q[63:32];
                 default: rdata_d = 32'hDEAD_BEEF;
             endcase
         end
@@ -523,8 +506,6 @@ module loom_emu_ctrl #(
         wr_cmd_data         = 8'd0;
         wr_clk_div_en       = 1'b0;
         wr_clk_div_data     = 32'd0;
-        wr_reset_assert     = 1'b0;
-        wr_reset_release    = 1'b0;
         wr_irq_enable_en    = 1'b0;
         wr_irq_enable_data  = 32'd0;
         wr_time_cmp_lo_en   = 1'b0;
@@ -550,29 +531,25 @@ module loom_emu_ctrl #(
                     wr_cmd_valid = 1'b1;
                     wr_cmd_data  = wr_data_q[7:0];
                 end
-                6'h05: begin  // EMU_CLK_DIV
+                6'h04: begin  // EMU_CLK_DIV
                     wr_clk_div_en   = 1'b1;
                     wr_clk_div_data = wr_data_q;
                 end
-                6'h06: begin  // DUT_RESET_CTRL
-                    wr_reset_assert  = wr_data_q[0];
-                    wr_reset_release = wr_data_q[1];
-                end
-                6'h11: begin  // IRQ_ENABLE
+                6'h0D: begin  // IRQ_ENABLE
                     wr_irq_enable_en   = 1'b1;
                     wr_irq_enable_data = wr_data_q;
                 end
-                6'h13: begin  // EMU_FINISH
+                6'h0E: begin  // EMU_FINISH
                     if (wr_data_q[0]) begin
                         wr_finish_en   = 1'b1;
                         wr_finish_data = wr_data_q[15:0];
                     end
                 end
-                6'h16: begin  // EMU_TIME_CMP_LO
+                6'h11: begin  // EMU_TIME_CMP_LO
                     wr_time_cmp_lo_en   = 1'b1;
                     wr_time_cmp_lo_data = wr_data_q;
                 end
-                6'h17: begin  // EMU_TIME_CMP_HI
+                6'h12: begin  // EMU_TIME_CMP_HI
                     wr_time_cmp_hi_en   = 1'b1;
                     wr_time_cmp_hi_data = wr_data_q;
                 end

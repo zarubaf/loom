@@ -24,6 +24,7 @@
  */
 
 #include "kernel/yosys.h"
+#include "kernel/sigtools.h"
 
 USING_YOSYS_NAMESPACE
 PRIVATE_NAMESPACE_BEGIN
@@ -120,6 +121,64 @@ struct ResetExtractPass : public Pass {
                 set_reset_attr(cell, rst_val);
                 strip_dffsre_to_dffe(module, cell);
                 async_stripped++;
+                continue;
+            }
+
+            // ---- Async load DFFs ($aldff/$aldffe) ----
+            // AD port is the async load data. If constant, treat like $adff.
+            // If driven by a DPI call, mark for host-side execution.
+
+            if (type == ID($aldff) || type == ID($aldffe)) {
+                RTLIL::SigSpec ad = cell->getPort(ID::AD);
+
+                if (ad.is_fully_const()) {
+                    // Constant async load value — same as $adff with ARST_VALUE
+                    set_reset_attr(cell, ad.as_const());
+                    if (type == ID($aldff))
+                        strip_aldff_to_dff(module, cell);
+                    else
+                        strip_aldffe_to_dffe(module, cell);
+                    async_stripped++;
+                    continue;
+                }
+
+                // Check if AD is driven by a $__loom_dpi_call cell
+                RTLIL::Cell *dpi_cell = find_driving_dpi_call(module, ad);
+                if (dpi_cell) {
+                    // Verify DPI args are all constants
+                    RTLIL::SigSpec dpi_args = dpi_cell->getPort(ID(ARGS));
+                    if (!dpi_args.is_fully_const()) {
+                        log_error("DPI call '%s' in reset block has non-constant arguments. "
+                                  "Only constant arguments are supported for reset-time DPI calls.\n",
+                                  dpi_cell->get_string_attribute(ID(loom_dpi_func)).c_str());
+                    }
+
+                    // Mark DPI cell for host execution (not hardware bridge)
+                    dpi_cell->set_bool_attribute(ID(loom_dpi_reset), true);
+                    dpi_cell->set_bool_attribute(ID(keep), true);
+
+                    // Store DPI function name on Q wire for scan_insert
+                    RTLIL::SigSpec q = cell->getPort(ID::Q);
+                    int width = cell->getParam(ID::WIDTH).as_int();
+                    for (auto &bit : q) {
+                        if (bit.wire) {
+                            bit.wire->set_string_attribute(ID(loom_reset_dpi_func),
+                                dpi_cell->get_string_attribute(ID(loom_dpi_func)));
+                            bit.wire->attributes[ID(loom_reset_value)] = RTLIL::Const(RTLIL::State::S0, width);
+                            break;
+                        }
+                    }
+
+                    if (type == ID($aldff))
+                        strip_aldff_to_dff(module, cell);
+                    else
+                        strip_aldffe_to_dffe(module, cell);
+                    async_stripped++;
+                } else {
+                    // Non-constant, non-DPI $aldff: unsupported
+                    log_error("Unsupported $aldff cell %s: AD port is not constant and not driven by DPI call.\n",
+                              log_id(cell));
+                }
                 continue;
             }
 
@@ -248,6 +307,50 @@ struct ResetExtractPass : public Pass {
         new_cell->setPort(ID::Q, cell->getPort(ID::Q));
 
         module->remove(cell);
+    }
+
+    // $aldff → $dff: remove ALOAD/AD ports and ALOAD_POLARITY param
+    void strip_aldff_to_dff(RTLIL::Module *module, RTLIL::Cell *cell) {
+        log("  Stripping %s: $aldff → $dff\n", log_id(cell));
+
+        RTLIL::Cell *new_cell = module->addCell(NEW_ID, ID($dff));
+        new_cell->setParam(ID::WIDTH, cell->getParam(ID::WIDTH));
+        new_cell->setParam(ID::CLK_POLARITY, cell->getParam(ID::CLK_POLARITY));
+        new_cell->setPort(ID::CLK, cell->getPort(ID::CLK));
+        new_cell->setPort(ID::D, cell->getPort(ID::D));
+        new_cell->setPort(ID::Q, cell->getPort(ID::Q));
+
+        module->remove(cell);
+    }
+
+    // $aldffe → $dffe: remove ALOAD/AD ports and ALOAD_POLARITY param, keep EN
+    void strip_aldffe_to_dffe(RTLIL::Module *module, RTLIL::Cell *cell) {
+        log("  Stripping %s: $aldffe → $dffe\n", log_id(cell));
+
+        RTLIL::Cell *new_cell = module->addCell(NEW_ID, ID($dffe));
+        new_cell->setParam(ID::WIDTH, cell->getParam(ID::WIDTH));
+        new_cell->setParam(ID::CLK_POLARITY, cell->getParam(ID::CLK_POLARITY));
+        new_cell->setParam(ID::EN_POLARITY, cell->getParam(ID::EN_POLARITY));
+        new_cell->setPort(ID::CLK, cell->getPort(ID::CLK));
+        new_cell->setPort(ID::EN, cell->getPort(ID::EN));
+        new_cell->setPort(ID::D, cell->getPort(ID::D));
+        new_cell->setPort(ID::Q, cell->getPort(ID::Q));
+
+        module->remove(cell);
+    }
+
+    // Find $__loom_dpi_call cell driving a signal
+    RTLIL::Cell *find_driving_dpi_call(RTLIL::Module *module, RTLIL::SigSpec sig) {
+        SigMap sigmap(module);
+        sig = sigmap(sig);
+        for (auto cell : module->cells()) {
+            if (cell->type != ID($__loom_dpi_call)) continue;
+            if (!cell->hasPort(ID(RESULT))) continue;
+            RTLIL::SigSpec result = sigmap(cell->getPort(ID(RESULT)));
+            if (GetSize(result) > 0 && result == sig)
+                return cell;
+        }
+        return nullptr;
     }
 };
 

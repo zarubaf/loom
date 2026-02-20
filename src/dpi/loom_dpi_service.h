@@ -124,6 +124,9 @@ public:
     uint64_t error_count() const { return error_count_; }
     size_t func_count() const { return funcs_.size(); }
 
+    // Find a function by name (for initial/reset DPI calls)
+    const DpiFunc* find_func_by_name(const std::string& name) const;
+
     // Print service statistics
     void print_stats() const;
 

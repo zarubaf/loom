@@ -273,6 +273,19 @@ struct LoomInstrumentPass : public Pass {
                     // Check if this is a loom-internal builtin
                     func.builtin = cell->get_bool_attribute(RTLIL::IdString("\\loom_dpi_builtin"));
 
+                    // Check if this is an initial/reset DPI call (no hardware bridge needed)
+                    bool is_initial = cell->get_bool_attribute(ID(loom_dpi_initial));
+                    bool is_reset = cell->get_bool_attribute(ID(loom_dpi_reset));
+
+                    if (is_initial || is_reset) {
+                        // Still include in dispatch table for host-side calling
+                        func.valid_condition = RTLIL::SigSpec();
+                        dpi_functions.push_back(func);
+                        module->remove(cell);
+                        log("  Initial/reset DPI call '%s' — dispatch only (no bridge)\n", dpi_name.c_str());
+                        continue;
+                    }
+
                     // Get the argument and result signals
                     if (cell->hasPort(ID(ARGS))) {
                         func.args_sig = cell->getPort(ID(ARGS));

@@ -110,6 +110,36 @@ void Shell::load_scan_map(const std::string& path) {
         has_initial_image_ = true;
         logger.info("Initial scan image: %zu words", n_words);
     }
+
+    // Unpack initial DPI calls
+    for (const auto& pb_call : scan_map_.initial_dpi_calls()) {
+        InitialDpiCall call;
+        call.func_name = pb_call.func_name();
+        call.return_width = pb_call.return_width();
+        call.scan_offset = pb_call.scan_offset();
+        call.scan_width = pb_call.scan_width();
+
+        // Unpack arg_data bytes to uint32_t words
+        const auto& arg_bytes = pb_call.arg_data();
+        size_t n_arg_words = arg_bytes.size() / 4;
+        call.arg_words.resize(n_arg_words);
+        for (size_t i = 0; i < n_arg_words; i++) {
+            call.arg_words[i] =
+                static_cast<uint8_t>(arg_bytes[i * 4 + 0])
+              | (static_cast<uint8_t>(arg_bytes[i * 4 + 1]) << 8)
+              | (static_cast<uint8_t>(arg_bytes[i * 4 + 2]) << 16)
+              | (static_cast<uint8_t>(arg_bytes[i * 4 + 3]) << 24);
+        }
+
+        // Unpack string args
+        for (const auto& [idx, val] : pb_call.string_args()) {
+            call.string_args[idx] = val;
+        }
+
+        initial_dpi_calls_.push_back(std::move(call));
+        logger.info("Initial DPI call: %s (ret_width=%u, scan_offset=%u)",
+                     pb_call.func_name().c_str(), pb_call.return_width(), pb_call.scan_offset());
+    }
 }
 
 // ============================================================================
@@ -487,14 +517,15 @@ int Shell::cmd_run(const std::vector<std::string>& args) {
     }
 
     if (state_result.value() == State::Idle || state_result.value() == State::Frozen) {
-        // Scan-based init: scan in initial image before first run
+        // Scan-based init: execute initial DPI calls and scan in image before first run
+        if (has_initial_image_ && !initial_dpi_executed_) {
+            execute_initial_dpi_calls();
+        }
         if (has_initial_image_ && !initial_image_applied_) {
             logger.info("Scanning in initial state...");
             ctx_.scan_write_data(initial_scan_image_);
             ctx_.scan_restore();
             initial_image_applied_ = true;
-        } else if (!has_initial_image_) {
-            ctx_.dut_reset(false);
         }
         auto rc = ctx_.start();
         if (!rc.ok()) {
@@ -597,13 +628,14 @@ int Shell::cmd_step(const std::vector<std::string>& args) {
     }
 
     // Scan-based init on first step, or release DUT reset (legacy)
+    if (has_initial_image_ && !initial_dpi_executed_) {
+        execute_initial_dpi_calls();
+    }
     if (has_initial_image_ && !initial_image_applied_) {
         logger.info("Scanning in initial state...");
         ctx_.scan_write_data(initial_scan_image_);
         ctx_.scan_restore();
         initial_image_applied_ = true;
-    } else if (!has_initial_image_) {
-        ctx_.dut_reset(false);
     }
 
     // SW-based step: set time_cmp = time + N, then CMD_START
@@ -685,15 +717,14 @@ int Shell::cmd_dump(const std::vector<std::string>& args) {
         return 0;
     }
 
-    // Scan-based init: apply initial image if not yet applied
-    if (has_initial_image_ && !initial_image_applied_) {
+    // Scan-based init: apply initial image if no DPI calls are pending.
+    // When initial DPI calls exist, defer scan-in to first step/run so
+    // DPI results can be patched into the image first.
+    if (has_initial_image_ && !initial_image_applied_ && initial_dpi_calls_.empty()) {
         logger.info("Scanning in initial state...");
         ctx_.scan_write_data(initial_scan_image_);
         ctx_.scan_restore();
         initial_image_applied_ = true;
-    } else if (!has_initial_image_) {
-        // Legacy: release DUT reset
-        ctx_.dut_reset(false);
     }
 
     // Stop if running
@@ -971,21 +1002,12 @@ int Shell::cmd_deposit_script(const std::vector<std::string>& args) {
 // ============================================================================
 
 int Shell::cmd_reset(const std::vector<std::string>& /*args*/) {
-    if (has_initial_image_) {
-        // Scan-based reset: re-scan the initial image
-        ctx_.stop();
-        ctx_.scan_write_data(initial_scan_image_);
-        ctx_.scan_restore();
-        initial_image_applied_ = true;
-        logger.info("DUT reset via scan chain");
-    } else {
-        auto rc = ctx_.dut_reset(true);
-        if (!rc.ok()) {
-            logger.error("Failed to assert reset");
-            return -1;
-        }
-        logger.info("DUT reset asserted");
-    }
+    // Scan-based reset: re-scan the initial image
+    ctx_.stop();
+    ctx_.scan_write_data(initial_scan_image_);
+    ctx_.scan_restore();
+    initial_image_applied_ = true;
+    logger.info("DUT reset via scan chain");
     return 0;
 }
 
@@ -1124,6 +1146,54 @@ int Shell::cmd_decouple(const std::vector<std::string>& /*args*/) {
 int Shell::cmd_exit(const std::vector<std::string>& /*args*/) {
     exit_requested_ = true;
     return 1;
+}
+
+// ============================================================================
+// Execute initial/reset DPI calls before scan-in
+// ============================================================================
+
+void Shell::execute_initial_dpi_calls() {
+    initial_dpi_executed_ = true;
+
+    if (initial_dpi_calls_.empty())
+        return;
+
+    logger.info("Executing %zu initial DPI call(s)...", initial_dpi_calls_.size());
+
+    for (auto& call : initial_dpi_calls_) {
+        auto* func = dpi_service_.find_func_by_name(call.func_name);
+        if (!func) {
+            logger.warning("Initial DPI function '%s' not found in dispatch table, skipping",
+                           call.func_name.c_str());
+            continue;
+        }
+
+        // Call the function
+        std::vector<uint32_t> out_args(func->out_arg_words, 0);
+        std::span<const uint32_t> args_span(call.arg_words.data(), call.arg_words.size());
+        std::span<uint32_t> out_span(out_args);
+        uint64_t result = func->callback(args_span, out_span);
+
+        // If reset DPI call: inject result into scan image
+        if (call.return_width > 0 && call.scan_width > 0 && has_initial_image_) {
+            for (uint32_t i = 0; i < call.scan_width && i < 64; i++) {
+                uint32_t word_idx = (call.scan_offset + i) / 32;
+                uint32_t bit_idx = (call.scan_offset + i) % 32;
+                if (word_idx < initial_scan_image_.size()) {
+                    if (result & (1ULL << i))
+                        initial_scan_image_[word_idx] |= (1u << bit_idx);
+                    else
+                        initial_scan_image_[word_idx] &= ~(1u << bit_idx);
+                }
+            }
+            logger.info("Executed reset DPI call: %s -> 0x%llx (injected at scan[%u:%u])",
+                         call.func_name.c_str(),
+                         static_cast<unsigned long long>(result),
+                         call.scan_offset, call.scan_offset + call.scan_width - 1);
+        } else {
+            logger.info("Executed initial DPI call: %s (void)", call.func_name.c_str());
+        }
+    }
 }
 
 } // namespace loom

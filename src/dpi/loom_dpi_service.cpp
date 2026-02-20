@@ -36,6 +36,15 @@ const DpiFunc* DpiService::find_func(int func_id) const {
     return nullptr;
 }
 
+const DpiFunc* DpiService::find_func_by_name(const std::string& name) const {
+    for (const auto& func : funcs_) {
+        if (func.name == name) {
+            return &func;
+        }
+    }
+    return nullptr;
+}
+
 int DpiService::service_once(Context& ctx) {
     // Poll for pending DPI calls
     auto poll_result = ctx.dpi_poll();

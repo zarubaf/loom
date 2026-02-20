@@ -269,7 +269,6 @@ struct EmuTopPass : public Pass {
 
         // emu_ctrl signals
         RTLIL::Wire *loom_en_wire = wrapper->addWire(ID(loom_en_wire), 1);
-        RTLIL::Wire *dut_rst_n = wrapper->addWire(ID(dut_rst_n), 1);
         RTLIL::Wire *cycle_count = wrapper->addWire(ID(cycle_count), 64);
         RTLIL::Wire *irq_state_change = wrapper->addWire(ID(irq_state_change), 1);
         RTLIL::Wire *emu_finish = wrapper->addWire(ID(emu_finish), 1);
@@ -429,7 +428,6 @@ struct EmuTopPass : public Pass {
         emu_ctrl->setPort(ID(dut_finish_code_i), RTLIL::SigSpec(RTLIL::State::S0, 8));
         // Outputs
         emu_ctrl->setPort(ID(loom_en_o), loom_en_wire);
-        emu_ctrl->setPort(ID(dut_rst_no), dut_rst_n);
         emu_ctrl->setPort(ID(cycle_count_o), cycle_count);
         emu_ctrl->setPort(ID(finish_o), emu_finish);
         emu_ctrl->setPort(ID(irq_state_change_o), irq_state_change);
@@ -514,10 +512,10 @@ struct EmuTopPass : public Pass {
                 continue;
             }
 
-            // Handle reset — port only exists when resets were NOT extracted
+            // Reset port should have been removed by reset_extract
             if (wire->name == RTLIL::escape_id(rst_name)) {
-                dut_inst->setPort(wire->name, RTLIL::SigSpec(dut_rst_n));
-                continue;
+                log_error("DUT still has reset port '%s' — reset_extract must run before emu_top.\n",
+                          rst_name.c_str());
             }
 
             // Handle loom_en - connect to computed loom_en_wire

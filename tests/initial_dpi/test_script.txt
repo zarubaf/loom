@@ -1,0 +1,22 @@
+# Initial DPI test script
+# Verify that initial DPI calls execute and values are correct
+
+# Before any step/run: dump shows undefined (no DPI calls executed yet)
+dump build/snap_pre.pb
+
+# First step triggers DPI calls + scan-in, then runs 1 cycle:
+# - init_setup("test_tag") should print
+# - init_reg_q starts at get_init_val(42) = 42 * 0x1234 = 0x2FC88
+# - after 1 cycle: init_reg_q = 0x2FC88 + 1 = 0x2FC89
+step 1
+dump build/snap_step1.pb
+
+# Step 2 more cycles
+step 2
+dump build/snap_step3.pb
+
+# Inspect snapshots
+inspect build/snap_step1.pb
+inspect build/snap_step3.pb
+
+exit

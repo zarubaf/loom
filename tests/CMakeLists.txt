@@ -194,6 +194,32 @@ set_tests_properties(e2e_scan_dump PROPERTIES
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
 
+# End-to-end initial DPI test using loomc/loomx
+add_test(NAME e2e_initial_dpi
+    COMMAND make test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/initial_dpi
+)
+set_tests_properties(e2e_initial_dpi PROPERTIES
+    DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
+    TIMEOUT 120
+    ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
+)
+
+# End-to-end initial DPI error test (should fail with error message)
+add_test(NAME e2e_initial_dpi_error
+    COMMAND ${CMAKE_COMMAND} -E env
+        LOOM_HOME=${CMAKE_SOURCE_DIR}
+        VERILATOR=${VERILATOR_BIN}
+        ${CMAKE_SOURCE_DIR}/bin/loomc -top initial_dpi_error_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/initial_dpi/initial_dpi_error_test.sv
+        -work ${CMAKE_CURRENT_BINARY_DIR}/initial_dpi_error
+)
+set_tests_properties(e2e_initial_dpi_error PROPERTIES
+    DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc"
+    TIMEOUT 30
+    WILL_FAIL TRUE
+)
+
 # End-to-end shell register access test using loomc/loomx
 add_test(NAME e2e_shell_regaccess
     COMMAND make test

@@ -112,22 +112,21 @@ namespace reg {
     constexpr uint32_t Control = 0x04;
     constexpr uint32_t CycleLo = 0x08;
     constexpr uint32_t CycleHi = 0x0C;
-    constexpr uint32_t ClkDiv = 0x14;
-    constexpr uint32_t DutReset = 0x18;
-    constexpr uint32_t NDpiFuncs = 0x20;
-    constexpr uint32_t NMemories = 0x24;
-    constexpr uint32_t NScanChains = 0x28;
-    constexpr uint32_t TotalScanBits = 0x2C;
-    constexpr uint32_t MaxDpiArgs = 0x30;
-    constexpr uint32_t DesignId = 0x34;
-    constexpr uint32_t LoomVersion = 0x38;
-    constexpr uint32_t IrqStatus = 0x40;
-    constexpr uint32_t IrqEnable = 0x44;
-    constexpr uint32_t Finish = 0x4C;
-    constexpr uint32_t TimeLo = 0x50;
-    constexpr uint32_t TimeHi = 0x54;
-    constexpr uint32_t TimeCmpLo = 0x58;
-    constexpr uint32_t TimeCmpHi = 0x5C;
+    constexpr uint32_t ClkDiv = 0x10;
+    constexpr uint32_t NDpiFuncs = 0x14;
+    constexpr uint32_t NMemories = 0x18;
+    constexpr uint32_t NScanChains = 0x1C;
+    constexpr uint32_t TotalScanBits = 0x20;
+    constexpr uint32_t MaxDpiArgs = 0x24;
+    constexpr uint32_t DesignId = 0x28;
+    constexpr uint32_t LoomVersion = 0x2C;
+    constexpr uint32_t IrqStatus = 0x30;
+    constexpr uint32_t IrqEnable = 0x34;
+    constexpr uint32_t Finish = 0x38;
+    constexpr uint32_t TimeLo = 0x3C;
+    constexpr uint32_t TimeHi = 0x40;
+    constexpr uint32_t TimeCmpLo = 0x44;
+    constexpr uint32_t TimeCmpHi = 0x48;
 
     // DPI regfile register offsets (per function, 64 bytes each)
     constexpr uint32_t DpiFuncSize = 0x40;
@@ -239,7 +238,6 @@ public:
     Result<void> step(uint32_t n_cycles);
     Result<void> reset();
     Result<uint64_t> get_cycle_count();
-    Result<void> dut_reset(bool assert_reset);
     Result<void> finish(int exit_code);
 
     Result<uint64_t> get_time();
