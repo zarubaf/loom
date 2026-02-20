@@ -2,8 +2,7 @@
 # DPI Bridge Internals
 
 Implementation details for the `loom_instrument` pass and the DPI bridge
-hardware/software stack. For the user-facing feature description, see
-[dpi-bridge.md](dpi-bridge.md).
+hardware/software stack.
 
 ## Pass Pipeline
 
@@ -39,6 +38,18 @@ For `output bit [31:0] data[]` with a local 6-element array:
 - `arg_types` contains `"bit[31:0]$[]"` (the `[]` suffix signals open array)
 - `arg_widths` contains `"192"` (6 elements × 32 bits, inferred from call site)
 - `arg_dirs` contains `"output"`
+
+### Fixed-size array encoding
+
+For `input bit [31:0] data[4]`:
+
+- `arg_types` contains `"bit[31:0]$[4]"` (the `[N]` suffix signals fixed array)
+- `arg_widths` contains `"128"` (4 elements × 32 bits)
+- `arg_dirs` contains `"input"`
+
+Fixed-size arrays are passed identically to open arrays in hardware (packed
+into the args bus). The only difference is in the generated dispatch
+wrapper, which uses the compile-time known size.
 
 ## Hardware Interface
 
@@ -99,7 +110,7 @@ The `emu_top` pass wraps the DUT with:
 | 0x2C      | RESULT_HI | W   | Return value [63:32]                                           |
 
 Address decoding: `addr[15:6]` = function index, `addr[5:0]` = register.
-Base address: `0x100` (after AXI interconnect subtracts the base).
+Base address: `0x10000` in the overall address map (via `loom_axil_demux`).
 
 ### emu_ctrl DPI state machine
 

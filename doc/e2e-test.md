@@ -1,7 +1,9 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # End-to-End Test
 
-The e2e test in `tests/e2e/` demonstrates the complete Loom flow from SystemVerilog with DPI calls to a working simulation with host-side function execution.
+The e2e test in `tests/e2e/` demonstrates the complete Loom flow from
+SystemVerilog with DPI calls to a working simulation with host-side
+function execution.
 
 ## What It Tests
 
@@ -9,14 +11,17 @@ The e2e test in `tests/e2e/` demonstrates the complete Loom flow from SystemVeri
 2. **Emulation wrapper**: Complete infrastructure generation
 3. **Host communication**: Socket-based BFM connecting host to simulation
 4. **DPI service**: Generic service loop dispatching calls to user functions
+5. **`$display` bridging**: Format strings forwarded to host `printf`
+6. **`$finish` shutdown**: Clean exit triggered by the DUT
 
 ## Test Design
 
-The test design (`dpi_test.sv`) is a simple state machine that:
+The test design (`dpi_test.sv`) is a state machine that:
 
-1. Calls `dpi_add(42, 17)` and stores the result
-2. Verifies the result equals 59
-3. Calls `dpi_report_result(passed, result)` to report success/failure
+1. Uses an LFSR to generate pseudo-random operands
+2. Calls `dpi_add(a, b)` eight times and verifies each result
+3. Calls `dpi_report_result(passed, failed)` to report success/failure
+4. Exits with `$finish`
 
 ```systemverilog
 import "DPI-C" function int dpi_add(input int a, input int b);
@@ -26,60 +31,43 @@ module dpi_test (
     input  logic clk_i,
     input  logic rst_ni
 );
-    // State machine: Idle -> CallAdd -> CheckResult -> Report -> Done
+    // State machine: Idle -> CallAdd -> Check -> Next -> Report -> Done ($finish)
     ...
 endmodule
 ```
 
 ## Running the Test
 
+From the build directory (after building Loom):
+
+```bash
+ctest --test-dir build -R e2e_dpi_test --output-on-failure
+```
+
+Or manually from the test directory:
+
 ```bash
 cd tests/e2e
-make clean
-make run
+make test
 ```
 
-This executes:
+## What `make test` Does
 
-1. **Transform** (`make transform`): Yosys with loom plugins
-   - `read_slang` parses SystemVerilog
-   - `loom_instrument` converts DPI calls, adds flop enable, generates header
-   - `emu_top` creates infrastructure wrapper
-   - `write_verilog` outputs transformed design
+The `Makefile` uses the shared `loom_test.mk` recipe, which runs four
+steps:
 
-2. **Simulate** (`make sim`): Verilator builds simulation binary
-   - Compiles transformed RTL + infrastructure modules
-   - Links socket BFM DPI code
+1. **`loomc`** transforms the DUT (scan insertion, DPI bridging, emulation
+   wrapper) and compiles the DPI dispatch table.
 
-3. **Host** (`make host`): GCC builds host binary
-   - Compiles test harness with DPI implementations
-   - Links libloom and DPI service library
+2. **Verilator** builds a simulation binary from the transformed Verilog
+   and Loom infrastructure RTL.
 
-4. **Run** (`make run`): Starts both and connects them
-   - Simulation listens on Unix socket
-   - Host connects, releases reset, starts emulation
-   - DPI service loop handles function calls
-   - Test completes when `dpi_report_result` signals exit
+3. **User DPI code** (`dpi_impl.c`) is compiled into `libdpi.so`.
 
-## Expected Output
-
-```
-=== Starting Loom Simulation ===
-[sim] Reset released at t=100000
-[loom_bfm] Waiting for connection on /tmp/loom_sim.sock ...
-=== Running Host ===
-[loom_bfm] Connected
-[test] Loom E2E Test Harness
-[test] Connected. Design ID: 0xe2e00001, Version: 0x00000100, N_DPI: 2
-[test] Starting DPI service loop...
-[dpi_service] Entering service loop (n_funcs=2)
-[dpi] dpi_add(42, 17) = 59
-[dpi] dpi_report_result(passed=1, result=59)
-[dpi] TEST PASSED: result=59
-[dpi_service] Exit requested by DPI callback
-[test] Final cycle count: 9
-[test] TEST COMPLETED SUCCESSFULLY
-```
+4. **`loomx`** launches the simulation, loads both `loom_dpi_dispatch.so`
+   and `libdpi.so`, connects via Unix socket, and runs the design. DPI
+   calls are serviced automatically. The design hits `$finish` and `loomx`
+   exits cleanly.
 
 ## File Structure
 
@@ -87,41 +75,64 @@ This executes:
 tests/e2e/
 ├── dpi_test.sv      # DUT with DPI calls
 ├── dpi_impl.c       # User DPI function implementations
-├── test_main.c      # Test harness using loom_dpi_service
-├── Makefile         # Build and run automation
+├── Makefile         # TOP, DUT_SRC, DPI_SRCS + include loom_test.mk
 └── build/           # Generated (not committed)
-    ├── run.ys               # Yosys script
-    ├── transformed.v           # Transformed Verilog
-    ├── dpi_test_dpi.h       # Generated C header
-    ├── dpi_meta.json        # DPI metadata
-    └── obj_dir/             # Verilator output
+    ├── transformed.v        # Transformed Verilog
+    ├── loom_dpi_dispatch.so # Compiled dispatch table
+    ├── scan_map.pb          # Scan chain map
+    ├── libdpi.so            # User DPI shared library
+    └── sim/obj_dir/         # Verilator output
 ```
 
-## Implementing DPI Functions
+## Writing Your Own E2E Test
 
-User-implemented functions go in `dpi_impl.c`:
+Create a directory with three files:
+
+**`Makefile`:**
+```make
+TOP      := my_dut
+DUT_SRC  := my_dut.sv
+DPI_SRCS := dpi_impl.c
+
+include path/to/loom_test.mk
+```
+
+**`my_dut.sv`** — your DUT with DPI imports (calls must be in
+`always_ff` blocks).
+
+**`dpi_impl.c`** — your DPI function implementations. These are pure C
+functions with no Loom-specific includes needed:
 
 ```c
-#include "dpi_test_dpi.h"
-#include "loom_dpi_service.h"
+#include <stdio.h>
+#include <stdint.h>
 
 int32_t dpi_add(int32_t a, int32_t b) {
     return a + b;
 }
-
-int32_t dpi_report_result(int32_t passed, int32_t result) {
-    printf("Test %s\n", passed ? "PASSED" : "FAILED");
-    loom_dpi_service_request_exit();  // Signal completion
-    return 0;
-}
 ```
 
-The function names must match exactly what the generated header declares.
+Then run:
+```bash
+make test          # scripted (run + exit)
+make interactive   # interactive shell
+make clean         # remove build artifacts
+```
+
+The shared `loom_test.mk` provides these targets and handles the full
+`loomc` / Verilator / `loomx` pipeline automatically. It derives
+`LOOM_ROOT` from its own location, so `LOOM_HOME` does not need to be set
+if the test is inside the Loom source tree.
 
 ## Troubleshooting
 
-**Simulation hangs**: Check that `loom_dpi_service_request_exit()` is called to signal completion.
+**Simulation hangs**: The DUT must hit `$finish` to trigger clean shutdown.
+If your design runs forever, use `loomx -f script.txt` with a script that
+runs for a bounded number of cycles then exits.
 
-**Connection refused**: Ensure simulation starts before host (Makefile handles this with `sleep 1`).
+**Connection refused**: The socket is created automatically by `loomx`.
+If using `--no-sim`, ensure the simulation is running before connecting.
 
-**Wrong results**: Check DPI function argument order matches the SV declaration.
+**Wrong results**: Check that DPI function argument order matches the
+SystemVerilog declaration and that the C types align (e.g. `int32_t` for
+`int`).

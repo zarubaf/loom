@@ -30,18 +30,24 @@ Source SV → yosys + loom plugins → transformed Verilog → Vivado/Verilator
 ```
 
 **Key components:**
-- `passes/loom_instrument/` - DPI bridge + flop enable instrumentation
+- `passes/reset_extract/` - Extracts reset values and strips async resets
+- `passes/scan_insert/` - Scan chain insertion for state capture/restore
+- `passes/loom_instrument/` - DPI bridge + flop enable + $finish transform
+- `passes/mem_shadow/` - Shadow read/write ports for BRAM access
 - `passes/emu_top/` - Generates emulation wrapper with AXI-Lite interface
 - `src/host/` - Host-side library for communication and DPI service
 - `src/rtl/` - Infrastructure RTL modules
+- `src/tools/` - `loomc` (compiler) and `loomx` (execution host)
 
 ## Documentation
 
 Design documentation lives in `doc/`:
 - `doc/dpi-bridge-internals.md` - DPI bridge implementation details
-- `doc/emu-top.md` - Emulation wrapper architecture
-- `doc/host-library.md` - Host-side libloom and DPI service
+- `doc/emu-top.md` - Emulation wrapper architecture and register map
+- `doc/host-library.md` - Host-side libloom, loomx shell, and DPI service
 - `doc/e2e-test.md` - End-to-end test guide
+- `doc/fpga-support.md` - FPGA build flow and architecture
+- `doc/shutdown-spec.md` - Clean shutdown mechanism ($finish, host finish)
 
 **Keep documentation up-to-date.** When making significant changes to a component, update the corresponding documentation in `doc/`.
 
@@ -66,7 +72,7 @@ All Loom-generated signals use the `loom_` prefix:
 
 | Pass | Signals |
 |------|---------|
-| `loom_instrument` | `loom_en`, `loom_dpi_valid`, `loom_dpi_ready`, `loom_dpi_func_id`, `loom_dpi_args`, `loom_dpi_result` |
+| `loom_instrument` | `loom_en`, `loom_dpi_valid`, `loom_dpi_func_id`, `loom_dpi_args`, `loom_dpi_result`, `loom_finish_o` |
 | `scan_insert` | `loom_scan_enable`, `loom_scan_in`, `loom_scan_out` |
 
 ## Files to Never Commit

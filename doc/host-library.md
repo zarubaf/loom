@@ -1,7 +1,9 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Host Library
 
-The Loom host library provides a C++ API for communicating with an emulated design, servicing DPI function calls, and an interactive shell for debugging.
+The Loom host library provides a C++ API for communicating with an emulated
+design, servicing DPI function calls, and an interactive shell for
+debugging.
 
 ## Components
 
@@ -20,38 +22,52 @@ src/host/
 
 ## Interactive Shell
 
-The Loom host binary starts an interactive shell by default. The shell provides tab completion, command hints, syntax highlighting, and persistent history.
+`loomx` starts an interactive shell by default. The shell provides tab
+completion, command hints, and persistent history.
 
 ### CLI
 
 ```
-Usage: loom_host [options] [socket_path]
-  -f <script>   Execute commands from script file
-  -v            Verbose (debug logging)
-  -h            Show help
-Default socket: /tmp/loom_sim.sock
+Usage: loomx [options]
+
+Options:
+  -work DIR       Work directory from loomc (required)
+  -sv_lib NAME    User DPI shared library (without lib/.so)
+  -sim BINARY     Simulation binary name (default: Vloom_shell)
+  -f SCRIPT       Run commands from script file
+  -s SOCKET       Socket path (default: auto PID-based)
+  -timeout NS     Simulation timeout in ns
+  -t TRANSPORT    Transport: socket (default) or xdma
+  -d DEVICE       XDMA device path or PCI BDF (default: /dev/xdma0_user)
+  --no-sim        Don't launch sim (connect to existing)
+  -v              Verbose output
+  -h              Show help
 ```
 
 ### Commands
 
 | Command | Alias | Description |
 |---------|-------|-------------|
-| `run [-a] [<N>ns]` | `r` | Release DUT reset, start emulation, service DPI loop. `-a` or no args = run indefinitely. `<N>ns` or `<N>` = run for N time units from current time. Ctrl+C interrupts back to shell. |
+| `run [-a] [<N>ns]` | `r` | Start emulation, service DPI loop. On first run, executes initial DPI calls and scans in the initial state image. `-a` or no args = run indefinitely. `<N>ns` or `<N>` = run for N time units. Ctrl+C interrupts back to shell. |
 | `stop` | | Freeze emulation |
 | `step [N]` | `s` | Step N cycles (default 1), service DPI calls during step |
 | `status` | `st` | Print state, cycle count, DUT time, time compare, design info, DPI stats |
 | `read <addr>` | | Read a 32-bit register at hex address. Example: `read 0x34` |
 | `write <addr> <data>` | `wr` | Write a 32-bit hex value to hex address. Example: `write 0x04 0x01` |
-| `dump` | `d` | Stop if running, scan capture, display scan data |
-| `reset` | | Assert DUT reset |
+| `dump [file.pb]` | `d` | Stop if running, scan capture, display scan data. Optionally save snapshot to protobuf file. |
+| `inspect <file.pb> [var]` | | Load a saved snapshot protobuf and display metadata + variable values. Optionally filter by name prefix. |
+| `deposit_script <file.pb> [out.sv]` | | Generate `$deposit` SystemVerilog statements from a snapshot. Paths come from the original HDL hierarchy. |
+| `reset` | | Re-scan the initial state image (scan-based reset) |
+| `couple` | | Clear decoupler — connect emu_top to AXI bus |
+| `decouple` | | Assert decoupler — isolate emu_top (transactions return SLVERR) |
 | `help [cmd]` | `h`, `?` | List commands or show detailed help |
 | `exit` | `quit`, `q` | Clean disconnect and exit |
 
 ### Interactive Example
 
 ```
-$ loom_host /tmp/loom_sim.sock
-[main] INFO  Loom Simulation Host
+$ loomx -work build/ -sv_lib dpi
+[main] INFO  Loom Execution Host
 [loom] INFO  Connected. Design ID: 0x00000001 ...
 [shell] INFO  Loom interactive shell. Type 'help' for commands.
 loom> status
@@ -65,26 +81,29 @@ loom> status
 loom> step 10
 [shell] INFO  Stepped 10 cycles (total: 10)
 loom> run 1000ns
+[shell] INFO  Scanning in initial state...
 [shell] INFO  Emulation started
 [shell] INFO  Emulation frozen
 [shell] INFO  Cycle count: 1010
-[shell] INFO  DUT time: 1010
 loom> run
 [shell] INFO  Emulation started
 ^C
 [shell] INFO  Interrupted
 [shell] INFO  Cycle count: 2533
-[shell] INFO  DUT time: 2533
-loom> dump
+loom> dump snapshot.pb
   Scan chain: 64 bits (2 words)
-  [ 0] 0x0000002a
-  [ 1] 0x00000000
+  counter_q[31:0] = 0x0000002a
+  ...
+  Snapshot saved to snapshot.pb
+loom> inspect snapshot.pb counter
+  counter_q[31:0] = 0x0000002a
 loom> exit
 ```
 
 ### Script Mode
 
-Create a text file with one command per line. Lines starting with `#` are comments.
+Create a text file with one command per line. Lines starting with `#` are
+comments.
 
 ```bash
 # test_script.txt
@@ -94,7 +113,7 @@ exit
 
 Run it:
 ```bash
-loom_host -f test_script.txt /tmp/loom_sim.sock
+loomx -work build/ -sv_lib dpi -f test_script.txt
 ```
 
 ## C++ API
@@ -122,9 +141,6 @@ ctx.disconnect();
 ### Emulation Control
 
 ```cpp
-// Release DUT reset
-ctx.dut_reset(false);
-
 // Start emulation
 ctx.start();
 
@@ -138,11 +154,31 @@ auto cycles = ctx.get_cycle_count();  // Returns Result<uint64_t>
 auto time = ctx.get_time();  // Returns Result<uint64_t>
 
 // Set time compare (emulation freezes when time >= compare)
-ctx.set_time_compare(1000);  // Run for 1000 time units from 0
+ctx.set_time_compare(1000);  // Run until time reaches 1000
 ctx.set_time_compare(UINT64_MAX);  // Run indefinitely
 
-// Get current time compare value
-auto cmp = ctx.get_time_compare();  // Returns Result<uint64_t>
+// Step N cycles
+ctx.step(10);
+
+// Reset (returns to Idle state)
+ctx.reset();
+
+// Trigger shutdown with exit code
+ctx.finish(0);
+```
+
+### Scan Chain
+
+```cpp
+// Capture current state
+ctx.scan_capture();
+
+// Read captured data
+auto data = ctx.scan_read_data();
+
+// Write new state and restore
+ctx.scan_write_data(image);
+ctx.scan_restore();
 ```
 
 ### DPI Service
@@ -180,43 +216,9 @@ if (pending.value() & (1 << 0)) {
 ctx.dpi_complete(func_id, result);
 ```
 
-## DPI Service Library
-
-For typical use cases, the generic DPI service handles the polling loop automatically.
-
-### Setup
-
-```cpp
-#include "loom_dpi_service.h"
-#include "my_design_dpi.h"  // Generated header
-
-// Implement the DPI functions
-int32_t dpi_add(int32_t a, int32_t b) {
-    return a + b;
-}
-
-// Wrapper callbacks (adapt typed functions to generic signature)
-static uint64_t wrap_dpi_add(const uint32_t *args) {
-    return (uint64_t)dpi_add((int32_t)args[0], (int32_t)args[1]);
-}
-
-// Function table
-static const loom_dpi_func_t dpi_funcs[] = {
-    { DPI_FUNC_DPI_ADD, "dpi_add", 2, 32, wrap_dpi_add },
-};
-```
-
-### Exit Conditions
-
-The service loop exits when:
-
-1. Emulation enters FROZEN or ERROR state
-2. Shutdown message received from simulation ($finish/$stop)
-3. Timeout expires with no DPI activity
-
 ## Transport Layer
 
-The transport layer abstracts the communication mechanism. Currently supported:
+The transport layer abstracts the communication mechanism.
 
 ### Unix Socket Transport
 
@@ -225,7 +227,7 @@ auto transport = loom::create_socket_transport();
 // ... use with Context ...
 ```
 
-The socket transport connects to a Verilator simulation running `loom_axil_socket_bfm`.
+Connects to a Verilator simulation running `loom_axil_socket_bfm`.
 
 ### XDMA Transport (PCIe/FPGA)
 
@@ -236,17 +238,11 @@ ctx.connect("/dev/xdma0_user");      // XDMA driver (pread/pwrite)
 ctx.connect("0000:17:00.0");         // PCI BDF (mmap BAR0)
 ```
 
-The XDMA transport connects to an FPGA over PCIe. It supports two modes:
+Connects to an FPGA over PCIe. Two modes:
 - **XDMA driver** (`/dev/xdma0_user`) — uses `pread`/`pwrite` on the char device.
-- **sysfs BAR mmap** (PCI BDF or `/sys/bus/pci/...`) — directly mmaps BAR0.
-
-`loomx` selects this transport with `-t xdma`:
+- **sysfs BAR mmap** (PCI BDF) — directly mmaps BAR0.
 
 ```bash
 loomx -work build/ -t xdma                    # default /dev/xdma0_user
 loomx -work build/ -t xdma -d 0000:17:00.0    # PCI BDF
 ```
-
-### Future Transports
-
-- Shared memory for fast local simulation

@@ -10,15 +10,18 @@ hardware-accelerated verification without rewriting testbenches.
 
 ## Features
 
-**DPI-C Function Bridging** — DPI-C import calls in your RTL are
-automatically transformed into a hardware mailbox interface. At runtime the
-host executes the original C functions and returns results to the design,
-transparently preserving the DPI contract.
+### DPI-C Function Bridging
+
+DPI-C import calls in your RTL are automatically transformed into a
+hardware mailbox interface. At runtime the host executes the original C
+functions and returns results to the design, transparently preserving the
+DPI contract.
 
 Supported argument types:
 - `int`, `shortint`, `longint`, `byte` (signed scalars)
 - `bit [N:0]`, `logic [N:0]` (unsigned, arbitrary width)
 - `bit [M:0] data[]` (open arrays — input and output via `svOpenArrayHandle`)
+- `bit [M:0] data[N]` (fixed-size arrays)
 - `string` (compile-time constant)
 
 Supported return types: `void`, `int`, `shortint`, `longint`, `byte`,
@@ -28,42 +31,82 @@ Open arrays are fully SVDPI-compatible — user C code uses standard
 `svGetArrayPtr()`, `svLength()`, etc. The same DPI function can be called
 from multiple modules with different array sizes; Loom infers the element
 count from each call site's local variable. Compatible with libraries like
-[multisim](https://github.com/antoinemadec/multisim). 4-state and 2-state
-are treated identically (no X/Z on FPGA).
+[multisim](https://github.com/antoinemadec/multisim).
 
-**`$display` / `$finish`** — `$display` calls are bridged to `printf`
-on the host. `$finish` triggers clean simulation shutdown.
+DPI calls in `initial` blocks (void, side-effect only) and reset blocks
+(providing DPI-computed initial register values) are also supported —
+they execute on the host before the design starts running.
 
-**Interactive Shell** - `loomx` provides a REPL with tab completion,
-history, and the following commands:
+### `$display` / `$finish`
 
-| Command           | Description                                                                |
-| ----------------- | -------------------------------------------------------------------------- |
-| `run [N]`         | Release reset and start emulation; service DPI calls. Ctrl+C to interrupt. |
-| `stop`            | Freeze emulation, preserving state.                                        |
-| `step [N]`        | Advance N clock cycles (default 1).                                        |
-| `status`          | Print state, cycle count, design info, DPI statistics.                     |
-| `read <addr>`     | Read a 32-bit register at the given hex address.                           |
-| `write <a> <d>`   | Write 32-bit hex value to the given hex address. Alias: `wr`.              |
-| `dump`            | Capture and display scan chain contents.                                   |
-| `reset`           | Assert DUT reset.                                                          |
-| `couple`          | Clear decoupler — connect emu_top to AXI bus.                              |
-| `decouple`        | Assert decoupler — isolate emu_top (transactions return SLVERR).           |
-| `exit`            | Disconnect and exit.                                                       |
+`$display` and `$write` calls are bridged to `printf` on the host.
+`$finish` and `$fatal` trigger clean emulation shutdown with an exit code.
+
+### State Capture and Restore
+
+All flip-flops in the design are chained into a scan chain. The host can
+capture a full snapshot of the design state and restore it later. Snapshots
+are serialized as protobuf and include symbolic variable names from the
+original HDL hierarchy.
+
+### Memory Shadow Ports
+
+BRAM memories can be accessed directly from the host via shadow read/write
+ports, without having to shift through the scan chain. This is much faster
+for large memories.
+
+### Reset Extraction
+
+Asynchronous resets are stripped from the design and replaced with
+scan-based initialization. Reset values are extracted from the RTL and
+applied via the scan chain at startup, eliminating the reset distribution
+tree from the synthesized design.
+
+### Interactive Shell
+
+`loomx` provides a REPL with tab completion, history, and the following
+commands:
+
+| Command            | Alias | Description                                                                |
+| ------------------ | ----- | -------------------------------------------------------------------------- |
+| `run [N]`          | `r`   | Release reset and start emulation; service DPI calls. Ctrl+C to interrupt. |
+| `stop`             |       | Freeze emulation, preserving state.                                        |
+| `step [N]`         | `s`   | Advance N clock cycles (default 1).                                        |
+| `status`           | `st`  | Print state, cycle count, design info, DPI statistics.                     |
+| `read <addr>`      |       | Read a 32-bit register at the given hex address.                           |
+| `write <a> <d>`    | `wr`  | Write 32-bit hex value to the given hex address.                           |
+| `dump [file.pb]`   | `d`   | Capture and display scan chain contents. Optionally save to protobuf.      |
+| `inspect <file.pb>`|       | Load and display a saved snapshot.                                         |
+| `deposit_script`   |       | Generate `$deposit` SystemVerilog from a snapshot file.                    |
+| `reset`            |       | Assert DUT reset.                                                          |
+| `couple`           |       | Clear decoupler — connect emu_top to AXI bus.                              |
+| `decouple`         |       | Assert decoupler — isolate emu_top (transactions return SLVERR).           |
+| `exit`             | `q`   | Disconnect and exit.                                                       |
+
+### FPGA Target
+
+Loom supports running on Alveo U250 FPGAs over PCIe (XDMA). A single
+`loom_shell` top-level module is shared between simulation and FPGA —
+only the sub-module implementations differ (behavioral BFMs for simulation,
+Xilinx IPs for FPGA). See [doc/fpga-support.md](doc/fpga-support.md).
 
 ## Prerequisites
 
 ### macOS
 
 ```bash
-brew install pkg-config libffi bison readline verilator
+brew install pkg-config libffi bison readline autoconf
 ```
 
 ### Linux (Debian/Ubuntu)
 
 ```bash
-apt install build-essential cmake pkg-config libffi-dev libreadline-dev verilator
+sudo apt-get install build-essential cmake bison flex libfl-dev \
+    pkg-config libffi-dev libreadline-dev zlib1g-dev tcl-dev \
+    autoconf ccache help2man perl python3 git
 ```
+
+Yosys, yosys-slang, and Verilator are fetched and built automatically.
 
 ## Building
 
@@ -74,8 +117,8 @@ cmake --build build -j$(nproc)
 
 This builds:
 - **Yosys** (fetched automatically) with the Loom transformation passes
-- **`loomc`** - the compilation driver
-- **`loomx`** - the execution host
+- **`loomc`** — the compilation driver
+- **`loomx`** — the execution host and interactive shell
 
 ### Running Tests
 
@@ -104,12 +147,14 @@ loomc -top my_dut -work build/ my_dut.sv
 
 Options:
 ```
--top MODULE    Top module name (required)
--work DIR      Work/output directory (default: work/)
--f FILELIST    Read source files from filelist
--clk SIGNAL    Clock signal name (default: clk_i)
--rst SIGNAL    Reset signal name (default: rst_ni)
--v             Verbose output
+-top MODULE      Top module name (required)
+-work DIR        Work/output directory (default: work/)
+-f FILELIST      Read source files from filelist
+-clk SIGNAL      Clock signal name (default: clk_i)
+-rst SIGNAL      Reset signal name (default: rst_ni)
+-D DEFINE        Preprocessor define (passed to slang)
+--mem-shadow     Enable memory shadow ports
+-v               Verbose output
 ```
 
 This produces a work directory containing:
@@ -117,8 +162,7 @@ This produces a work directory containing:
 build/
   transformed.v            # FPGA-synthesizable Verilog
   loom_dpi_dispatch.so     # Compiled dispatch table
-  dpi_meta.json            # DPI metadata
-  scan_map.json            # Scan chain map
+  scan_map.pb              # Scan chain map (protobuf)
 ```
 
 ### 2. Compile User DPI Code
@@ -133,9 +177,7 @@ cc -shared -fPIC -I$LOOM_HOME/src/include -o build/libdpi.so dpi_impl.c
 ### 3. Build the Verilator Simulation
 
 Build a Verilator binary from the transformed Verilog and Loom
-infrastructure RTL. The included `src/util/mk/loom_sim.mk` provides a pattern
-rule for this (see [Test Integration](#test-integration) below), or
-build manually:
+infrastructure RTL:
 
 ```bash
 verilator --binary --timing \
@@ -176,6 +218,7 @@ Options:
 -sim BINARY     Simulation binary name (default: Vloom_shell)
 -f SCRIPT       Run commands from script file
 -s SOCKET       Socket path (default: auto PID-based)
+-timeout NS     Simulation timeout in ns
 -t TRANSPORT    Transport: socket (default) or xdma
 -d DEVICE       XDMA device path or PCI BDF (default: /dev/xdma0_user)
 --no-sim        Don't launch sim (connect to existing)
@@ -193,30 +236,6 @@ loomx -work build/ -t xdma -d 0000:17:00.0        # PCI BDF (mmap BAR0)
 loomx -work build/ -t xdma -f fpga_script.txt      # scripted FPGA control
 ```
 
-The `-work` directory is always required (for loading the DPI dispatch table).
-The `-sim` flag cannot be combined with `-t xdma`.
-
-## Examples
-
-### Scalar DPI (`tests/e2e/`)
-
-An LFSR-based test that calls `dpi_add` eight times, verifies results
-via `$display`, and exits with `$finish`:
-
-```bash
-cd tests/e2e && LOOM_HOME=../.. make test
-```
-
-### Open array DPI (`tests/dpi_open_array/`)
-
-Exercises input and output open arrays — fills an array via
-`dpi_fill_array`, reads it back via `dpi_sum_array`, and verifies
-the round-trip:
-
-```bash
-cd tests/dpi_open_array && LOOM_HOME=../.. make test
-```
-
 ## How It Works
 
 ```
@@ -225,18 +244,20 @@ cd tests/dpi_open_array && LOOM_HOME=../.. make test
    │  DUT.sv  │─────▶│   Yosys    │─────▶│ Verilator │─────▶│   Host   │
    │ (DPI-C)  │      │  + passes  │      │   sim     │      │  shell   │
    └──────────┘      └────────────┘      └───────────┘      └──────────┘
-                      scan_insert              ▲                  │
-                      loom_instrument          │    Unix socket   │
-                      emu_top            ┌─────┴───────┐          │
-                           │             │  AXI-Lite   │◀─────────┘
-                           ▼             │    BFM      │  DPI dispatch
-                      transformed.v      └─────────────┘  + user .so
+                      reset_extract            ▲                  │
+                      scan_insert              │    Unix socket   │
+                      loom_instrument    ┌─────┴───────┐          │
+                      emu_top            │  AXI-Lite   │◀─────────┘
+                           │             │    BFM      │  DPI dispatch
+                           ▼             └─────────────┘  + user .so
+                      transformed.v
                       dispatch.so
 ```
 
-1. **`loomc`** runs Yosys with Loom passes to transform DPI calls into a
-   hardware mailbox interface, insert scan chains, and generate the
-   emulation wrapper. It also compiles the generated dispatch table.
+1. **`loomc`** runs Yosys with Loom passes to extract reset values, insert
+   scan chains, transform DPI calls into a hardware mailbox interface, and
+   generate the emulation wrapper. It also compiles the generated dispatch
+   table.
 
 2. The user builds a **Verilator simulation** from the transformed Verilog
    and Loom infrastructure RTL.
@@ -244,3 +265,7 @@ cd tests/dpi_open_array && LOOM_HOME=../.. make test
 3. **`loomx`** loads the dispatch and user DPI shared objects, launches the
    simulation, connects via a Unix domain socket through the AXI-Lite BFM,
    and services DPI calls in real time.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).
