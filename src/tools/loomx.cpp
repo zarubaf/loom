@@ -343,6 +343,11 @@ int main(int argc, char **argv) {
 
     // Run shell
     loom::Shell shell(ctx, dpi_service);
+
+    // Load scan map for named variable dump/inspect
+    auto scan_map_path = work / "scan_map.pb";
+    shell.load_scan_map(scan_map_path.string());
+
     int exit_code;
     if (!opts.script_file.empty()) {
         exit_code = shell.run_script(opts.script_file);

@@ -29,6 +29,7 @@ tests/**/obj_dir/
 
 *.vcd
 *.fst
+*.fst.hier
 *.vvp
 *.log
 

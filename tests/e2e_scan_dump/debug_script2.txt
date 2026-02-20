@@ -1,0 +1,8 @@
+# Debug script: test reads to different address spaces
+# Read emu_ctrl status (should work, address 0x0)
+read 0
+# Read DPI regfile (address 0x10000)
+read 10000
+# Read scan_ctrl status (address 0x20000)
+read 20000
+exit

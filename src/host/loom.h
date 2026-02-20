@@ -89,10 +89,9 @@ enum class State : uint8_t {
     Idle = 0,
     Running = 1,
     Frozen = 2,
-    Stepping = 3,
-    Snapshot = 4,
-    Restore = 5,
-    Error = 7,
+    Snapshot = 3,
+    Restore = 4,
+    Error = 5,
 };
 
 // ============================================================================
@@ -111,7 +110,6 @@ namespace reg {
     constexpr uint32_t Control = 0x04;
     constexpr uint32_t CycleLo = 0x08;
     constexpr uint32_t CycleHi = 0x0C;
-    constexpr uint32_t StepCount = 0x10;
     constexpr uint32_t ClkDiv = 0x14;
     constexpr uint32_t DutReset = 0x18;
     constexpr uint32_t NDpiFuncs = 0x20;
@@ -148,10 +146,9 @@ namespace reg {
 namespace cmd {
     constexpr uint32_t Start = 0x01;
     constexpr uint32_t Stop = 0x02;
-    constexpr uint32_t Step = 0x03;
-    constexpr uint32_t Reset = 0x04;
-    constexpr uint32_t Snapshot = 0x05;
-    constexpr uint32_t Restore = 0x06;
+    constexpr uint32_t Reset = 0x03;
+    constexpr uint32_t Snapshot = 0x04;
+    constexpr uint32_t Restore = 0x05;
 
     constexpr uint32_t ScanCapture = 0x01;
     constexpr uint32_t ScanRestore = 0x02;

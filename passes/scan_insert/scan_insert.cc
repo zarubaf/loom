@@ -11,25 +11,17 @@
  *
  * The chain connects: loom_scan_in -> FF1.D -> FF1.Q -> FF2.D -> ... -> loom_scan_out
  *
- * Generates a JSON mapping file that maps scan chain bit positions to original
- * flip-flop names for RTL simulation replay with $deposit.
+ * Generates a protobuf scan map file that maps scan chain bit positions to
+ * original flip-flop names grouped by variable.
  */
 
 #include "kernel/yosys.h"
 #include "kernel/sigtools.h"
+#include "loom_snapshot.pb.h"
 #include <fstream>
 
 USING_YOSYS_NAMESPACE
 PRIVATE_NAMESPACE_BEGIN
-
-// Scan chain element for mapping
-struct ScanElement {
-    std::string cell_name;      // Original FF cell name
-    std::string wire_name;      // Q output wire name (for $deposit)
-    int bit_index;              // Bit index within the FF (for multi-bit)
-    int chain_position;         // Position in scan chain (0 = first shifted out)
-    int width;                  // Total width of the FF
-};
 
 struct ScanInsertPass : public Pass {
     ScanInsertPass() : Pass("scan_insert", "Insert scan chains into the design") {}
@@ -43,8 +35,8 @@ struct ScanInsertPass : public Pass {
         log("    -chain_length N\n");
         log("        Maximum flip-flops per chain (default: all in one chain)\n");
         log("\n");
-        log("    -map <file.json>\n");
-        log("        Write scan chain mapping to JSON file for RTL replay.\n");
+        log("    -map <file.pb>\n");
+        log("        Write scan chain mapping to protobuf file.\n");
         log("        Maps bit positions to original flip-flop names.\n");
         log("\n");
         log("    -check_equiv\n");
@@ -83,6 +75,25 @@ struct ScanInsertPass : public Pass {
         return false;
     }
 
+    // Get the original HDL path for a wire, using the hdlname attribute.
+    // Falls back to the Yosys wire name with leading backslash stripped.
+    static std::string get_hdl_name(RTLIL::Wire *wire) {
+        if (wire->has_attribute(ID::hdlname)) {
+            // hdlname stores space-separated hierarchical components
+            std::string hdl = wire->get_string_attribute(ID::hdlname);
+            // Replace spaces with dots for hierarchical path
+            for (auto &ch : hdl) {
+                if (ch == ' ') ch = '.';
+            }
+            return hdl;
+        }
+        // Fallback: strip leading backslash from Yosys name
+        std::string name = wire->name.str();
+        if (!name.empty() && name[0] == '\\')
+            name = name.substr(1);
+        return name;
+    }
+
     void execute(std::vector<std::string> args, RTLIL::Design *design) override {
         log_header(design, "Executing SCAN_INSERT pass.\n");
 
@@ -108,36 +119,36 @@ struct ScanInsertPass : public Pass {
         }
         extra_args(args, argidx, design);
 
-        std::vector<ScanElement> all_elements;
+        // Collect variables across all modules
+        loom::ScanMap scan_map;
+        int total_chain_bits = 0;
 
         for (auto module : design->selected_modules()) {
             log("Processing module %s\n", log_id(module));
 
-            std::vector<ScanElement> elements;
-            if (check_equiv) {
-                run_scan_insert_with_equiv_check(module, chain_length, design, elements);
-            } else {
-                run_scan_insert(module, chain_length, elements);
-            }
-
-            // Add module prefix for hierarchical names
             std::string mod_name = module->name.str();
             if (mod_name[0] == '\\') mod_name = mod_name.substr(1);
 
-            for (auto &elem : elements) {
-                elem.cell_name = mod_name + "." + elem.cell_name;
-                elem.wire_name = mod_name + "." + elem.wire_name;
-                all_elements.push_back(elem);
+            if (check_equiv) {
+                run_scan_insert_with_equiv_check(module, chain_length, design,
+                                                  scan_map, total_chain_bits, mod_name);
+            } else {
+                run_scan_insert(module, chain_length,
+                                scan_map, total_chain_bits, mod_name);
             }
         }
 
+        scan_map.set_chain_length(total_chain_bits);
+
         // Write mapping file if requested
-        if (!map_file.empty() && !all_elements.empty()) {
-            write_scan_map(map_file, all_elements);
+        if (!map_file.empty() && scan_map.variables_size() > 0) {
+            write_scan_map(map_file, scan_map);
         }
     }
 
-    void run_scan_insert(RTLIL::Module *module, int /* chain_length */, std::vector<ScanElement> &elements) {
+    void run_scan_insert(RTLIL::Module *module, int /* chain_length */,
+                         loom::ScanMap &scan_map, int &chain_pos,
+                         const std::string &mod_name) {
         // Collect all flip-flop cells, skipping memory output registers
         std::vector<RTLIL::Cell*> dffs;
         int skipped_mem_ffs = 0;
@@ -179,7 +190,6 @@ struct ScanInsertPass : public Pass {
 
         // Track the previous Q output to chain to next FF
         RTLIL::SigSpec prev_q = RTLIL::SigSpec(scan_in);
-        int chain_pos = 0;  // Track position in scan chain
 
         // Process each flip-flop
         for (auto dff : dffs) {
@@ -190,32 +200,30 @@ struct ScanInsertPass : public Pass {
 
             log("  Processing %s (width=%d)\n", log_id(dff), width);
 
-            // Get clean cell name (strip backslash prefix)
-            std::string cell_name = dff->name.str();
-            if (cell_name[0] == '\\') cell_name = cell_name.substr(1);
-
-            // Get Q wire name for $deposit target
-            std::string wire_name = cell_name;  // Default to cell name
+            // Resolve the HDL name via the Q output wire's hdlname attribute
+            std::string var_name;
             for (int i = 0; i < GetSize(q); i++) {
                 RTLIL::SigBit bit = q[i];
                 if (bit.wire) {
-                    std::string w_name = bit.wire->name.str();
-                    if (w_name[0] == '\\') w_name = w_name.substr(1);
-                    wire_name = w_name;
+                    var_name = get_hdl_name(bit.wire);
                     break;
                 }
             }
-
-            // Record mapping for each bit in this FF
-            for (int i = 0; i < width; i++) {
-                ScanElement elem;
-                elem.cell_name = cell_name;
-                elem.wire_name = wire_name;
-                elem.bit_index = i;
-                elem.chain_position = chain_pos + i;
-                elem.width = width;
-                elements.push_back(elem);
+            if (var_name.empty()) {
+                // Fallback to cell name
+                var_name = dff->name.str();
+                if (var_name[0] == '\\') var_name = var_name.substr(1);
             }
+
+            // Prepend module name for hierarchical path
+            std::string full_name = mod_name + "." + var_name;
+
+            // Record one ScanVariable per FF (grouped, not per-bit)
+            auto *var = scan_map.add_variables();
+            var->set_name(full_name);
+            var->set_width(width);
+            var->set_offset(chain_pos);
+
             chain_pos += width;
 
             // For multi-bit FFs, we do bit-serial scan:
@@ -260,7 +268,10 @@ struct ScanInsertPass : public Pass {
         log("  Added ports: loom_scan_enable (in), loom_scan_in (in), loom_scan_out (out)\n");
     }
 
-    void run_scan_insert_with_equiv_check(RTLIL::Module *module, int chain_length, RTLIL::Design *design, std::vector<ScanElement> &elements) {
+    void run_scan_insert_with_equiv_check(RTLIL::Module *module, int chain_length,
+                                           RTLIL::Design *design,
+                                           loom::ScanMap &scan_map, int &chain_pos,
+                                           const std::string &mod_name) {
         std::string orig_name = module->name.str();
         std::string gold_name = orig_name + "_gold";
         std::string gate_name = orig_name + "_gate";
@@ -274,7 +285,7 @@ struct ScanInsertPass : public Pass {
         design->add(gold);
 
         // Step 2: Run scan insertion on the original module
-        run_scan_insert(module, chain_length, elements);
+        run_scan_insert(module, chain_length, scan_map, chain_pos, mod_name);
 
         // Step 3: Create gate copy and tie off scan ports
         log("  Creating gate copy with scan ports tied off: %s\n", gate_name.c_str());
@@ -301,34 +312,19 @@ struct ScanInsertPass : public Pass {
         }
     }
 
-    void write_scan_map(const std::string &filename, const std::vector<ScanElement> &elements) {
-        std::ofstream f(filename);
+    void write_scan_map(const std::string &filename, const loom::ScanMap &scan_map) {
+        std::ofstream f(filename, std::ios::binary);
         if (!f.is_open()) {
             log_error("Cannot open scan map file '%s' for writing\n", filename.c_str());
         }
 
-        f << "{\n";
-        f << "  \"chain_length\": " << elements.size() << ",\n";
-        f << "  \"flops\": [\n";
-
-        for (size_t i = 0; i < elements.size(); i++) {
-            const auto &elem = elements[i];
-            f << "    {\n";
-            f << "      \"chain_position\": " << elem.chain_position << ",\n";
-            f << "      \"cell_name\": \"" << elem.cell_name << "\",\n";
-            f << "      \"wire_name\": \"" << elem.wire_name << "\",\n";
-            f << "      \"bit_index\": " << elem.bit_index << ",\n";
-            f << "      \"width\": " << elem.width << "\n";
-            f << "    }";
-            if (i < elements.size() - 1) f << ",";
-            f << "\n";
+        if (!scan_map.SerializeToOstream(&f)) {
+            log_error("Failed to serialize scan map to '%s'\n", filename.c_str());
         }
 
-        f << "  ]\n";
-        f << "}\n";
-
         f.close();
-        log("Wrote scan chain mapping to '%s' (%zu bits)\n", filename.c_str(), elements.size());
+        log("Wrote scan chain mapping to '%s' (%d variables, %u bits)\n",
+            filename.c_str(), scan_map.variables_size(), scan_map.chain_length());
     }
 
     void tie_off_scan_ports(RTLIL::Module *module) {

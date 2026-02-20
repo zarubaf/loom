@@ -1,21 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 // Loom Emulation Controller
 //
-// Controls the emulation state machine (run/stop/step/reset/snapshot/restore),
+// Controls the emulation state machine (run/stop/reset/snapshot/restore),
 // bridges DUT DPI calls to the regfile, and generates the loom_en signal that
 // enables DUT flip-flops.
 //
 // loom_en_o is the single authoritative enable for the DUT:
 //   loom_en = emu_running && (!dut_dpi_valid || dpi_ack)
-// where emu_running accounts for state (Running/Stepping) and time compare,
+// where emu_running accounts for state (Running) and time compare,
 // and the DPI term is the combinational fast path.
+// Stepping is implemented in software by setting time_cmp = time + N
+// then issuing CMD_START.
 //
 // Register Map (offset from base 0x0000):
 //   0x00  EMU_STATUS       R     Current emulation state
 //   0x04  EMU_CONTROL      W     Command register
 //   0x08  EMU_CYCLE_LO     R     DUT cycle counter [31:0]
 //   0x0C  EMU_CYCLE_HI     R     DUT cycle counter [63:32]
-//   0x10  EMU_STEP_COUNT   W     Number of cycles for STEP command
 //   0x14  EMU_CLK_DIV      W     Clock divider (0 = full speed)
 //   0x18  DUT_RESET_CTRL   W     Bit 0: assert reset, Bit 1: release reset
 //   0x20  N_DPI_FUNCS      R     Number of DPI functions
@@ -110,10 +111,9 @@ module loom_emu_ctrl #(
         StIdle      = 3'd0,
         StRunning   = 3'd1,
         StFrozen    = 3'd2,
-        StStepping  = 3'd3,
-        StSnapshot  = 3'd4,
-        StRestore   = 3'd5,
-        StError     = 3'd7
+        StSnapshot  = 3'd3,
+        StRestore   = 3'd4,
+        StError     = 3'd5
     } emu_state_e;
 
     typedef enum logic [1:0] {
@@ -125,10 +125,9 @@ module loom_emu_ctrl #(
 
     localparam logic [7:0] CMD_START    = 8'h01;
     localparam logic [7:0] CMD_STOP     = 8'h02;
-    localparam logic [7:0] CMD_STEP     = 8'h03;
-    localparam logic [7:0] CMD_RESET    = 8'h04;
-    localparam logic [7:0] CMD_SNAPSHOT = 8'h05;
-    localparam logic [7:0] CMD_RESTORE  = 8'h06;
+    localparam logic [7:0] CMD_RESET    = 8'h03;
+    localparam logic [7:0] CMD_SNAPSHOT = 8'h04;
+    localparam logic [7:0] CMD_RESTORE  = 8'h05;
 
     // =========================================================================
     // Signals
@@ -139,8 +138,6 @@ module loom_emu_ctrl #(
     logic [63:0] cycle_count_d, cycle_count_q;
     logic [63:0] time_count_d,  time_count_q;
     logic [63:0] time_cmp_d,    time_cmp_q;
-    logic [31:0] step_count_d,  step_count_q;
-    logic [31:0] step_remaining_d, step_remaining_q;
     logic [31:0] clk_div_d,     clk_div_q;
     logic        dut_reset_d,   dut_reset_q;
     logic [31:0] irq_enable_d,  irq_enable_q;
@@ -178,8 +175,6 @@ module loom_emu_ctrl #(
     // Write-side register update requests (from AXI write comb → main comb)
     logic        wr_cmd_valid;
     logic [7:0]  wr_cmd_data;
-    logic        wr_step_count_en;
-    logic [31:0] wr_step_count_data;
     logic        wr_clk_div_en;
     logic [31:0] wr_clk_div_data;
     logic        wr_reset_assert;
@@ -197,13 +192,7 @@ module loom_emu_ctrl #(
     // loom_en: Single Authoritative DUT Enable (combinational)
     // =========================================================================
 
-    always_comb begin
-        unique case (state_q)
-            StRunning:  emu_running = (time_count_q < time_cmp_q);
-            StStepping: emu_running = (step_remaining_q > 0) && (time_count_q < time_cmp_q);
-            default:    emu_running = 1'b0;
-        endcase
-    end
+    assign emu_running = (state_q == StRunning) && (time_count_q < time_cmp_q);
 
     assign dpi_ack = (dpi_state_q == StDpiComplete);
     assign loom_en_o = emu_running && (!dut_dpi_valid_i || dpi_ack);
@@ -220,7 +209,6 @@ module loom_emu_ctrl #(
                 if (cmd_valid_q) begin
                     unique case (cmd_reg_q)
                         CMD_START: state_d = StRunning;
-                        CMD_STEP:  state_d = StStepping;
                         default:   ;
                     endcase
                 end
@@ -242,22 +230,11 @@ module loom_emu_ctrl #(
                 if (cmd_valid_q) begin
                     unique case (cmd_reg_q)
                         CMD_START:    state_d = StRunning;
-                        CMD_STEP:     state_d = StStepping;
                         CMD_RESET:    state_d = StIdle;
                         CMD_SNAPSHOT: state_d = StSnapshot;
                         CMD_RESTORE:  state_d = StRestore;
                         default:      ;
                     endcase
-                end
-            end
-
-            StStepping: begin
-                if (step_remaining_q == 0 || (step_remaining_q == 1 && loom_en_o)
-                    || time_count_q >= time_cmp_q) begin
-                    state_d = StFrozen;
-                end
-                if (cmd_valid_q && cmd_reg_q == CMD_STOP) begin
-                    state_d = StFrozen;
                 end
             end
 
@@ -358,13 +335,11 @@ module loom_emu_ctrl #(
         // Defaults: hold current value
         cycle_count_d    = cycle_count_q;
         time_count_d     = time_count_q;
-        step_remaining_d = step_remaining_q;
         state_changed_d  = (state_q != state_d);
         cmd_valid_d      = 1'b0;  // one-shot
         cmd_reg_d        = cmd_reg_q;
         finish_reg_d     = finish_reg_q;
         dut_reset_d      = dut_reset_q;
-        step_count_d     = step_count_q;
         clk_div_d        = clk_div_q;
         irq_enable_d     = irq_enable_q;
         time_cmp_d       = time_cmp_q;
@@ -381,13 +356,6 @@ module loom_emu_ctrl #(
             time_count_d = 64'd0;
         end else if (loom_en_o) begin
             time_count_d = time_count_q + 64'd1;
-        end
-
-        // Step counter
-        if (state_q != StStepping && state_d == StStepping) begin
-            step_remaining_d = step_count_q;
-        end else if (state_q == StStepping && loom_en_o && step_remaining_q > 0) begin
-            step_remaining_d = step_remaining_q - 32'd1;
         end
 
         // DUT reset
@@ -408,7 +376,6 @@ module loom_emu_ctrl #(
             cmd_reg_d   = wr_cmd_data;
             cmd_valid_d = 1'b1;
         end
-        if (wr_step_count_en)  step_count_d  = wr_step_count_data;
         if (wr_clk_div_en)     clk_div_d     = wr_clk_div_data;
         if (wr_irq_enable_en)  irq_enable_d  = wr_irq_enable_data;
         if (wr_time_cmp_lo_en) time_cmp_d[31:0]  = wr_time_cmp_lo_data;
@@ -428,8 +395,6 @@ module loom_emu_ctrl #(
             cycle_count_q    <= 64'd0;
             time_count_q     <= 64'd0;
             time_cmp_q       <= 64'd0;
-            step_count_q     <= 32'd1;
-            step_remaining_q <= 32'd0;
             clk_div_q        <= 32'd0;
             dut_reset_q      <= 1'b1;
             irq_enable_q     <= 32'd0;
@@ -444,8 +409,6 @@ module loom_emu_ctrl #(
             cycle_count_q    <= cycle_count_d;
             time_count_q     <= time_count_d;
             time_cmp_q       <= time_cmp_d;
-            step_count_q     <= step_count_d;
-            step_remaining_q <= step_remaining_d;
             clk_div_q        <= clk_div_d;
             dut_reset_q      <= dut_reset_d;
             irq_enable_q     <= irq_enable_d;
@@ -493,7 +456,6 @@ module loom_emu_ctrl #(
                 6'h00:   rdata_d = {29'd0, state_q};
                 6'h02:   rdata_d = cycle_count_q[31:0];
                 6'h03:   rdata_d = cycle_count_q[63:32];
-                6'h04:   rdata_d = step_count_q;
                 6'h05:   rdata_d = clk_div_q;
                 6'h08:   rdata_d = N_DPI_FUNCS;
                 6'h09:   rdata_d = N_MEMORIES;
@@ -559,8 +521,6 @@ module loom_emu_ctrl #(
         // Default: no register writes this cycle
         wr_cmd_valid        = 1'b0;
         wr_cmd_data         = 8'd0;
-        wr_step_count_en    = 1'b0;
-        wr_step_count_data  = 32'd0;
         wr_clk_div_en       = 1'b0;
         wr_clk_div_data     = 32'd0;
         wr_reset_assert     = 1'b0;
@@ -589,10 +549,6 @@ module loom_emu_ctrl #(
                 6'h01: begin  // EMU_CONTROL
                     wr_cmd_valid = 1'b1;
                     wr_cmd_data  = wr_data_q[7:0];
-                end
-                6'h04: begin  // EMU_STEP_COUNT
-                    wr_step_count_en   = 1'b1;
-                    wr_step_count_data = wr_data_q;
                 end
                 6'h05: begin  // EMU_CLK_DIV
                     wr_clk_div_en   = 1'b1;

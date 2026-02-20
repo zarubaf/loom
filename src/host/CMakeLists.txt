@@ -18,7 +18,7 @@ target_include_directories(loom_host PUBLIC
     ${CMAKE_SOURCE_DIR}/src/dpi
 )
 target_compile_features(loom_host PUBLIC cxx_std_20)
-target_link_libraries(loom_host PUBLIC replxx::replxx)
+target_link_libraries(loom_host PUBLIC replxx::replxx loom_proto)
 
 # --- Object library: main entry point (linked by e2e tests with user DPI code) ---
 add_library(loom_sim_main OBJECT loom_sim_main.cpp)

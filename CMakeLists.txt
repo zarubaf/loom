@@ -20,6 +20,10 @@ include(cmake/FetchYosysSlang.cmake)  # SystemVerilog frontend (includes slang)
 include(cmake/FetchVerilator.cmake)
 include(cmake/FetchGoogleTest.cmake)
 include(cmake/FetchReplxx.cmake)
+include(cmake/FetchProtobuf.cmake)
+
+# ---------- Protobuf-generated library ----------
+add_subdirectory(src/proto)
 
 # ---------- Plugins ----------
 add_subdirectory(passes)

@@ -162,6 +162,17 @@ endfunction()
 # mem_shadow E2E test
 add_mem_shadow_e2e_test(mem_shadow_e2e)
 
+# End-to-end scan dump test using loomc/loomx
+add_test(NAME e2e_scan_dump
+    COMMAND make test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/e2e_scan_dump
+)
+set_tests_properties(e2e_scan_dump PROPERTIES
+    DEPENDS "yosys_ext;yosys_slang_ext;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
+    TIMEOUT 120
+    ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
+)
+
 # End-to-end shell register access test using loomc/loomx
 add_test(NAME e2e_shell_regaccess
     COMMAND make test

@@ -186,7 +186,7 @@ std::string build_yosys_script(const Options &opts,
     ys << "opt\n";
 
     // Scan insert
-    ys << "scan_insert -map scan_map.json\n";
+    ys << "scan_insert -map scan_map.pb\n";
 
     // DPI instrument
     ys << "loom_instrument -json_out dpi_meta.json"
@@ -325,7 +325,7 @@ int main(int argc, char **argv) {
     logger.info("  transformed.v");
     logger.info("  loom_dpi_dispatch.so");
     logger.info("  dpi_meta.json");
-    logger.info("  scan_map.json");
+    logger.info("  scan_map.pb");
 
     return 0;
 }

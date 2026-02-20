@@ -72,6 +72,8 @@ module loom_axil_demux #(
     endfunction
 
     localparam int SEL_W = $clog2(N_MASTERS + 1);
+    // Master index width — enough bits for 0..N_MASTERS-1
+    localparam int IDX_W = N_MASTERS > 1 ? $clog2(N_MASTERS) : 1;
 
     // =========================================================================
     // Read Path
@@ -93,14 +95,14 @@ module loom_axil_demux #(
         end
         if (s_axil_arvalid_i && !rd_in_progress_q &&
             rd_slave_sel < N_MASTERS[SEL_W-1:0]) begin
-            m_axil_arvalid_o[rd_slave_sel[SEL_W-2:0]] = 1'b1;
+            m_axil_arvalid_o[rd_slave_sel[IDX_W-1:0]] = 1'b1;
         end
     end
 
     // Ready mux
     always_comb begin
         if (!rd_in_progress_q && rd_slave_sel < N_MASTERS[SEL_W-1:0])
-            s_axil_arready_o = m_axil_arready_i[rd_slave_sel[SEL_W-2:0]];
+            s_axil_arready_o = m_axil_arready_i[rd_slave_sel[IDX_W-1:0]];
         else
             s_axil_arready_o = 1'b0;
     end
@@ -163,7 +165,7 @@ module loom_axil_demux #(
         end
         if (s_axil_awvalid_i && !wr_in_progress_q &&
             wr_slave_sel < N_MASTERS[SEL_W-1:0]) begin
-            m_axil_awvalid_o[wr_slave_sel[SEL_W-2:0]] = 1'b1;
+            m_axil_awvalid_o[wr_slave_sel[IDX_W-1:0]] = 1'b1;
         end
     end
 
@@ -176,15 +178,15 @@ module loom_axil_demux #(
         end
         if (s_axil_wvalid_i && !wr_in_progress_q &&
             wr_slave_sel < N_MASTERS[SEL_W-1:0]) begin
-            m_axil_wvalid_o[wr_slave_sel[SEL_W-2:0]] = 1'b1;
+            m_axil_wvalid_o[wr_slave_sel[IDX_W-1:0]] = 1'b1;
         end
     end
 
     // Ready mux
     always_comb begin
         if (!wr_in_progress_q && wr_slave_sel < N_MASTERS[SEL_W-1:0]) begin
-            s_axil_awready_o = m_axil_awready_i[wr_slave_sel[SEL_W-2:0]];
-            s_axil_wready_o  = m_axil_wready_i[wr_slave_sel[SEL_W-2:0]];
+            s_axil_awready_o = m_axil_awready_i[wr_slave_sel[IDX_W-1:0]];
+            s_axil_wready_o  = m_axil_wready_i[wr_slave_sel[IDX_W-1:0]];
         end else begin
             s_axil_awready_o = 1'b0;
             s_axil_wready_o  = 1'b0;

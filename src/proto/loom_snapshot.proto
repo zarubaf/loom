@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: Apache-2.0
+syntax = "proto3";
+package loom;
+option optimize_for = LITE_RUNTIME;
+
+// One per FF/register — already grouped at compile time
+message ScanVariable {
+  string name = 1;     // original HDL path from hdlname attr, dot-separated
+  uint32 width = 2;    // total bit width of the variable
+  uint32 offset = 3;   // starting chain position (bits [offset..offset+width-1])
+}
+
+message ScanMap {
+  uint32 chain_length = 1;
+  repeated ScanVariable variables = 2;
+}
+
+// Single state snapshot (dump file)
+message Snapshot {
+  uint64 cycle_count = 1;
+  uint64 dut_time = 2;
+  uint32 design_id = 3;
+  bytes  raw_scan_data = 4;        // raw chain words packed LE
+  ScanMap scan_map = 5;            // embedded — makes file self-contained
+}

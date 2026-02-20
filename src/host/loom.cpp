@@ -105,9 +105,14 @@ Result<void> Context::stop() {
 }
 
 Result<void> Context::step(uint32_t n_cycles) {
-    auto result = write32(addr::EmuCtrl + reg::StepCount, n_cycles);
-    if (!result.ok()) return result;
-    return write32(addr::EmuCtrl + reg::Control, cmd::Step);
+    // SW-based stepping: set time_cmp = current_time + N, then start
+    auto time = get_time();
+    if (!time.ok()) return time.error();
+
+    auto rc = set_time_compare(time.value() + n_cycles);
+    if (!rc.ok()) return rc;
+
+    return write32(addr::EmuCtrl + reg::Control, cmd::Start);
 }
 
 Result<void> Context::reset() {

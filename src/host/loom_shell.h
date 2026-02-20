@@ -9,6 +9,7 @@
 
 #include "loom.h"
 #include "loom_dpi_service.h"
+#include "loom_snapshot.pb.h"
 
 #include <functional>
 #include <string>
@@ -39,6 +40,10 @@ public:
     Shell(const Shell&) = delete;
     Shell& operator=(const Shell&) = delete;
 
+    // Load a scan map from a protobuf file.
+    // Must be called before dump/inspect/deposit_script can decode variables.
+    void load_scan_map(const std::string& path);
+
     // Run interactive REPL loop. Returns process exit code.
     int run_interactive();
 
@@ -66,8 +71,15 @@ private:
     int cmd_reset(const std::vector<std::string>& args);
     int cmd_read(const std::vector<std::string>& args);
     int cmd_write(const std::vector<std::string>& args);
+    int cmd_inspect(const std::vector<std::string>& args);
+    int cmd_deposit_script(const std::vector<std::string>& args);
     int cmd_help(const std::vector<std::string>& args);
     int cmd_exit(const std::vector<std::string>& args);
+
+    // Value extraction helpers
+    static uint64_t extract_variable(const std::vector<uint32_t>& raw,
+                                     uint32_t offset, uint32_t width);
+    static std::string format_hex(uint64_t value, uint32_t width);
 
     Context& ctx_;
     DpiService& dpi_service_;
@@ -75,6 +87,8 @@ private:
     std::unique_ptr<replxx::Replxx> rx_;
     std::atomic<bool> interrupted_{false};
     bool exit_requested_ = false;
+    ScanMap scan_map_;
+    bool scan_map_loaded_ = false;
 };
 
 } // namespace loom

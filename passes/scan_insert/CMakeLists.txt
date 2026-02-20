@@ -11,6 +11,7 @@ target_compile_definitions(scan_insert PRIVATE
     YOSYS_ENABLE_GLOB
     YOSYS_ENABLE_ZLIB
 )
+target_link_libraries(scan_insert PRIVATE loom_proto)
 # On macOS, use -undefined dynamic_lookup to allow unresolved symbols
 if(APPLE)
     set_target_properties(scan_insert PROPERTIES
@@ -25,8 +26,3 @@ else()
     )
 endif()
 add_dependencies(scan_insert yosys_ext)
-
-# Unit tests
-# add_executable(scan_insert_test scan_insert_test.cc)
-# target_link_libraries(scan_insert_test PRIVATE libyosys GTest::gtest_main)
-# gtest_discover_tests(scan_insert_test)

@@ -1,0 +1,12 @@
+# Debug script: manually test scan capture
+step 4
+status
+# Read scan status register
+read 20000
+# Clear done flag
+write 20000 2
+# Trigger capture (CMD_CAPTURE = 0x01)
+write 20004 1
+# Read scan status again (should show done)
+read 20000
+exit

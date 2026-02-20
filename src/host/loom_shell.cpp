@@ -53,7 +53,6 @@ static const char* state_name(State s) {
     case State::Idle:     return "Idle";
     case State::Running:  return "Running";
     case State::Frozen:   return "Frozen";
-    case State::Stepping: return "Stepping";
     case State::Snapshot: return "Snapshot";
     case State::Restore:  return "Restore";
     case State::Error:    return "Error";
@@ -74,6 +73,61 @@ Shell::Shell(Context& ctx, DpiService& dpi_service)
 Shell::~Shell() {
     // Save history on destruction
     rx_->history_save(history_path());
+}
+
+// ============================================================================
+// Scan Map Loading
+// ============================================================================
+
+void Shell::load_scan_map(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f.is_open()) {
+        logger.debug("No scan map at %s", path.c_str());
+        return;
+    }
+
+    if (!scan_map_.ParseFromIstream(&f)) {
+        logger.warning("Failed to parse scan map: %s", path.c_str());
+        return;
+    }
+
+    scan_map_loaded_ = true;
+    logger.info("Loaded scan map: %d variables, %u bits",
+                scan_map_.variables_size(), scan_map_.chain_length());
+}
+
+// ============================================================================
+// Value Extraction
+// ============================================================================
+
+uint64_t Shell::extract_variable(const std::vector<uint32_t>& raw,
+                                 uint32_t offset, uint32_t width) {
+    uint64_t value = 0;
+    for (uint32_t i = 0; i < width && i < 64; i++) {
+        uint32_t chain_pos = offset + i;
+        uint32_t word_idx = chain_pos / 32;
+        uint32_t bit_in_word = chain_pos % 32;
+        if (word_idx < raw.size() && ((raw[word_idx] >> bit_in_word) & 1)) {
+            value |= uint64_t(1) << i;
+        }
+    }
+    return value;
+}
+
+std::string Shell::format_hex(uint64_t value, uint32_t width) {
+    // Number of hex digits needed
+    int hex_digits = (width + 3) / 4;
+    if (hex_digits < 1) hex_digits = 1;
+
+    char buf[32];
+    if (width <= 32) {
+        std::snprintf(buf, sizeof(buf), "0x%0*x", hex_digits,
+                      static_cast<uint32_t>(value));
+    } else {
+        std::snprintf(buf, sizeof(buf), "0x%0*llx", hex_digits,
+                      static_cast<unsigned long long>(value));
+    }
+    return buf;
 }
 
 // ============================================================================
@@ -118,9 +172,10 @@ void Shell::register_commands() {
     commands_.push_back({
         "dump", {"d"},
         "Capture and display scan chain",
-        "Usage: dump\n"
+        "Usage: dump [<file.pb>]\n"
         "  Stop emulation if running, perform scan capture, and display\n"
-        "  the captured scan chain data.",
+        "  the captured scan chain data with named variables.\n"
+        "  If a filename is given, serialize a Snapshot protobuf to that file.",
         [this](const auto& args) { return cmd_dump(args); }
     });
     commands_.push_back({
@@ -145,6 +200,23 @@ void Shell::register_commands() {
         "  Write a 32-bit value to the given hex address.\n"
         "  Example: write 0x04 0x01",
         [this](const auto& args) { return cmd_write(args); }
+    });
+    commands_.push_back({
+        "inspect", {},
+        "Inspect a saved snapshot",
+        "Usage: inspect <file.pb> [<var>]\n"
+        "  Load a Snapshot protobuf and display metadata + variable values.\n"
+        "  If <var> is given, filter variables by name prefix.",
+        [this](const auto& args) { return cmd_inspect(args); }
+    });
+    commands_.push_back({
+        "deposit_script", {},
+        "Generate $deposit SystemVerilog from snapshot",
+        "Usage: deposit_script <file.pb> [<output.sv>]\n"
+        "  Generate SystemVerilog $deposit statements from a snapshot file.\n"
+        "  Paths come from the original HDL hierarchy stored in the scan map.\n"
+        "  If no output file is given, prints to stdout.",
+        [this](const auto& args) { return cmd_deposit_script(args); }
     });
     commands_.push_back({
         "help", {"h", "?"},
@@ -193,6 +265,23 @@ void Shell::setup_replxx() {
     rx_->set_completion_callback(
         [this](const std::string& input, int& context_len) {
             replxx::Replxx::completions_t completions;
+
+            // Check if we're completing the second argument of certain commands
+            auto tokens = tokenize(input);
+            if (tokens.size() >= 1) {
+                const auto *cmd = find_command(tokens[0]);
+                bool is_file_cmd = cmd && (cmd->name == "dump" ||
+                                           cmd->name == "inspect" ||
+                                           cmd->name == "deposit_script");
+
+                if (is_file_cmd && tokens.size() >= 2) {
+                    // Complete *.pb files — not implemented here (filesystem
+                    // completion would require OS-specific listing). Return
+                    // empty to let the shell fall through.
+                    return completions;
+                }
+            }
+
             context_len = static_cast<int>(input.size());
             for (const auto& cmd : commands_) {
                 if (cmd.name.compare(0, input.size(), input) == 0) {
@@ -460,13 +549,15 @@ int Shell::cmd_step(const std::vector<std::string>& args) {
     // Ensure DUT reset is released
     ctx_.dut_reset(false);
 
+    // SW-based step: set time_cmp = time + N, then CMD_START
     auto rc = ctx_.step(n);
     if (!rc.ok()) {
         logger.error("Failed to step");
         return -1;
     }
 
-    // Wait for stepping to complete and service DPI calls during it
+    // Wait for DUT to reach time_cmp (state transitions Running → Frozen)
+    // and service DPI calls during the run
     while (true) {
         int svc = dpi_service_.service_once(ctx_);
         if (svc == static_cast<int>(Error::Shutdown)) {
@@ -476,7 +567,7 @@ int Shell::cmd_step(const std::vector<std::string>& args) {
 
         auto st = ctx_.get_state();
         if (!st.ok()) break;
-        if (st.value() != State::Stepping) break;
+        if (st.value() != State::Running) break;
         usleep(1000);
     }
 
@@ -531,11 +622,14 @@ int Shell::cmd_status(const std::vector<std::string>& /*args*/) {
 // Command: dump
 // ============================================================================
 
-int Shell::cmd_dump(const std::vector<std::string>& /*args*/) {
+int Shell::cmd_dump(const std::vector<std::string>& args) {
     if (ctx_.scan_chain_length() == 0) {
         logger.info("No scan chain in design");
         return 0;
     }
+
+    // Ensure DUT reset is released (scan chain doesn't shift while reset is asserted)
+    ctx_.dut_reset(false);
 
     // Stop if running
     auto st = ctx_.get_state();
@@ -551,7 +645,7 @@ int Shell::cmd_dump(const std::vector<std::string>& /*args*/) {
         return -1;
     }
 
-    // Read and display
+    // Read raw data
     auto data = ctx_.scan_read_data();
     if (!data.ok()) {
         logger.error("Failed to read scan data");
@@ -561,8 +655,247 @@ int Shell::cmd_dump(const std::vector<std::string>& /*args*/) {
     const auto& scan = data.value();
     std::printf("  Scan chain: %u bits (%zu words)\n",
                 ctx_.scan_chain_length(), scan.size());
-    for (size_t i = 0; i < scan.size(); i++) {
-        std::printf("  [%2zu] 0x%08x\n", i, scan[i]);
+
+    // Display named variables if scan map is loaded
+    if (scan_map_loaded_ && scan_map_.variables_size() > 0) {
+        // Find max name length for alignment
+        size_t max_name = 0;
+        for (const auto& var : scan_map_.variables()) {
+            max_name = std::max(max_name, var.name().size());
+        }
+
+        for (const auto& var : scan_map_.variables()) {
+            uint64_t val = extract_variable(scan, var.offset(), var.width());
+            std::printf("  %-*s [%2u] = %s\n",
+                        static_cast<int>(max_name), var.name().c_str(),
+                        var.width(), format_hex(val, var.width()).c_str());
+        }
+    } else {
+        // Fallback: raw words
+        for (size_t i = 0; i < scan.size(); i++) {
+            std::printf("  [%2zu] 0x%08x\n", i, scan[i]);
+        }
+    }
+
+    // Save snapshot to file if requested
+    if (args.size() > 1) {
+        const std::string& filename = args[1];
+
+        Snapshot snapshot;
+
+        auto cycles = ctx_.get_cycle_count();
+        if (cycles.ok())
+            snapshot.set_cycle_count(cycles.value());
+
+        auto time_val = ctx_.get_time();
+        if (time_val.ok())
+            snapshot.set_dut_time(time_val.value());
+
+        snapshot.set_design_id(ctx_.design_id());
+
+        // Pack raw scan data as LE bytes
+        std::string raw_bytes(scan.size() * 4, '\0');
+        for (size_t i = 0; i < scan.size(); i++) {
+            raw_bytes[i * 4 + 0] = static_cast<char>((scan[i] >>  0) & 0xFF);
+            raw_bytes[i * 4 + 1] = static_cast<char>((scan[i] >>  8) & 0xFF);
+            raw_bytes[i * 4 + 2] = static_cast<char>((scan[i] >> 16) & 0xFF);
+            raw_bytes[i * 4 + 3] = static_cast<char>((scan[i] >> 24) & 0xFF);
+        }
+        snapshot.set_raw_scan_data(raw_bytes);
+
+        // Embed scan map for self-contained file
+        if (scan_map_loaded_) {
+            *snapshot.mutable_scan_map() = scan_map_;
+        }
+
+        std::ofstream out(filename, std::ios::binary);
+        if (!out.is_open()) {
+            logger.error("Cannot open %s for writing", filename.c_str());
+            return -1;
+        }
+        if (!snapshot.SerializeToOstream(&out)) {
+            logger.error("Failed to serialize snapshot to %s", filename.c_str());
+            return -1;
+        }
+        logger.info("Snapshot saved to %s", filename.c_str());
+    }
+
+    return 0;
+}
+
+// ============================================================================
+// Command: inspect
+// ============================================================================
+
+int Shell::cmd_inspect(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        logger.error("Usage: inspect <file.pb> [<var>]");
+        return -1;
+    }
+
+    const std::string& filename = args[1];
+    std::string filter;
+    if (args.size() > 2)
+        filter = args[2];
+
+    // Load snapshot
+    std::ifstream in(filename, std::ios::binary);
+    if (!in.is_open()) {
+        logger.error("Cannot open %s", filename.c_str());
+        return -1;
+    }
+
+    Snapshot snapshot;
+    if (!snapshot.ParseFromIstream(&in)) {
+        logger.error("Failed to parse snapshot: %s", filename.c_str());
+        return -1;
+    }
+
+    // Display metadata
+    std::printf("  File:       %s\n", filename.c_str());
+    std::printf("  Cycle:      %llu\n",
+                static_cast<unsigned long long>(snapshot.cycle_count()));
+    std::printf("  DUT time:   %llu\n",
+                static_cast<unsigned long long>(snapshot.dut_time()));
+    std::printf("  Design ID:  0x%08x\n", snapshot.design_id());
+
+    if (!snapshot.has_scan_map() || snapshot.scan_map().variables_size() == 0) {
+        std::printf("  (no embedded scan map)\n");
+        // Display raw data
+        const auto& raw = snapshot.raw_scan_data();
+        size_t n_words = raw.size() / 4;
+        for (size_t i = 0; i < n_words; i++) {
+            uint32_t w = static_cast<uint8_t>(raw[i * 4 + 0])
+                       | (static_cast<uint8_t>(raw[i * 4 + 1]) << 8)
+                       | (static_cast<uint8_t>(raw[i * 4 + 2]) << 16)
+                       | (static_cast<uint8_t>(raw[i * 4 + 3]) << 24);
+            std::printf("  [%2zu] 0x%08x\n", i, w);
+        }
+        return 0;
+    }
+
+    const auto& map = snapshot.scan_map();
+    std::printf("  Chain:      %u bits, %d variables\n",
+                map.chain_length(), map.variables_size());
+
+    // Unpack raw scan data to words
+    const auto& raw_bytes = snapshot.raw_scan_data();
+    size_t n_words = raw_bytes.size() / 4;
+    std::vector<uint32_t> raw(n_words);
+    for (size_t i = 0; i < n_words; i++) {
+        raw[i] = static_cast<uint8_t>(raw_bytes[i * 4 + 0])
+               | (static_cast<uint8_t>(raw_bytes[i * 4 + 1]) << 8)
+               | (static_cast<uint8_t>(raw_bytes[i * 4 + 2]) << 16)
+               | (static_cast<uint8_t>(raw_bytes[i * 4 + 3]) << 24);
+    }
+
+    // Find max name length for alignment
+    size_t max_name = 0;
+    for (const auto& var : map.variables()) {
+        if (filter.empty() || var.name().find(filter) == 0)
+            max_name = std::max(max_name, var.name().size());
+    }
+
+    for (const auto& var : map.variables()) {
+        if (!filter.empty() && var.name().find(filter) != 0)
+            continue;
+        uint64_t val = extract_variable(raw, var.offset(), var.width());
+        std::printf("  %-*s [%2u] = %s\n",
+                    static_cast<int>(max_name), var.name().c_str(),
+                    var.width(), format_hex(val, var.width()).c_str());
+    }
+
+    return 0;
+}
+
+// ============================================================================
+// Command: deposit_script
+// ============================================================================
+
+int Shell::cmd_deposit_script(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        logger.error("Usage: deposit_script <file.pb> [<output.sv>]");
+        return -1;
+    }
+
+    const std::string& filename = args[1];
+
+    // Load snapshot
+    std::ifstream in(filename, std::ios::binary);
+    if (!in.is_open()) {
+        logger.error("Cannot open %s", filename.c_str());
+        return -1;
+    }
+
+    Snapshot snapshot;
+    if (!snapshot.ParseFromIstream(&in)) {
+        logger.error("Failed to parse snapshot: %s", filename.c_str());
+        return -1;
+    }
+
+    if (!snapshot.has_scan_map() || snapshot.scan_map().variables_size() == 0) {
+        logger.error("Snapshot has no embedded scan map");
+        return -1;
+    }
+
+    const auto& map = snapshot.scan_map();
+
+    // Unpack raw scan data to words
+    const auto& raw_bytes = snapshot.raw_scan_data();
+    size_t n_words = raw_bytes.size() / 4;
+    std::vector<uint32_t> raw(n_words);
+    for (size_t i = 0; i < n_words; i++) {
+        raw[i] = static_cast<uint8_t>(raw_bytes[i * 4 + 0])
+               | (static_cast<uint8_t>(raw_bytes[i * 4 + 1]) << 8)
+               | (static_cast<uint8_t>(raw_bytes[i * 4 + 2]) << 16)
+               | (static_cast<uint8_t>(raw_bytes[i * 4 + 3]) << 24);
+    }
+
+    // Generate deposit statements
+    FILE* out = stdout;
+    std::ofstream out_file;
+    if (args.size() > 2) {
+        out_file.open(args[2]);
+        if (!out_file.is_open()) {
+            logger.error("Cannot open %s for writing", args[2].c_str());
+            return -1;
+        }
+    }
+
+    auto emit = [&](const char* fmt, ...) __attribute__((format(printf, 2, 3))) {
+        va_list ap;
+        va_start(ap, fmt);
+        if (out_file.is_open()) {
+            char buf[512];
+            std::vsnprintf(buf, sizeof(buf), fmt, ap);
+            out_file << buf;
+        } else {
+            std::vfprintf(out, fmt, ap);
+        }
+        va_end(ap);
+    };
+
+    emit("// Auto-generated by loom deposit_script\n");
+    emit("// Source: %s (cycle %llu)\n", filename.c_str(),
+         static_cast<unsigned long long>(snapshot.cycle_count()));
+
+    for (const auto& var : map.variables()) {
+        uint64_t val = extract_variable(raw, var.offset(), var.width());
+        int hex_digits = (var.width() + 3) / 4;
+        if (hex_digits < 1) hex_digits = 1;
+
+        if (var.width() <= 32) {
+            emit("$deposit(%s, %u'h%0*x);\n", var.name().c_str(),
+                 var.width(), hex_digits, static_cast<uint32_t>(val));
+        } else {
+            emit("$deposit(%s, %u'h%0*llx);\n", var.name().c_str(),
+                 var.width(), hex_digits,
+                 static_cast<unsigned long long>(val));
+        }
+    }
+
+    if (out_file.is_open()) {
+        logger.info("Deposit script written to %s", args[2].c_str());
     }
 
     return 0;
@@ -676,7 +1009,7 @@ int Shell::cmd_help(const std::vector<std::string>& args) {
             }
             aliases_str += ")";
         }
-        std::printf("  %-8s%s  %s\n", cmd.name.c_str(),
+        std::printf("  %-16s%s  %s\n", cmd.name.c_str(),
                     aliases_str.c_str(), cmd.brief.c_str());
     }
     return 0;
