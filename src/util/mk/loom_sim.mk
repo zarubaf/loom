@@ -9,7 +9,9 @@
 LOOM_HOME ?= $(error LOOM_HOME is not set)
 
 # Verilator binary (v5.044+, bug fixed)
-VERILATOR ?= verilator
+# Prefer project-built Verilator over system one
+_LOOM_VERILATOR_BUILD := $(LOOM_HOME)/build/verilator/bin/verilator
+VERILATOR ?= $(if $(wildcard $(_LOOM_VERILATOR_BUILD)),$(_LOOM_VERILATOR_BUILD),verilator)
 
 VERILATOR_FLAGS := \
     --binary --timing -Wall -Wno-fatal \

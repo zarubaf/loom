@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <sys/time.h>
 
-#define BW_ITERATION_NB 100000
+#define BW_ITERATION_NB 1000
 
 void print_bw_value(struct timeval start, struct timeval stop, uint32_t byte_nb) {
   double secs;
