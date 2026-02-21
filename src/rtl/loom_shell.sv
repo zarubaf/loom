@@ -130,9 +130,10 @@ module loom_shell (
     wire         xdma_axi4_rlast;
     wire         xdma_axi4_rvalid;
 
-    // finish → IRQ
+    // finish + DPI stall → XDMA user IRQ
     wire [N_IRQ-1:0] irq;
     wire              finish;
+    wire              usr_irq = finish | irq[0];
 
     xlnx_xdma u_xdma (
         .sys_clk    (pcie_refclk),
@@ -208,7 +209,7 @@ module loom_shell (
         .m_axil_bready  (xdma_axil_bready),
 
         // IRQ — finish on bit 0; full IRQ vector to BFM
-        .usr_irq_req      (finish),
+        .usr_irq_req      (usr_irq),
         .usr_irq_ack      (),
         .msi_enable       (),
         .msi_vector_width (),

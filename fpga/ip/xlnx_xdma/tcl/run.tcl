@@ -33,6 +33,8 @@ set_property -dict [list \
   CONFIG.xdma_wnum_chnl {1} \
   CONFIG.xdma_rnum_rids {2} \
   CONFIG.xdma_wnum_rids {2} \
+  CONFIG.MSI_X_OPTIONS {MSI-X_Internal} \
+  CONFIG.xdma_num_usr_irq {1} \
 ] [get_ips $ipName]
 
 generate_target {instantiation_template} [get_files ./$ipName.srcs/sources_1/ip/$ipName/$ipName.xci]
