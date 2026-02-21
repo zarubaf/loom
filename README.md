@@ -272,6 +272,22 @@ loomx -work build/ -t xdma -f fpga_script.txt      # scripted FPGA control
    simulation, connects via a Unix domain socket through the AXI-Lite BFM,
    and services DPI calls in real time.
 
+## Missing Features
+
+- [ ] Arbitrary IO signals on top level of DUT
+- [ ] Synthesizable assertions
+- [ ] DPI export
+- [ ] Faster read-only DPI (for state streaming off-chip)
+- [ ] Automatic design partitioning and multi-fpga
+- [ ] Time multiplex multiple instantiated designs
+- [ ] Full end-to-end depositing with `verilator` (or any other simulator)
+- [ ] Run arbitrary SystemVerilog in automatically partitioned `verilator` <->
+  `loom` interaction (would allow for UVM and other stuff)
+- [ ] Deterministic DDR interface for DUTs that need large memory
+- [ ] Re-calculating sim time from clock period
+- [ ] More than one clock (some fixed ratio design seems the most
+  straight-forward)
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
