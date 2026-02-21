@@ -182,12 +182,24 @@ Implemented in `src/include/svdpi_openarray.c`, compiled into
 ### `DpiService::service_once` flow
 
 ```
-dpi_poll()                    → pending_mask (which functions have calls)
-dpi_get_call(func_id)         → read 8 ARG registers
-callback(args, out_args)      → call user function via wrapper
-dpi_write_arg(func_id, i, v)  → write output array data to ARG registers
-dpi_complete(func_id, result) → write RESULT_LO/HI + CONTROL(set_done)
+dpi_poll()                    → pending_mask (single register read at 0x1_FFC0)
+for each set bit i:
+  dpi_get_call(i)             → read ARG registers
+  callback(args, out_args)    → call user function via dispatch wrapper
+  dpi_write_arg(i, j, v)     → write output array data to ARG registers
+  dpi_complete(i, result)     → write RESULT_LO/HI + CONTROL(set_done)
 ```
+
+The pending mask at func_idx=1023 returns one bit per function (bit N =
+function N pending && !done), allowing a single AXI read to determine
+which functions need servicing.
+
+### Interrupt-driven servicing
+
+The service loop is interrupt-driven: the host blocks on `wait_irq()`
+until the hardware signals a DPI call is pending, then services all
+pending calls in a tight loop. See [host-library.md](host-library.md)
+for the full service loop architecture and transport details.
 
 ## Initial and Reset DPI Calls
 

@@ -190,7 +190,7 @@ ctx.scan_restore();
 auto& dpi_service = loom::global_dpi_service();
 dpi_service.register_funcs(loom_dpi_funcs, loom_dpi_n_funcs);
 
-// Run blocking service loop
+// Run blocking service loop (interrupt-driven)
 loom::DpiExitCode exit_code = dpi_service.run(ctx, 30000);
 
 // Or service one round at a time (non-blocking)
@@ -203,7 +203,7 @@ dpi_service.print_stats();
 ### DPI Polling (Low-Level)
 
 ```cpp
-// Poll for pending DPI calls
+// Poll for pending DPI calls (single register read)
 auto pending = ctx.dpi_poll();  // Returns Result<uint32_t> bitmask
 
 // Get call details for function 0
@@ -216,18 +216,147 @@ if (pending.value() & (1 << 0)) {
 ctx.dpi_complete(func_id, result);
 ```
 
+### Interrupt Support
+
+```cpp
+// Check if transport supports interrupts
+bool has_irq = ctx.has_irq_support();
+
+// Block until hardware interrupt fires
+auto irq = ctx.wait_irq();  // Returns Result<uint32_t>
+if (irq.ok()) {
+    // irq.value() is the IRQ bitmask
+} else if (irq.error() == loom::Error::Shutdown) {
+    // Emulation ended
+} else if (irq.error() == loom::Error::Interrupted) {
+    // EINTR — signal received (e.g. SIGINT from Ctrl+C)
+}
+```
+
+## Error Handling
+
+All operations return `Result<T>`, a lightweight error-or-value type:
+
+```cpp
+enum class Error {
+    Ok = 0,
+    Transport = -1,     // Low-level I/O error
+    Timeout = -2,       // Timeout waiting for operation
+    InvalidArg = -3,    // Invalid argument
+    NotConnected = -4,  // Not connected to target
+    Protocol = -5,      // Unexpected message type
+    DpiError = -6,      // DPI-specific error
+    Shutdown = -7,      // Emulation ended (BFM shutdown message or EOF)
+    Interrupted = -8,   // Signal received during blocking wait (EINTR)
+    NotSupported = -9,  // Operation not supported by this transport
+};
+```
+
+Usage pattern:
+
+```cpp
+auto result = ctx.get_state();
+if (!result.ok()) {
+    // Handle error based on result.error()
+    return;
+}
+State state = result.value();
+```
+
+## Interrupt-Driven DPI Servicing
+
+DPI function calls are serviced using an interrupt-driven architecture
+with a polling fallback for transports that lack interrupt support.
+
+### Architecture
+
+```
+DUT raises DPI call
+    ↓
+dpi_regfile sets pending flag → dpi_stall[i] goes high
+    ↓
+emu_top: irq_o[0] = |dpi_stall  (OR of all stall signals)
+    ↓
+BFM detects rising edge on irq_i → sends type-2 IRQ message over socket
+    ↓
+Host: wait_irq() returns → service_once() reads pending mask → services calls
+```
+
+### Service loop
+
+Both `DpiService::run()` and `Shell::cmd_run()` use the same pattern:
+
+```cpp
+bool has_irq = ctx.has_irq_support();
+
+while (!interrupted) {
+    // 1. Wait for interrupt (or skip if polling)
+    if (has_irq) {
+        auto irq = ctx.wait_irq();
+        if (irq.error() == Error::Shutdown) break;
+        if (irq.error() == Error::Interrupted) continue;
+    }
+
+    // 2. Service ALL pending DPI calls
+    while (true) {
+        int rc = dpi_service.service_once(ctx);
+        if (rc <= 0) break;  // 0 = none pending, <0 = error
+    }
+
+    // 3. Check emulation state
+    auto st = ctx.get_state();
+    if (st.value() == State::Frozen || st.value() == State::Error) break;
+
+    // 4. Polling fallback (1ms backoff when no interrupt support)
+    if (!has_irq && no_work_done) usleep(1000);
+}
+```
+
+### DPI pending mask register
+
+Instead of polling N individual function status registers, the host reads
+a single **global pending mask** register at address `0x1_FFC0`
+(func_idx=1023 in the DPI regfile):
+
+```
+Bit N = 1  →  function N has a pending call (pending && !done)
+```
+
+This supports up to 32 DPI functions per read. `dpi_poll()` is a single
+`read32()` call.
+
 ## Transport Layer
 
-The transport layer abstracts the communication mechanism.
+The transport layer abstracts the host↔emulation communication mechanism.
+Both transports implement the same `Transport` interface.
 
-### Unix Socket Transport
+### Unix Socket Transport (Simulation)
 
 ```cpp
 auto transport = loom::create_socket_transport();
-// ... use with Context ...
 ```
 
 Connects to a Verilator simulation running `loom_axil_socket_bfm`.
+
+**Wire protocol (12-byte fixed messages):**
+
+| Direction | Type | Description |
+|-----------|------|-------------|
+| Host → Sim | 0 | AXI read request (addr) |
+| Host → Sim | 1 | AXI write request (addr, data) |
+| Sim → Host | 0 | Read response (data, irq_bits) |
+| Sim → Host | 1 | Write acknowledge (irq_bits) |
+| Sim → Host | 2 | IRQ notification (irq_bits) |
+| Sim → Host | 3 | SHUTDOWN (emulation ended) |
+
+**Interrupt handling:** The BFM detects rising edges on `irq_i` and sends
+type-2 messages. `wait_irq()` blocks on `recv()` until an IRQ or SHUTDOWN
+message arrives. IRQs received during AXI read/write transactions are
+accumulated in `pending_irq_` and returned on the next `wait_irq()` call.
+
+**EINTR handling:** If a signal (e.g. SIGINT) interrupts `recv()` before
+any data is read, `wait_irq()` returns `Error::Interrupted`. If EINTR
+occurs mid-message, the read is retried to avoid data loss.
 
 ### XDMA Transport (PCIe/FPGA)
 
@@ -240,9 +369,26 @@ ctx.connect("0000:17:00.0");         // PCI BDF (mmap BAR0)
 
 Connects to an FPGA over PCIe. Two modes:
 - **XDMA driver** (`/dev/xdma0_user`) — uses `pread`/`pwrite` on the char device.
-- **sysfs BAR mmap** (PCI BDF) — directly mmaps BAR0.
+- **sysfs BAR mmap** (PCI BDF) — directly mmaps BAR0 for lowest latency.
+
+**Interrupt handling:** Opens `/dev/xdma0_events_0` for MSI interrupt
+support. `wait_irq()` blocks on `read(events_fd)` until an MSI fires
+(auto-acknowledged by the kernel driver). If the events device is
+unavailable, `has_irq_support()` returns false and the service loop falls
+back to polling.
 
 ```bash
 loomx -work build/ -t xdma                    # default /dev/xdma0_user
 loomx -work build/ -t xdma -d 0000:17:00.0    # PCI BDF
 ```
+
+### Transport Comparison
+
+| Feature | Socket | XDMA (pread) | XDMA (mmap) |
+|---------|--------|--------------|-------------|
+| Register access | Blocking socket | pread/pwrite syscall | Direct pointer deref |
+| Interrupt | Type-2 socket message | MSI via events_fd | MSI via events_fd |
+| `wait_irq()` | `recv()` on socket | `read(events_fd)` | `read(events_fd)` |
+| IRQ buffering | Accumulated in transport | Kernel-managed | Kernel-managed |
+| `has_irq_support()` | Always true | True if events_fd open | True if events_fd open |
+| Use case | Verilator simulation | FPGA (kernel driver) | FPGA (low-latency) |

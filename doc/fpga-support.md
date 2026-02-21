@@ -96,7 +96,10 @@ The `run` command automatically calls `couple` before starting emulation.
   partial reconfiguration.
 - **No DDR4**: v1 uses register-only AXI-Lite access (AXI4 DMA path plumbed
   but RP side unconnected).
-- **Polling**: v1 uses polling for DPI service (no IRQ).
+- **Interrupt-driven DPI**: `irq_o[0]` (OR of DPI stall signals) drives
+  `usr_irq_req` on XDMA, triggering MSI. Host `wait_irq()` blocks on
+  `/dev/xdma0_events_0` until interrupt fires. Falls back to polling if
+  the events device is unavailable.
 
 ## Clock Generator
 
@@ -113,10 +116,21 @@ In simulation: 100 MHz (from behavioral BFM).
 accesses the FPGA via:
 
 ```
-/dev/xdma0_user → pread/pwrite → AXI-Lite registers
+/dev/xdma0_user   → pread/pwrite → AXI-Lite registers
+/dev/xdma0_events_0 → read() blocks until MSI interrupt fires
+```
+
+Or with PCI BDF for direct BAR0 mmap (lowest latency):
+
+```
+/sys/bus/pci/.../resource0 → mmap → direct pointer dereference
 ```
 
 The `Context`, `DpiService`, and shell are shared with simulation mode.
+DPI servicing is interrupt-driven: `wait_irq()` blocks on the events
+device until a DPI stall interrupt fires. If the events device is
+unavailable, the service loop falls back to 1ms polling.
+
 The shell `read`/`write` commands provide direct register access for
 debugging. The `couple`/`decouple` commands control the DFX decoupler.
 

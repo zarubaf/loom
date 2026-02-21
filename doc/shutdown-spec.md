@@ -86,8 +86,16 @@ The `loom_axil_socket_bfm` has a `finish_i` input. When it goes high:
 
 ### Socket Transport
 
-The socket transport recognizes the `SHUTDOWN` message (type 3) and
-returns cleanly. The DPI service loop detects this and exits.
+The socket transport handles two shutdown paths:
+
+1. **During `wait_irq()`** — the BFM sends a SHUTDOWN message (type 3)
+   instead of an IRQ. `wait_irq()` returns `Error::Shutdown`.
+2. **During `read32()`/`write32()`** — if a SHUTDOWN message arrives
+   instead of the expected AXI response, the transport returns
+   `Error::Shutdown`.
+
+The DPI service loop checks for `Error::Shutdown` from both `wait_irq()`
+and `service_once()`, and exits cleanly in either case.
 
 ### `Context::finish()` API
 

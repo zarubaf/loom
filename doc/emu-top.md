@@ -36,10 +36,12 @@ read_slang --loom design.sv -top my_module
 hierarchy -check -top my_module
 proc
 opt
+flatten
+opt
 reset_extract -rst rst_ni
 opt
-scan_insert -map scan_map.pb
 loom_instrument -header_out loom_dpi_dispatch.c
+scan_insert -map scan_map.pb
 emu_top -top my_module -rst rst_ni
 opt_clean
 write_verilog -noattr transformed.v
@@ -142,6 +144,16 @@ Per-function argument and result registers for DPI calls.
 
 Address decoding: `addr[15:6]` = function index, `addr[5:0]` = register.
 
+**Global pending mask (read-only, at func_idx=1023):**
+
+| Address  | Name            | R/W | Description                                       |
+| -------- | --------------- | --- | ------------------------------------------------- |
+| `0xFFC0` | DPI_PENDING_MASK| R   | Bit N = function N has pending call (!done)        |
+
+This allows the host to determine which functions need servicing with a
+single AXI read instead of polling N individual status registers. Used by
+`Context::dpi_poll()` in the interrupt-driven service loop.
+
 ### loom_scan_ctrl
 
 Controls scan chain capture/restore operations. With the free-running
@@ -175,14 +187,33 @@ Time-based stepping is implemented in software by setting
 `time_cmp = time + N` then issuing `CMD_START`. The controller
 freezes when `time >= time_cmp`.
 
+## IRQ Generation
+
+The wrapper generates interrupt outputs used by the host for
+interrupt-driven DPI servicing:
+
+```
+irq_o[0] = |dpi_stall    (OR-reduce of all per-function stall signals)
+```
+
+`dpi_stall[i]` is high when function `i` has a pending call waiting for
+the host (pending && !done). This signal:
+
+- **In simulation:** drives the socket BFM's `irq_i`, which sends a
+  type-2 (IRQ) message to the host transport. The host's `wait_irq()`
+  unblocks on receipt.
+- **On FPGA:** drives `usr_irq_req` on the XDMA IP, triggering an MSI
+  interrupt. The host's `wait_irq()` unblocks via
+  `/dev/xdma0_events_0`.
+
 ## Ports
 
 The generated `loom_emu_top` exposes a single AXI-Lite slave interface:
 
-| Port       | Direction    | Description          |
-| ---------- | ------------ | -------------------- |
-| `clk_i`    | input        | System clock         |
-| `rst_ni`   | input        | Active-low reset     |
-| `s_axil_*` | input/output | AXI-Lite slave       |
-| `finish_o` | output       | Finish request       |
-| `irq_o`    | output       | IRQ (state change)   |
+| Port       | Direction    | Description                                     |
+| ---------- | ------------ | ----------------------------------------------- |
+| `clk_i`    | input        | System clock                                    |
+| `rst_ni`   | input        | Active-low reset                                |
+| `s_axil_*` | input/output | AXI-Lite slave                                  |
+| `finish_o` | output       | Finish request (latched, stays high)             |
+| `irq_o`    | output       | IRQ vector (`[0]` = DPI stall, for host wakeup) |
