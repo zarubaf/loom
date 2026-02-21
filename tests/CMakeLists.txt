@@ -230,3 +230,14 @@ set_tests_properties(e2e_shell_regaccess PROPERTIES
     TIMEOUT 120
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
+
+# End-to-end multisim read/write test using loomc/loomx
+add_test(NAME e2e_multisim_read_write
+    COMMAND make test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/multisim_read_write
+)
+set_tests_properties(e2e_multisim_read_write PROPERTIES
+    DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
+    TIMEOUT 120
+    ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
+)

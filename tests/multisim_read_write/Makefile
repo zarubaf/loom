@@ -7,6 +7,7 @@ DPI_HDRS := multisim/multisim_server.h multisim/multisim_common.h \
             multisim/socket_server/server.h
 DPI_CXXFLAGS := -Imultisim -DMULTISIM_EMULATION
 LOOMC_FLAGS  := -D MULTISIM_EMULATION
+timeout      := -1
 
 include ../../src/util/mk/loom_test.mk
 
