@@ -524,11 +524,12 @@ int Shell::cmd_run(const std::vector<std::string>& args) {
     sigaction(SIGINT, &sa, &old_sa);
 
     // Service DPI calls until interrupted or emulation stops
-    bool has_irq = ctx_.has_irq_support();
+    bool use_irq = (dpi_service_.mode() == DpiMode::Interrupt) &&
+                   ctx_.has_irq_support();
 
     while (!interrupted_.load()) {
-        // Wait for DPI interrupt
-        if (has_irq) {
+        // Wait for DPI interrupt (interrupt mode only)
+        if (use_irq) {
             auto irq = ctx_.wait_irq();
             if (!irq.ok()) {
                 if (irq.error() == Error::Shutdown) {
@@ -544,7 +545,6 @@ int Shell::cmd_run(const std::vector<std::string>& args) {
         }
 
         // Service all pending calls
-        bool any_serviced = false;
         bool should_exit = false;
         while (true) {
             int rc = dpi_service_.service_once(ctx_);
@@ -559,7 +559,6 @@ int Shell::cmd_run(const std::vector<std::string>& args) {
                 break;
             }
             if (rc == 0) break;
-            any_serviced = true;
         }
         if (should_exit) break;
 
@@ -581,11 +580,6 @@ int Shell::cmd_run(const std::vector<std::string>& args) {
         if (st.value() == State::Error) {
             logger.error("Emulation error state");
             break;
-        }
-
-        // Polling fallback
-        if (!has_irq && !any_serviced) {
-            usleep(1000);
         }
     }
 

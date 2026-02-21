@@ -3,7 +3,6 @@
 
 #include "loom_dpi_service.h"
 #include "loom_log.h"
-#include <unistd.h>
 
 namespace loom {
 
@@ -141,13 +140,14 @@ int DpiService::service_once(Context& ctx) {
 
 DpiExitCode DpiService::run(Context& ctx, int /*timeout_ms*/) {
     current_ctx_ = &ctx;
-    logger.info("Entering service loop (n_funcs=%zu)", funcs_.size());
 
-    bool has_irq = ctx.has_irq_support();
+    bool use_irq = (mode_ == DpiMode::Interrupt) && ctx.has_irq_support();
+    logger.info("Entering service loop (n_funcs=%zu, mode=%s)",
+                funcs_.size(), use_irq ? "interrupt" : "polling");
 
     while (true) {
-        // --- Wait for interrupt (or poll fallback) ---
-        if (has_irq) {
+        // --- Wait for interrupt (interrupt mode only) ---
+        if (use_irq) {
             auto irq = ctx.wait_irq();
             if (!irq.ok()) {
                 if (irq.error() == Error::Shutdown) {
@@ -202,11 +202,6 @@ DpiExitCode DpiService::run(Context& ctx, int /*timeout_ms*/) {
             logger.info("Emulation frozen, test complete");
             current_ctx_ = nullptr;
             return DpiExitCode::Complete;
-        }
-
-        // --- Polling fallback (when no interrupt support) ---
-        if (!has_irq && total_serviced == 0) {
-            usleep(1000);  // 1ms backoff when polling
         }
     }
 }

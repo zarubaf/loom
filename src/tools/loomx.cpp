@@ -42,6 +42,7 @@ struct Options {
     std::string timeout;        // Sim timeout in ns (empty = sim default, "-1" = infinite)
     std::string transport = "socket";  // "socket" or "xdma"
     std::string device;         // XDMA device path (default /dev/xdma0_user)
+    std::string dpi_mode = "polling"; // "polling" or "interrupt"
     bool verbose = false;
     bool no_sim = false;
     bool sim_explicit = false;  // true if user passed -sim
@@ -60,6 +61,7 @@ void print_usage(const char *prog) {
         "  -timeout NS     Simulation timeout in ns (-1 for infinite)\n"
         "  -t TRANSPORT    Transport: socket (default) or xdma\n"
         "  -d DEVICE       XDMA device path or PCI BDF (default: /dev/xdma0_user)\n"
+        "  -dpi-mode MODE  DPI service mode: polling (default) or interrupt\n"
         "  --no-sim        Don't launch sim (connect to existing socket)\n"
         "  -v              Verbose output\n"
         "  -h              Show this help\n",
@@ -88,6 +90,8 @@ Options parse_args(int argc, char **argv) {
             opts.transport = argv[++i];
         } else if (arg == "-d" && i + 1 < argc) {
             opts.device = argv[++i];
+        } else if (arg == "-dpi-mode" && i + 1 < argc) {
+            opts.dpi_mode = argv[++i];
         } else if (arg == "--no-sim") {
             opts.no_sim = true;
         } else if (arg == "-v") {
@@ -110,6 +114,11 @@ Options parse_args(int argc, char **argv) {
     if (opts.transport != "socket" && opts.transport != "xdma") {
         logger.error("Unknown transport: %s (expected 'socket' or 'xdma')",
                      opts.transport.c_str());
+        std::exit(1);
+    }
+    if (opts.dpi_mode != "polling" && opts.dpi_mode != "interrupt") {
+        logger.error("Unknown DPI mode: %s (expected 'polling' or 'interrupt')",
+                     opts.dpi_mode.c_str());
         std::exit(1);
     }
     return opts;
@@ -326,8 +335,10 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Verify DPI function count and register (only if we have DPI)
+    // Configure DPI service
     auto &dpi_service = loom::global_dpi_service();
+    dpi_service.set_mode(opts.dpi_mode == "interrupt" ? loom::DpiMode::Interrupt
+                                                      : loom::DpiMode::Polling);
     if (funcs && n_funcs) {
         if (ctx.n_dpi_funcs() > static_cast<uint32_t>(*n_funcs)) {
             logger.warning("Design has %u DPI funcs but dispatch only has %d",

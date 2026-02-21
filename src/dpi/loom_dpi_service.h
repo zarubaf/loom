@@ -72,6 +72,12 @@ struct DpiFunc {
     DpiCallback callback;       // User-provided callback
 };
 
+// DPI service mode
+enum class DpiMode {
+    Polling,    // Tight poll loop on pending mask register (default, lowest latency)
+    Interrupt,  // Block in wait_irq() until hardware interrupt fires
+};
+
 // Service loop exit codes
 enum class DpiExitCode {
     Complete = 0,       // Test completed normally (shutdown received)
@@ -137,6 +143,10 @@ public:
     // Print service statistics
     void print_stats() const;
 
+    // DPI service mode
+    void set_mode(DpiMode mode) { mode_ = mode; }
+    DpiMode mode() const { return mode_; }
+
     // Get current context (for VPI functions)
     Context* current_context() const { return current_ctx_; }
 
@@ -147,6 +157,7 @@ private:
     uint64_t call_count_ = 0;
     uint64_t error_count_ = 0;
     Context* current_ctx_ = nullptr;
+    DpiMode mode_ = DpiMode::Polling;
 };
 
 // Global DPI service instance (for VPI compatibility)
