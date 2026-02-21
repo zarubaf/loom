@@ -175,16 +175,10 @@ append tb "\n"
 append tb "        for (int i = 0; i < 1000; i++) begin\n"
 
 # Randomize all non-clock inputs
-# Multi-bit inputs avoid 0 (works around repeat(0) / zero-counter edge cases
-# that the FSM extraction pass does not yet handle).
+# Randomize all non-clock inputs (including zero for multi-bit inputs)
 foreach inp $inputs {
     lassign $inp name width
-    if {$width > 1} {
-        set maxval [expr {(1 << $width) - 1}]
-        append tb "            $name = (\$urandom % $maxval) + 1;\n"
-    } else {
-        append tb "            $name = \$urandom;\n"
-    }
+    append tb "            $name = \$urandom;\n"
 }
 append tb "\n"
 append tb "            @(posedge $clk_port);\n"
