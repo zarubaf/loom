@@ -150,7 +150,7 @@ struct LoomInstrumentPass : public Pass {
         }
         extra_args(args, argidx, design);
 
-        int func_id = 0;
+        int hw_func_id = 0;  // contiguous IDs for hardware bridge functions (0..N-1)
         std::vector<DpiFunction> dpi_functions;
 
         for (auto module : design->selected_modules()) {
@@ -187,7 +187,7 @@ struct LoomInstrumentPass : public Pass {
 
                     DpiFunction func;
                     func.name = dpi_name;
-                    func.func_id = func_id++;
+                    func.func_id = -1;  // assigned below based on init/reset status
                     func.cell = cell;
 
                     // Extract argument and return widths from cell parameters
@@ -302,18 +302,18 @@ struct LoomInstrumentPass : public Pass {
                             }
                         }
 
-                        dpi_functions.push_back(func);
-
                         if (is_reset) {
-                            // Store func_id on cell for scan_insert to read
-                            cell->set_string_attribute(ID(loom_dpi_func_id), std::to_string(func.func_id));
-                            log("  Reset DPI call '%s' — func_id %d (cell kept for scan_insert)\n",
-                                dpi_name.c_str(), func.func_id);
+                            // Cell kept for scan_insert; func_id set after loop
+                            log("  Reset DPI call '%s' (cell kept for scan_insert)\n",
+                                dpi_name.c_str());
                         } else {
+                            func.cell = nullptr;  // cell removed below
                             module->remove(cell);
-                            log("  Initial DPI call '%s' — func_id %d (dispatch only)\n",
-                                dpi_name.c_str(), func.func_id);
+                            log("  Initial DPI call '%s' (dispatch only)\n",
+                                dpi_name.c_str());
                         }
+
+                        dpi_functions.push_back(func);
                         continue;
                     }
 
@@ -324,6 +324,9 @@ struct LoomInstrumentPass : public Pass {
                     if (cell->hasPort(ID(RESULT))) {
                         func.result_sig = cell->getPort(ID(RESULT));
                     }
+
+                    // Non-init: assign contiguous hardware func_id
+                    func.func_id = hw_func_id++;
 
                     // Derive valid condition before removing the cell
                     func.valid_condition = derive_valid_condition(module, func);
@@ -349,6 +352,23 @@ struct LoomInstrumentPass : public Pass {
             run_flop_enable(module);
         }
 
+        // Assign dispatch-only IDs to init/reset DPI functions (after all
+        // hardware IDs 0..hw_func_id-1 have been assigned to non-init functions)
+        {
+            int init_func_id = hw_func_id;
+            for (auto &func : dpi_functions) {
+                if (func.func_id < 0) {
+                    func.func_id = init_func_id++;
+                    // For reset DPI cells still in the design, store func_id
+                    // so scan_insert can record the mapping
+                    if (func.cell) {
+                        func.cell->set_string_attribute(ID(loom_dpi_func_id),
+                            std::to_string(func.func_id));
+                    }
+                }
+            }
+        }
+
         if (gen_wrapper && !dpi_functions.empty()) {
             generate_host_wrapper(dpi_functions);
         }
@@ -357,7 +377,9 @@ struct LoomInstrumentPass : public Pass {
             write_c_header(dpi_functions, header_out_path);
         }
 
-        log("Processed %zu DPI function(s)\n", dpi_functions.size());
+        log("Processed %zu DPI function(s) (%d hardware, %zu init/reset)\n",
+            dpi_functions.size(), hw_func_id,
+            dpi_functions.size() - hw_func_id);
     }
 
     // =========================================================================
@@ -1136,12 +1158,15 @@ struct LoomInstrumentPass : public Pass {
                     if (arg.is_array && arg.direction == "input") {
                         int n = arg.n_elements;
                         for (int j = 0; j < n; j++) {
-                            if (func.call_at_init && (arg_offset + j) < (int)func.const_arg_words.size()) {
+                            // Reverse word order: Yosys puts element[0] at MSB of
+                            // flattened wire, but args[0] maps to LSB in hardware.
+                            int hw_word = arg_offset + (n - 1 - j);
+                            if (func.call_at_init && hw_word < (int)func.const_arg_words.size()) {
                                 ofs << "    " << arg.name << "_buf[" << j << "] = "
-                                    << func.const_arg_words[arg_offset + j] << "u;\n";
+                                    << func.const_arg_words[hw_word] << "u;\n";
                             } else {
                                 ofs << "    " << arg.name << "_buf[" << j << "] = args["
-                                    << (arg_offset + j) << "];\n";
+                                    << hw_word << "];\n";
                             }
                         }
                     }
@@ -1187,13 +1212,15 @@ struct LoomInstrumentPass : public Pass {
                 }
 
                 // Copy output array data back to out_args
+                // Reverse word order: Yosys puts element[0] at MSB of
+                // flattened wire, but out_args[0] maps to LSB in hardware.
                 out_offset = 0;
                 for (size_t i = 0; i < func.args.size(); i++) {
                     const auto &arg = func.args[i];
                     if (!arg.is_array || arg.direction != "output") continue;
                     int n = arg.n_elements;
                     for (int j = 0; j < n; j++) {
-                        ofs << "    out_args[" << (out_offset + j) << "] = "
+                        ofs << "    out_args[" << (out_offset + (n - 1 - j)) << "] = "
                             << arg.name << "_buf[" << j << "];\n";
                     }
                     out_offset += n;

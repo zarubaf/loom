@@ -286,10 +286,14 @@ struct EmuTopPass : public Pass {
         }
 
         // DPI regfile <-> emu_ctrl signals
-        // Compute max_args from the actual DUT args port width.
+        // Compute max_args from BOTH the input args port and the output args
+        // portion of the result port, since the regfile arg registers serve
+        // both directions (DUT→host on call, host→DUT on completion).
         // The 64-byte per-function block has room for status(1) + control(1) + args(N) +
         // result(2) = N+4 registers, so N <= 12 with the current address decode scheme.
-        int max_args = (dut_args_width + 31) / 32;
+        int input_arg_words = (dut_args_width + 31) / 32;
+        int output_arg_words = (dut_result_width > 64) ? (dut_result_width - 64 + 31) / 32 : 0;
+        int max_args = std::max(input_arg_words, output_arg_words);
         if (max_args < 1) max_args = 1;
         if (max_args > 12)
             log_error("DPI args width %d bits (%d words) exceeds 12-word regfile limit.\n"
@@ -605,12 +609,16 @@ struct EmuTopPass : public Pass {
         wrapper->connect(RTLIL::SigSpec(irq_o), irq_sig);
 
         // =========================================================================
-        // Finish wiring
+        // Finish wiring — gate DUT finish by loom_en so that combinational
+        // DUT outputs based on random/uninitialized FFs (before scan-in)
+        // cannot trigger a spurious shutdown.
         // =========================================================================
         RTLIL::Wire *not_scan_busy = wrapper->addWire(NEW_ID, 1);
+        RTLIL::Wire *dut_finish_gated = wrapper->addWire(NEW_ID, 1);
         RTLIL::Wire *dut_finish_masked = wrapper->addWire(NEW_ID, 1);
         wrapper->addNot(NEW_ID, RTLIL::SigSpec(scan_busy), RTLIL::SigSpec(not_scan_busy));
-        wrapper->addAnd(NEW_ID, RTLIL::SigSpec(dut_finish), RTLIL::SigSpec(not_scan_busy), RTLIL::SigSpec(dut_finish_masked));
+        wrapper->addAnd(NEW_ID, RTLIL::SigSpec(dut_finish), RTLIL::SigSpec(loom_en_wire), RTLIL::SigSpec(dut_finish_gated));
+        wrapper->addAnd(NEW_ID, RTLIL::SigSpec(dut_finish_gated), RTLIL::SigSpec(not_scan_busy), RTLIL::SigSpec(dut_finish_masked));
         RTLIL::Wire *combined_finish = wrapper->addWire(NEW_ID, 1);
         wrapper->addOr(NEW_ID, RTLIL::SigSpec(emu_finish), RTLIL::SigSpec(dut_finish_masked), RTLIL::SigSpec(combined_finish));
         wrapper->connect(RTLIL::SigSpec(finish_o), RTLIL::SigSpec(combined_finish));

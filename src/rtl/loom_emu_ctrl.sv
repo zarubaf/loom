@@ -351,8 +351,9 @@ module loom_emu_ctrl #(
             time_count_d = time_count_q + 64'd1;
         end
 
-        // DUT-initiated finish
-        if (dut_finish_req_i && !finish_reg_q[0]) begin
+        // DUT-initiated finish (only honor while running — combinational
+        // DUT outputs may be undefined before the scan chain initializes FFs)
+        if (dut_finish_req_i && !finish_reg_q[0] && state_q == StRunning) begin
             finish_reg_d[0]    = 1'b1;
             finish_reg_d[15:8] = dut_finish_code_i;
         end
