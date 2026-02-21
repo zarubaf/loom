@@ -209,11 +209,12 @@ module loom_shell (
         .m_axil_bvalid  (xdma_axil_bvalid),
         .m_axil_bready  (xdma_axil_bready),
 
-        // IRQ — finish on bit 0
+        // IRQ — finish on bit 0; full IRQ vector to BFM
         .usr_irq_req      (finish),
         .usr_irq_ack      (),
         .msi_enable       (),
         .msi_vector_width (),
+        .loom_irq_i       (irq),
 
         // Config management — unused
         .cfg_mgmt_addr           (19'd0),

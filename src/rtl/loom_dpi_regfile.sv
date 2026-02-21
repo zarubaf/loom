@@ -217,7 +217,12 @@ module loom_dpi_regfile #(
                 axil_rvalid_o <= 1'b1;
                 axil_rresp_o  <= 2'b00;
 
-                if (rd_func_idx < N_DPI_FUNCS) begin
+                if (rd_func_idx == 10'd1023) begin
+                    // Global DPI pending mask — one bit per function
+                    axil_rdata_o <= 32'd0;
+                    for (int i = 0; i < N_DPI_FUNCS && i < 32; i++)
+                        axil_rdata_o[i] <= func_state_q[i].pending & ~func_state_q[i].done;
+                end else if (rd_func_idx < N_DPI_FUNCS) begin
                     case (rd_reg_idx)
                         REG_STATUS: axil_rdata_o <= {29'd0,
                                                      func_state_q[rd_func_idx].error,

@@ -36,11 +36,13 @@ public:
     void disconnect() override;
     Result<uint32_t> read32(uint32_t addr) override;
     Result<void> write32(uint32_t addr, uint32_t data) override;
-    Result<uint32_t> poll_irq(int timeout_ms) override;
+    Result<uint32_t> wait_irq() override;
+    bool has_irq_support() const override { return events_fd_ >= 0; }
     bool is_connected() const override { return mmapped_ ? (bar_ != nullptr) : (fd_ >= 0); }
 
 private:
     int fd_ = -1;
+    int events_fd_ = -1;  // /dev/xdma0_events_0 for MSI support
     volatile uint32_t *bar_ = nullptr;
     size_t bar_size_ = 0;
     bool mmapped_ = false;
@@ -95,12 +97,27 @@ Result<void> XdmaTransport::connect(std::string_view target) {
 
         mmapped_ = false;
         logger.info("Connected to %s (pread/pwrite)", path.c_str());
+
+        // Try to open events device for interrupt support.
+        // Derive path: /dev/xdma0_user → /dev/xdma0_events_0
+        auto user_pos = path.find("_user");
+        if (user_pos != std::string::npos) {
+            std::string events_path = path.substr(0, user_pos) + "_events_0";
+            events_fd_ = ::open(events_path.c_str(), O_RDONLY);
+            if (events_fd_ >= 0) {
+                logger.info("Opened %s for interrupt support", events_path.c_str());
+            }
+        }
     }
 
     return {};
 }
 
 void XdmaTransport::disconnect() {
+    if (events_fd_ >= 0) {
+        ::close(events_fd_);
+        events_fd_ = -1;
+    }
     if (bar_ && bar_ != MAP_FAILED) {
         ::munmap(const_cast<uint32_t *>(bar_), bar_size_);
         bar_ = nullptr;
@@ -154,8 +171,27 @@ Result<void> XdmaTransport::write32(uint32_t addr, uint32_t data) {
     }
 }
 
-Result<uint32_t> XdmaTransport::poll_irq(int /*timeout_ms*/) {
-    return Error::Timeout;
+Result<uint32_t> XdmaTransport::wait_irq() {
+    if (events_fd_ < 0) {
+        return Error::NotSupported;
+    }
+
+    // Block until MSI fires (matches kernel driver's wait_event_interruptible).
+    // The XDMA driver's events device: read() blocks until an interrupt fires,
+    // then returns the event count and auto-acknowledges.
+    uint32_t events = 0;
+    ssize_t n = ::read(events_fd_, &events, sizeof(events));
+    if (n < 0) {
+        if (errno == EINTR) return Error::Interrupted;
+        logger.error("events read failed: %s", strerror(errno));
+        return Error::Transport;
+    }
+    if (n != sizeof(events)) {
+        logger.error("events read: short read (%zd bytes)", n);
+        return Error::Transport;
+    }
+
+    return events;
 }
 
 std::unique_ptr<Transport> create_xdma_transport() {

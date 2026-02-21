@@ -85,6 +85,9 @@ module xlnx_xdma (
     output wire        msi_enable,
     output wire [2:0]  msi_vector_width,
 
+    // Simulation-only: IRQ lines forwarded to socket BFM
+    input  wire [15:0] loom_irq_i,
+
     // Config management
     input  wire [18:0] cfg_mgmt_addr,
     input  wire        cfg_mgmt_write,
@@ -230,7 +233,7 @@ module xlnx_xdma (
         .m_axil_bvalid_i  (bfm_bvalid),
         .m_axil_bready_o  (bfm_bready),
 
-        .irq_i     ({16{1'b0}}),
+        .irq_i     (loom_irq_i),
         .finish_i  (usr_irq_req[0]),
         .shutdown_o(bfm_shutdown)
     );
@@ -258,6 +261,7 @@ module xlnx_xdma (
     // =========================================================================
     // Shutdown handling
     // =========================================================================
+
     always @(posedge axi_aclk) begin
         if (axi_aresetn && bfm_shutdown) begin
             $display("[xdma_bfm] Shutdown complete, ending simulation");

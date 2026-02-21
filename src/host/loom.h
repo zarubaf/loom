@@ -31,6 +31,8 @@ enum class Error {
     Protocol = -5,
     DpiError = -6,
     Shutdown = -7,
+    Interrupted = -8,    // Signal received during blocking wait (EINTR)
+    NotSupported = -9,   // Operation not supported by this transport
 };
 
 // Exception for loom errors
@@ -137,6 +139,9 @@ namespace reg {
     //   DpiResultLo = DpiArg0 + max_args * 4
     //   DpiResultHi = DpiResultLo + 4
 
+    // Global DPI pending mask (func_idx=1023, one bit per function)
+    constexpr uint32_t DpiPendingMask = 0xFFC0;
+
     // shell control register offsets
     constexpr uint32_t DecouplerCtrl = 0x00;
 
@@ -185,7 +190,21 @@ public:
     virtual void disconnect() = 0;
     virtual Result<uint32_t> read32(uint32_t addr) = 0;
     virtual Result<void> write32(uint32_t addr, uint32_t data) = 0;
-    virtual Result<uint32_t> poll_irq(int timeout_ms) = 0;
+
+    // Block until a hardware interrupt fires. Returns IRQ bitmask.
+    //
+    // Socket:  blocks on recv() waiting for type=2 (IRQ) or type=3 (shutdown)
+    // XDMA:    blocks on read(events_fd) waiting for MSI
+    //
+    // Returns:
+    //   Ok(bitmask)        — interrupt fired, bitmask indicates which IRQ lines
+    //   Error::Shutdown    — emulation ended (shutdown message or EOF)
+    //   Error::Interrupted — signal received (EINTR), caller should check flags
+    //   Error::NotSupported — transport has no interrupt capability (use polling)
+    virtual Result<uint32_t> wait_irq() = 0;
+
+    // Returns true if the transport supports interrupt-driven wait_irq()
+    virtual bool has_irq_support() const = 0;
 
     virtual bool is_connected() const = 0;
 };
@@ -272,6 +291,13 @@ public:
     Result<void> couple();
     Result<void> decouple();
     Result<bool> is_coupled();
+
+    // ========================================================================
+    // Interrupt Support
+    // ========================================================================
+
+    Result<uint32_t> wait_irq();
+    bool has_irq_support() const;
 
     // ========================================================================
     // Low-level Register Access

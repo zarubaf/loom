@@ -22,7 +22,6 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
-#include <poll.h>
 #include <cerrno>
 #include <cstring>
 
@@ -57,7 +56,8 @@ public:
     void disconnect() override;
     Result<uint32_t> read32(uint32_t addr) override;
     Result<void> write32(uint32_t addr, uint32_t data) override;
-    Result<uint32_t> poll_irq(int timeout_ms) override;
+    Result<uint32_t> wait_irq() override;
+    bool has_irq_support() const override { return true; }
     bool is_connected() const override { return fd_ >= 0; }
 
 private:
@@ -245,48 +245,59 @@ Result<void> SocketTransport::write32(uint32_t addr, uint32_t data) {
     }
 }
 
-Result<uint32_t> SocketTransport::poll_irq(int timeout_ms) {
+Result<uint32_t> SocketTransport::wait_irq() {
     if (fd_ < 0) return Error::NotConnected;
 
-    // First, return any accumulated IRQs
+    // Return any IRQs accumulated during previous AXI transactions
     if (pending_irq_) {
         uint32_t irq = pending_irq_;
         pending_irq_ = 0;
         return irq;
     }
 
-    // Poll for new messages
-    struct pollfd pfd = { .fd = fd_, .events = POLLIN, .revents = 0 };
-    int poll_ret = ::poll(&pfd, 1, timeout_ms);
-
-    if (poll_ret < 0) {
-        if (errno == EINTR) {
-            return 0u;  // No IRQs
+    // Block on socket until IRQ or shutdown message arrives.
+    // Unlike recv_message(), this does NOT retry on EINTR at message
+    // boundaries, allowing SIGINT to interrupt the wait.
+    while (true) {
+        uint8_t buf[12];
+        size_t total = 0;
+        while (total < 12) {
+            ssize_t n = ::read(fd_, buf + total, 12 - total);
+            if (n < 0) {
+                if (errno == EINTR) {
+                    if (total == 0) return Error::Interrupted;
+                    continue;  // Mid-message: must finish reading
+                }
+                if (errno == ECONNRESET) {
+                    logger.debug("Peer disconnected");
+                    ::close(fd_);
+                    fd_ = -1;
+                    return Error::Shutdown;
+                }
+                logger.error("Read failed: %s", strerror(errno));
+                return Error::Transport;
+            }
+            if (n == 0) {
+                logger.debug("Peer disconnected (EOF)");
+                ::close(fd_);
+                fd_ = -1;
+                return Error::Shutdown;
+            }
+            total += static_cast<size_t>(n);
         }
-        logger.error("poll() failed: %s", strerror(errno));
-        return Error::Transport;
+
+        uint8_t type = buf[0];
+        uint32_t irq_bits = buf[8] | (buf[9] << 8) | (buf[10] << 16) | (buf[11] << 24);
+
+        if (type == msg::Irq) {
+            return irq_bits;
+        }
+        if (type == msg::Shutdown) {
+            return Error::Shutdown;
+        }
+
+        logger.warning("Unexpected message type %u during wait_irq", type);
     }
-
-    if (poll_ret == 0) {
-        return Error::Timeout;
-    }
-
-    // Read the message
-    auto result = recv_message();
-    if (!result.ok()) return result.error();
-
-    auto [type, rdata, irq_bits] = result.value();
-
-    if (type == msg::Irq) {
-        return irq_bits;
-    }
-
-    if (type == msg::Shutdown) {
-        return Error::Shutdown;
-    }
-
-    logger.error("Unexpected message type %u in poll_irq", type);
-    return Error::Protocol;
 }
 
 // ============================================================================

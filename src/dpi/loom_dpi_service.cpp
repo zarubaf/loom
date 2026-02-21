@@ -85,6 +85,9 @@ int DpiService::service_once(Context& ctx) {
         // Get call details
         auto call_result = ctx.dpi_get_call(static_cast<uint32_t>(func_id));
         if (!call_result.ok()) {
+            if (call_result.error() == Error::Shutdown) {
+                return static_cast<int>(Error::Shutdown);
+            }
             logger.error("Failed to get call for '%s'", func->name.c_str());
             error_count_++;
             continue;
@@ -100,6 +103,13 @@ int DpiService::service_once(Context& ctx) {
         std::vector<uint32_t> out_args_buf(func->out_arg_words, 0);
         std::span<uint32_t> out_args(out_args_buf);
         uint64_t result = func->callback(args, out_args);
+
+        // Log: first 20, then every 10000th
+        if (call_count_ < 20 || (call_count_ % 10000 == 0)) {
+            logger.debug("DPI[%zu] '%s' result=0x%llx out_words=%d call#%llu",
+                func_id, func->name.c_str(), (unsigned long long)result,
+                func->out_arg_words, (unsigned long long)call_count_);
+        }
 
         // Write output open array data back to regfile arg registers
         for (int i = 0; i < func->out_arg_words; i++) {
@@ -129,72 +139,75 @@ int DpiService::service_once(Context& ctx) {
     return serviced;
 }
 
-DpiExitCode DpiService::run(Context& ctx, int timeout_ms) {
-    int no_activity_count = 0;
-    const int max_no_activity = timeout_ms > 0 ? (timeout_ms / 10) : 1000;
-
-    // Set context for VPI functions
+DpiExitCode DpiService::run(Context& ctx, int /*timeout_ms*/) {
     current_ctx_ = &ctx;
-
     logger.info("Entering service loop (n_funcs=%zu)", funcs_.size());
 
+    bool has_irq = ctx.has_irq_support();
+
     while (true) {
-        // Service pending calls
-        int rc = service_once(ctx);
-        if (rc == static_cast<int>(Error::Shutdown)) {
-            logger.info("Shutdown message received");
-            current_ctx_ = nullptr;
-            return DpiExitCode::Shutdown;
-        }
-        if (rc < 0) {
-            current_ctx_ = nullptr;
-            return DpiExitCode::Error;
+        // --- Wait for interrupt (or poll fallback) ---
+        if (has_irq) {
+            auto irq = ctx.wait_irq();
+            if (!irq.ok()) {
+                if (irq.error() == Error::Shutdown) {
+                    logger.info("Shutdown received");
+                    current_ctx_ = nullptr;
+                    return DpiExitCode::Shutdown;
+                }
+                if (irq.error() == Error::Interrupted) {
+                    continue;  // Signal received, re-check loop condition
+                }
+                logger.error("wait_irq failed");
+                current_ctx_ = nullptr;
+                return DpiExitCode::Error;
+            }
         }
 
-        if (rc > 0) {
-            no_activity_count = 0;  // Reset timeout counter
-        } else {
-            no_activity_count++;
-        }
-
-        // Check emulation state
-        auto state_result = ctx.get_state();
-        if (!state_result.ok()) {
-            if (state_result.error() == Error::Shutdown) {
-                logger.info("Shutdown message received");
+        // --- Service all pending DPI calls ---
+        int total_serviced = 0;
+        while (true) {
+            int rc = service_once(ctx);
+            if (rc == static_cast<int>(Error::Shutdown)) {
+                logger.info("Shutdown received");
                 current_ctx_ = nullptr;
                 return DpiExitCode::Shutdown;
             }
-            logger.error("Failed to get state");
+            if (rc < 0) {
+                current_ctx_ = nullptr;
+                return DpiExitCode::Error;
+            }
+            if (rc == 0) break;  // No more pending calls
+            total_serviced += rc;
+        }
+
+        // --- Check emulation state ---
+        auto state_result = ctx.get_state();
+        if (!state_result.ok()) {
+            if (state_result.error() == Error::Shutdown) {
+                logger.info("Shutdown received");
+                current_ctx_ = nullptr;
+                return DpiExitCode::Shutdown;
+            }
             current_ctx_ = nullptr;
             return DpiExitCode::Error;
         }
 
-        State state = state_result.value();
-
-        // Exit on error state
-        if (state == State::Error) {
+        if (state_result.value() == State::Error) {
             logger.error("Emulation error state");
             current_ctx_ = nullptr;
             return DpiExitCode::EmuError;
         }
-
-        // Exit on frozen state (test complete)
-        if (state == State::Frozen) {
+        if (state_result.value() == State::Frozen) {
             logger.info("Emulation frozen, test complete");
             current_ctx_ = nullptr;
             return DpiExitCode::Complete;
         }
 
-        // Timeout check - if no DPI activity for a while and we've done some calls
-        if (call_count_ > 0 && no_activity_count >= max_no_activity) {
-            logger.info("No DPI activity, assuming test complete");
-            current_ctx_ = nullptr;
-            return DpiExitCode::Complete;
+        // --- Polling fallback (when no interrupt support) ---
+        if (!has_irq && total_serviced == 0) {
+            usleep(1000);  // 1ms backoff when polling
         }
-
-        // Small delay to avoid busy-waiting
-        usleep(10000);  // 10ms
     }
 }
 

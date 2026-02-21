@@ -524,17 +524,46 @@ int Shell::cmd_run(const std::vector<std::string>& args) {
     sigaction(SIGINT, &sa, &old_sa);
 
     // Service DPI calls until interrupted or emulation stops
+    bool has_irq = ctx_.has_irq_support();
+
     while (!interrupted_.load()) {
-        int rc = dpi_service_.service_once(ctx_);
-        if (rc == static_cast<int>(Error::Shutdown)) {
-            logger.info("Shutdown received");
-            break;
-        }
-        if (rc < 0) {
-            logger.error("DPI service error");
-            break;
+        // Wait for DPI interrupt
+        if (has_irq) {
+            auto irq = ctx_.wait_irq();
+            if (!irq.ok()) {
+                if (irq.error() == Error::Shutdown) {
+                    logger.info("Shutdown received");
+                    break;
+                }
+                if (irq.error() == Error::Interrupted) {
+                    continue;  // SIGINT — loop will check interrupted_ flag
+                }
+                logger.error("wait_irq failed");
+                break;
+            }
         }
 
+        // Service all pending calls
+        bool any_serviced = false;
+        bool should_exit = false;
+        while (true) {
+            int rc = dpi_service_.service_once(ctx_);
+            if (rc == static_cast<int>(Error::Shutdown)) {
+                logger.info("Shutdown received");
+                should_exit = true;
+                break;
+            }
+            if (rc < 0) {
+                logger.error("DPI service error (rc=%d)", rc);
+                should_exit = true;
+                break;
+            }
+            if (rc == 0) break;
+            any_serviced = true;
+        }
+        if (should_exit) break;
+
+        // Check state
         auto st = ctx_.get_state();
         if (!st.ok()) {
             if (st.error() == Error::Shutdown) {
@@ -554,7 +583,10 @@ int Shell::cmd_run(const std::vector<std::string>& args) {
             break;
         }
 
-        usleep(1000);  // 1ms
+        // Polling fallback
+        if (!has_irq && !any_serviced) {
+            usleep(1000);
+        }
     }
 
     // Restore original SIGINT handler
@@ -635,7 +667,9 @@ int Shell::cmd_step(const std::vector<std::string>& args) {
         auto st = ctx_.get_state();
         if (!st.ok()) break;
         if (st.value() != State::Running) break;
-        usleep(1000);
+        if (svc == 0) {
+            usleep(1000);  // only when idle
+        }
     }
 
     auto cycles = ctx_.get_cycle_count();

@@ -93,6 +93,21 @@ Result<void> Context::write32(uint32_t addr, uint32_t data) {
 }
 
 // ============================================================================
+// Interrupt Support
+// ============================================================================
+
+Result<uint32_t> Context::wait_irq() {
+    if (!transport_) {
+        return Error::InvalidArg;
+    }
+    return transport_->wait_irq();
+}
+
+bool Context::has_irq_support() const {
+    return transport_ && transport_->has_irq_support();
+}
+
+// ============================================================================
 // Emulation Control
 // ============================================================================
 
@@ -178,18 +193,7 @@ static inline uint32_t dpi_func_addr(uint32_t func_id, uint32_t reg_offset) {
 }
 
 Result<uint32_t> Context::dpi_poll() {
-    uint32_t pending_mask = 0;
-
-    for (uint32_t i = 0; i < n_dpi_funcs_; i++) {
-        auto status_result = read32(dpi_func_addr(i, reg::DpiStatus));
-        if (!status_result.ok()) return status_result.error();
-
-        if (status_result.value() & status::DpiPending) {
-            pending_mask |= (1 << i);
-        }
-    }
-
-    return pending_mask;
+    return read32(addr::DpiRegfile + reg::DpiPendingMask);
 }
 
 Result<DpiCall> Context::dpi_get_call(uint32_t func_id) {
