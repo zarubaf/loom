@@ -122,6 +122,24 @@ struct EmuTopPass : public Pass {
             scan_chain_length = atoi(scan_len_str.c_str());
         }
 
+        // Auto-detect memory shadow from mem_shadow attributes
+        int n_memories = 0;
+        int shadow_addr_bits = 0;
+        int shadow_data_bits = 0;
+        uint32_t shadow_total_bytes = 0;
+        std::string n_mem_str = dut->get_string_attribute(ID(loom_n_memories));
+        if (!n_mem_str.empty()) {
+            n_memories = atoi(n_mem_str.c_str());
+            std::string s;
+            s = dut->get_string_attribute(ID(loom_shadow_addr_bits));
+            if (!s.empty()) shadow_addr_bits = atoi(s.c_str());
+            s = dut->get_string_attribute(ID(loom_shadow_data_bits));
+            if (!s.empty()) shadow_data_bits = atoi(s.c_str());
+            s = dut->get_string_attribute(ID(loom_shadow_total_bytes));
+            if (!s.empty()) shadow_total_bytes = atoi(s.c_str());
+        }
+        bool has_memories = (n_memories > 0);
+
         // Auto-detect clock name from tbx clkgen detection
         std::string tbx_clk = dut->get_string_attribute(RTLIL::IdString("\\loom_tbx_clk"));
         if (!tbx_clk.empty()) {
@@ -166,6 +184,7 @@ struct EmuTopPass : public Pass {
         log("  Clock: %s, Reset: %s\n", clk_name.c_str(), rst_name.c_str());
         log("  DPI functions: %d (auto-detected)\n", n_dpi_funcs);
         log("  Scan chain: %d bits (auto-detected)\n", scan_chain_length);
+        log("  Memories: %d (auto-detected)\n", n_memories);
 
         // Create the wrapper module
         RTLIL::Module *wrapper = design->addModule(ID(loom_emu_top));
@@ -231,7 +250,7 @@ struct EmuTopPass : public Pass {
         // =========================================================================
         // Create internal wires for demux master ports (flat arrays)
         // =========================================================================
-        const int n_demux_masters = 3;
+        const int n_demux_masters = has_memories ? 4 : 3;
 
         // Flat bus wires for demux
         RTLIL::Wire *demux_araddr  = wrapper->addWire(ID(demux_araddr),  n_demux_masters * addr_width);
@@ -327,13 +346,22 @@ struct EmuTopPass : public Pass {
         interconnect->setParam(ID(ADDR_WIDTH), addr_width);
         interconnect->setParam(ID(N_MASTERS), n_demux_masters);
 
-        // BASE_ADDR: {scan=0x20000, dpi=0x10000, ctrl=0x00000} — packed [N-1:0][AW-1:0]
+        // BASE_ADDR: packed [N-1:0][AW-1:0]
+        //   Master 0: ctrl     = 0x00000
+        //   Master 1: dpi      = 0x10000
+        //   Master 2: scan     = 0x20000
+        //   Master 3: mem_ctrl = 0x30000 (when present)
         RTLIL::Const base_addr_val(0, n_demux_masters * addr_width);
         // Master 0: BASE=0x00000 (already zero)
         // Master 1: BASE=0x10000
         base_addr_val.bits()[1 * addr_width + 16] = RTLIL::State::S1; // bit 16 of master 1
         // Master 2: BASE=0x20000
         base_addr_val.bits()[2 * addr_width + 17] = RTLIL::State::S1; // bit 17 of master 2
+        // Master 3: BASE=0x30000
+        if (has_memories) {
+            base_addr_val.bits()[3 * addr_width + 16] = RTLIL::State::S1; // bit 16
+            base_addr_val.bits()[3 * addr_width + 17] = RTLIL::State::S1; // bit 17
+        }
         interconnect->setParam(ID(BASE_ADDR), base_addr_val);
 
         // ADDR_MASK: all slaves use 0xF0000 (bits [19:16])
@@ -387,7 +415,7 @@ struct EmuTopPass : public Pass {
         // =========================================================================
         RTLIL::Cell *emu_ctrl = wrapper->addCell(ID(u_emu_ctrl), ID(loom_emu_ctrl));
         emu_ctrl->setParam(ID(N_DPI_FUNCS), n_dpi);
-        emu_ctrl->setParam(ID(N_MEMORIES), 0);
+        emu_ctrl->setParam(ID(N_MEMORIES), n_memories);
         emu_ctrl->setParam(ID(N_SCAN_CHAINS), 1);
         emu_ctrl->setParam(ID(TOTAL_SCAN_BITS), scan_chain_length);
         emu_ctrl->setParam(ID(MAX_ARG_WIDTH), dut_args_width);
@@ -497,6 +525,51 @@ struct EmuTopPass : public Pass {
         scan_ctrl->setPort(ID(scan_busy_o), scan_busy);
 
         // =========================================================================
+        // Conditionally instantiate Memory Controller (4th AXI-Lite slave)
+        // =========================================================================
+        RTLIL::Wire *shadow_addr_w = nullptr;
+        RTLIL::Wire *shadow_wdata_w = nullptr;
+        RTLIL::Wire *shadow_rdata_w = nullptr;
+        RTLIL::Wire *shadow_wen_w = nullptr;
+        RTLIL::Wire *shadow_ren_w = nullptr;
+
+        if (has_memories) {
+            shadow_addr_w  = wrapper->addWire(ID(shadow_addr), shadow_addr_bits);
+            shadow_wdata_w = wrapper->addWire(ID(shadow_wdata), shadow_data_bits);
+            shadow_rdata_w = wrapper->addWire(ID(shadow_rdata), shadow_data_bits);
+            shadow_wen_w   = wrapper->addWire(ID(shadow_wen), 1);
+            shadow_ren_w   = wrapper->addWire(ID(shadow_ren), 1);
+
+            RTLIL::Cell *mem_ctrl = wrapper->addCell(ID(u_mem_ctrl), ID(loom_mem_ctrl));
+            mem_ctrl->setParam(ID(ADDR_BITS), shadow_addr_bits);
+            mem_ctrl->setParam(ID(DATA_BITS), shadow_data_bits);
+            mem_ctrl->setParam(ID(TOTAL_BYTES), (int)shadow_total_bytes);
+            mem_ctrl->setPort(ID(clk_i), clk_i);
+            mem_ctrl->setPort(ID(rst_ni), rst_ni);
+            mem_ctrl->setPort(ID(axil_araddr_i), slice(demux_araddr, 3, addr_width));
+            mem_ctrl->setPort(ID(axil_arvalid_i), bit(demux_arvalid, 3));
+            mem_ctrl->setPort(ID(axil_arready_o), bit(demux_arready, 3));
+            mem_ctrl->setPort(ID(axil_rdata_o), slice(demux_rdata, 3, 32));
+            mem_ctrl->setPort(ID(axil_rresp_o), slice(demux_rresp, 3, 2));
+            mem_ctrl->setPort(ID(axil_rvalid_o), bit(demux_rvalid, 3));
+            mem_ctrl->setPort(ID(axil_rready_i), bit(demux_rready, 3));
+            mem_ctrl->setPort(ID(axil_awaddr_i), slice(demux_awaddr, 3, addr_width));
+            mem_ctrl->setPort(ID(axil_awvalid_i), bit(demux_awvalid, 3));
+            mem_ctrl->setPort(ID(axil_awready_o), bit(demux_awready, 3));
+            mem_ctrl->setPort(ID(axil_wdata_i), slice(demux_wdata, 3, 32));
+            mem_ctrl->setPort(ID(axil_wvalid_i), bit(demux_wvalid, 3));
+            mem_ctrl->setPort(ID(axil_wready_o), bit(demux_wready, 3));
+            mem_ctrl->setPort(ID(axil_bresp_o), slice(demux_bresp, 3, 2));
+            mem_ctrl->setPort(ID(axil_bvalid_o), bit(demux_bvalid, 3));
+            mem_ctrl->setPort(ID(axil_bready_i), bit(demux_bready, 3));
+            mem_ctrl->setPort(ID(shadow_addr_o), shadow_addr_w);
+            mem_ctrl->setPort(ID(shadow_wdata_o), shadow_wdata_w);
+            mem_ctrl->setPort(ID(shadow_rdata_i), shadow_rdata_w);
+            mem_ctrl->setPort(ID(shadow_wen_o), shadow_wen_w);
+            mem_ctrl->setPort(ID(shadow_ren_o), shadow_ren_w);
+        }
+
+        // =========================================================================
         // Instantiate DUT
         // =========================================================================
         RTLIL::Cell *dut_inst = wrapper->addCell(ID(u_dut), dut->name);
@@ -573,6 +646,49 @@ struct EmuTopPass : public Pass {
                 continue;
             }
 
+            // Handle shadow memory ports — wire to mem_ctrl or tie to zero
+            if (wire_name.find("loom_shadow_addr") != std::string::npos && wire->port_input) {
+                if (has_memories && shadow_addr_w) {
+                    dut_inst->setPort(wire->name, RTLIL::SigSpec(shadow_addr_w));
+                } else {
+                    dut_inst->setPort(wire->name, RTLIL::SigSpec(RTLIL::State::S0, GetSize(wire)));
+                }
+                continue;
+            }
+            if (wire_name.find("loom_shadow_wdata") != std::string::npos && wire->port_input) {
+                if (has_memories && shadow_wdata_w) {
+                    dut_inst->setPort(wire->name, RTLIL::SigSpec(shadow_wdata_w));
+                } else {
+                    dut_inst->setPort(wire->name, RTLIL::SigSpec(RTLIL::State::S0, GetSize(wire)));
+                }
+                continue;
+            }
+            if (wire_name.find("loom_shadow_rdata") != std::string::npos && wire->port_output) {
+                if (has_memories && shadow_rdata_w) {
+                    dut_inst->setPort(wire->name, RTLIL::SigSpec(shadow_rdata_w));
+                } else {
+                    RTLIL::Wire *unused = wrapper->addWire(wrapper->uniquify("\\unused_shadow_rdata"), GetSize(wire));
+                    dut_inst->setPort(wire->name, RTLIL::SigSpec(unused));
+                }
+                continue;
+            }
+            if (wire_name.find("loom_shadow_wen") != std::string::npos && wire->port_input) {
+                if (has_memories && shadow_wen_w) {
+                    dut_inst->setPort(wire->name, RTLIL::SigSpec(shadow_wen_w));
+                } else {
+                    dut_inst->setPort(wire->name, RTLIL::SigSpec(RTLIL::State::S0, GetSize(wire)));
+                }
+                continue;
+            }
+            if (wire_name.find("loom_shadow_ren") != std::string::npos && wire->port_input) {
+                if (has_memories && shadow_ren_w) {
+                    dut_inst->setPort(wire->name, RTLIL::SigSpec(shadow_ren_w));
+                } else {
+                    dut_inst->setPort(wire->name, RTLIL::SigSpec(RTLIL::State::S0, GetSize(wire)));
+                }
+                continue;
+            }
+
             // All other inputs: tie to '0
             if (wire->port_input) {
                 dut_inst->setPort(wire->name, RTLIL::SigSpec(RTLIL::State::S0, GetSize(wire)));
@@ -626,10 +742,13 @@ struct EmuTopPass : public Pass {
         wrapper->fixup_ports();
 
         log("Generated loom_emu_top module\n");
-        log("  Instantiated: loom_axil_demux (u_interconnect)\n");
+        log("  Instantiated: loom_axil_demux (u_interconnect) - %d masters\n", n_demux_masters);
         log("  Instantiated: loom_emu_ctrl (u_emu_ctrl) - controls loom_en + DPI bridge\n");
         log("  Instantiated: loom_dpi_regfile (u_dpi_regfile)\n");
         log("  Instantiated: loom_scan_ctrl (u_scan_ctrl) - %d bits\n", scan_chain_length);
+        if (has_memories)
+            log("  Instantiated: loom_mem_ctrl (u_mem_ctrl) - %d memories, %u bytes\n",
+                n_memories, shadow_total_bytes);
         log("  Instantiated: %s (u_dut) - clock free-running, loom_en for FF enable\n", top_name.c_str());
     }
 };

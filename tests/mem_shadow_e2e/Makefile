@@ -29,6 +29,6 @@ sim: transformed_mem_test.v
 	$(OBJ_DIR)/Vsim_mem_shadow
 
 clean:
-	rm -f transformed_mem_test.v mem_shadow_map.json
+	rm -f transformed_mem_test.v mem_shadow_map.json mem_shadow_map.pb
 	rm -rf $(OBJ_DIR)
 	rm -f *.vcd *.fst

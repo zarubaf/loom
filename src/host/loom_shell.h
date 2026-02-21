@@ -44,6 +44,10 @@ public:
     // Must be called before dump/inspect/deposit_script can decode variables.
     void load_scan_map(const std::string& path);
 
+    // Load a memory map from a protobuf file.
+    // Enables memory preload on first run/step and memory dump/inspect.
+    void load_mem_map(const std::string& path);
+
     // Run interactive REPL loop. Returns process exit code.
     int run_interactive();
 
@@ -77,12 +81,21 @@ private:
     int cmd_exit(const std::vector<std::string>& args);
     int cmd_couple(const std::vector<std::string>& args);
     int cmd_decouple(const std::vector<std::string>& args);
+    int cmd_loadmem(const std::vector<std::string>& args);
 
     // Value extraction helpers
     static uint64_t extract_variable(const std::vector<uint32_t>& raw,
                                      uint32_t offset, uint32_t width);
     static std::string format_hex(uint64_t value, uint32_t width);
     static std::string format_value(const ScanVariable& var, uint64_t value);
+
+    // Initial state: scan-in + memory preload (idempotent)
+    void apply_initial_state();
+
+    // Memory preload helpers
+    void preload_memories();
+    static std::vector<uint8_t> parse_readmemh(const std::string& path, int width, int depth);
+    static std::vector<uint8_t> parse_readmemb(const std::string& path, int width, int depth);
 
     Context& ctx_;
     DpiService& dpi_service_;
@@ -95,6 +108,11 @@ private:
     std::vector<uint32_t> initial_scan_image_;
     bool has_initial_image_ = false;
     bool initial_image_applied_ = false;
+
+    // Memory state
+    MemMap mem_map_;
+    bool mem_map_loaded_ = false;
+    bool mem_preloaded_ = false;
 
     // Reset DPI mappings: func_id → scan chain position
     struct ResetDpiMapping {

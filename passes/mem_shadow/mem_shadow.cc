@@ -12,18 +12,20 @@
  *   3. Creates unified shadow interface at module ports (single address/data bus)
  *   4. Generates loom_mem_ctrl module with address decode logic
  *   5. Instantiates controller and wires to memory shadow ports
- *   6. Emits address map JSON for host driver
+ *   6. Extracts initial memory content from inline inits and $readmemh/$readmemb
+ *   7. Emits MemMap protobuf for host driver
  *
  * Usage:
  *   read_slang design.sv
  *   proc; opt
  *   memory_collect; memory_dff
- *   mem_shadow -map memmap.json
+ *   mem_shadow -clk clk_i -map mem_map.pb
  */
 
 #include "kernel/yosys.h"
 #include "kernel/sigtools.h"
 #include "kernel/mem.h"
+#include "loom_snapshot.pb.h"
 #include <fstream>
 
 USING_YOSYS_NAMESPACE
@@ -45,6 +47,11 @@ struct MemInfo {
     RTLIL::Wire *shadow_wdata;
     RTLIL::Wire *shadow_wen;
     RTLIL::Wire *shadow_ren;
+    // Initial content
+    std::vector<uint8_t> initial_content;
+    bool has_initial_content = false;
+    std::string init_file;
+    bool init_file_hex = true;
 };
 
 struct MemShadowPass : public Pass {
@@ -60,11 +67,14 @@ struct MemShadowPass : public Pass {
         log("'memory_bram'. The shadow ports allow random-access read/write of\n");
         log("memory contents via a unified interface.\n");
         log("\n");
-        log("    -map <file.json>\n");
-        log("        Write memory address map to JSON file for host driver.\n");
+        log("    -map <file.pb>\n");
+        log("        Write memory map to protobuf file for host driver.\n");
         log("\n");
         log("    -ctrl <module_name>\n");
         log("        Name for generated controller module (default: loom_mem_ctrl)\n");
+        log("\n");
+        log("    -clk <name>\n");
+        log("        DUT clock signal name (default: clk_i)\n");
         log("\n");
     }
 
@@ -80,6 +90,7 @@ struct MemShadowPass : public Pass {
 
         std::string map_file;
         std::string ctrl_name = "loom_mem_ctrl";
+        std::string clk_name = "clk_i";
 
         size_t argidx;
         for (argidx = 1; argidx < args.size(); argidx++) {
@@ -89,6 +100,10 @@ struct MemShadowPass : public Pass {
             }
             if (args[argidx] == "-ctrl" && argidx + 1 < args.size()) {
                 ctrl_name = args[++argidx];
+                continue;
+            }
+            if (args[argidx] == "-clk" && argidx + 1 < args.size()) {
+                clk_name = args[++argidx];
                 continue;
             }
             break;
@@ -103,24 +118,49 @@ struct MemShadowPass : public Pass {
             log("Processing module %s\n", log_id(module));
 
             std::vector<MemInfo> memories;
-            run_mem_shadow(module, memories);
+            run_mem_shadow(module, memories, clk_name);
 
             if (!memories.empty()) {
+                // Note: extract_init_content is called inside run_mem_shadow
+                // because it needs access to the Mem objects before they go out of scope.
+
                 // Generate controller module with actual logic
                 generate_mem_ctrl(design, ctrl_name, memories);
 
                 // Instantiate controller in design module
-                instantiate_mem_ctrl(module, ctrl_name, memories);
+                instantiate_mem_ctrl(module, ctrl_name, memories, clk_name);
 
-                // Write address map
+                // Set module attributes for emu_top auto-detection
+                uint32_t total_addr_space = 0;
+                int max_width = 0;
+                for (const auto &mi : memories) {
+                    int words_per_entry = (mi.width + 31) / 32;
+                    if (words_per_entry < 1) words_per_entry = 1;
+                    total_addr_space = mi.base_addr + mi.depth * words_per_entry * 4;
+                    if (mi.width > max_width) max_width = mi.width;
+                }
+                int global_addr_bits = ceil_log2(total_addr_space);
+                if (global_addr_bits < 2) global_addr_bits = 2;
+
+                module->set_string_attribute(ID(loom_n_memories),
+                    std::to_string(memories.size()));
+                module->set_string_attribute(ID(loom_shadow_addr_bits),
+                    std::to_string(global_addr_bits));
+                module->set_string_attribute(ID(loom_shadow_data_bits),
+                    std::to_string(max_width));
+                module->set_string_attribute(ID(loom_shadow_total_bytes),
+                    std::to_string(total_addr_space));
+
+                // Write protobuf memory map
                 if (!map_file.empty()) {
-                    write_address_map(map_file, memories);
+                    write_mem_map(map_file, memories);
                 }
             }
         }
     }
 
-    void run_mem_shadow(RTLIL::Module *module, std::vector<MemInfo> &memories) {
+    void run_mem_shadow(RTLIL::Module *module, std::vector<MemInfo> &memories,
+                        const std::string &clk_name) {
         auto mems = Mem::get_all_memories(module);
 
         if (mems.empty()) {
@@ -142,6 +182,20 @@ struct MemShadowPass : public Pass {
             mi.abits = ceil_log2(mi.depth);
             mi.base_addr = next_addr;
 
+            // Check for $readmemh/$readmemb metadata (set by frontend as module attrs)
+            {
+                auto file_attr = RTLIL::IdString("\\loom_readmem_file_" + mi.memid);
+                auto hex_attr = RTLIL::IdString("\\loom_readmem_hex_" + mi.memid);
+                auto readmem_file = module->get_string_attribute(file_attr);
+                if (!readmem_file.empty()) {
+                    mi.init_file = readmem_file;
+                    mi.init_file_hex = module->get_bool_attribute(hex_attr);
+                    log("  Memory %s: init_file=%s (%s)\n",
+                        mi.memid.c_str(), mi.init_file.c_str(),
+                        mi.init_file_hex ? "hex" : "bin");
+                }
+            }
+
             log("  Memory %s: depth=%d, width=%d, addr_bits=%d, base=0x%08x\n",
                 mi.memid.c_str(), mi.depth, mi.width, mi.abits, mi.base_addr);
 
@@ -152,21 +206,30 @@ struct MemShadowPass : public Pass {
             next_addr += total_words * 4;
 
             // Add shadow ports (internal wires)
-            add_shadow_ports(module, mem, mi);
+            add_shadow_ports(module, mem, mi, clk_name);
 
             memories.push_back(mi);
         }
+
+        // Extract initial content BEFORE emit (need valid Mem references)
+        extract_init_content(module, memories);
 
         // Commit memory changes back to module
         for (auto &mem : mems) {
             mem.emit();
         }
 
+        // Clear Mem pointers since the mems vector will go out of scope
+        for (auto &mi : memories) {
+            mi.mem = nullptr;
+        }
+
         log("  Added shadow ports to %zu memories, address space: %u bytes\n",
             memories.size(), next_addr);
     }
 
-    void add_shadow_ports(RTLIL::Module *module, Mem &mem, MemInfo &mi) {
+    void add_shadow_ports(RTLIL::Module *module, Mem &mem, MemInfo &mi,
+                          const std::string &clk_name) {
         std::string prefix = "loom_shadow_" + mi.memid;
 
         // Create shadow port wires (internal, NOT module ports)
@@ -176,11 +239,11 @@ struct MemShadowPass : public Pass {
         mi.shadow_wen   = module->addWire(RTLIL::IdString("\\" + prefix + "_wen"), 1);
         mi.shadow_ren   = module->addWire(RTLIL::IdString("\\" + prefix + "_ren"), 1);
 
-        // Get or create shadow clock wire (this IS a port)
-        RTLIL::Wire *shadow_clk = module->wire(ID(loom_shadow_clk));
-        if (!shadow_clk) {
-            shadow_clk = module->addWire(ID(loom_shadow_clk), 1);
-            shadow_clk->port_input = true;
+        // Find the DUT clock wire — shadow accesses happen while loom_en=0
+        // (DUT frozen), so the DUT clock is sufficient.
+        RTLIL::Wire *dut_clk = module->wire(RTLIL::escape_id(clk_name));
+        if (!dut_clk) {
+            log_error("DUT clock '%s' not found. Use -clk to specify.\n", clk_name.c_str());
         }
 
         // Add shadow read port
@@ -188,7 +251,7 @@ struct MemShadowPass : public Pass {
         rd_port.clk_enable = true;
         rd_port.clk_polarity = true;
         rd_port.ce_over_srst = false;
-        rd_port.clk = RTLIL::SigSpec(shadow_clk);
+        rd_port.clk = RTLIL::SigSpec(dut_clk);
         rd_port.en = RTLIL::SigSpec(mi.shadow_ren);
         rd_port.arst = RTLIL::State::S0;
         rd_port.srst = RTLIL::State::S0;
@@ -207,7 +270,7 @@ struct MemShadowPass : public Pass {
         wr_port.wide_log2 = 0;
         wr_port.clk_enable = true;
         wr_port.clk_polarity = true;
-        wr_port.clk = RTLIL::SigSpec(shadow_clk);
+        wr_port.clk = RTLIL::SigSpec(dut_clk);
         wr_port.en = RTLIL::SigSpec(mi.shadow_wen);
         for (int i = 1; i < mi.width; i++) {
             wr_port.en.append(RTLIL::SigSpec(mi.shadow_wen));
@@ -415,7 +478,8 @@ struct MemShadowPass : public Pass {
     }
 
     void instantiate_mem_ctrl(RTLIL::Module *module, const std::string &ctrl_name,
-                              std::vector<MemInfo> &memories) {
+                              std::vector<MemInfo> &memories,
+                              const std::string &clk_name) {
         // Calculate widths for unified interface
         uint32_t total_addr_space = 0;
         int max_width = 0;
@@ -429,12 +493,10 @@ struct MemShadowPass : public Pass {
         int global_addr_bits = ceil_log2(total_addr_space);
         if (global_addr_bits < 2) global_addr_bits = 2;
 
-        // Create unified shadow interface ports on the design module
-        RTLIL::Wire *shadow_clk = module->wire(ID(loom_shadow_clk));
-        if (!shadow_clk) {
-            shadow_clk = module->addWire(ID(loom_shadow_clk), 1);
-            shadow_clk->port_input = true;
-        }
+        // Find the DUT clock wire for the controller
+        RTLIL::Wire *dut_clk = module->wire(RTLIL::escape_id(clk_name));
+        if (!dut_clk)
+            log_error("DUT clock '%s' not found.\n", clk_name.c_str());
 
         RTLIL::Wire *shadow_addr = module->addWire(ID(loom_shadow_addr), global_addr_bits);
         shadow_addr->port_input = true;
@@ -458,7 +520,7 @@ struct MemShadowPass : public Pass {
                                                   RTLIL::IdString("\\" + ctrl_name));
 
         // Connect unified interface
-        ctrl_inst->setPort(ID(clk_i), RTLIL::SigSpec(shadow_clk));
+        ctrl_inst->setPort(ID(clk_i), RTLIL::SigSpec(dut_clk));
         ctrl_inst->setPort(ID(addr_i), RTLIL::SigSpec(shadow_addr));
         ctrl_inst->setPort(ID(wdata_i), RTLIL::SigSpec(shadow_wdata));
         ctrl_inst->setPort(ID(rdata_o), RTLIL::SigSpec(shadow_rdata));
@@ -485,17 +547,59 @@ struct MemShadowPass : public Pass {
         log("  Instantiated %s in %s\n", ctrl_name.c_str(), log_id(module));
     }
 
-    void write_address_map(const std::string &filename, const std::vector<MemInfo> &memories) {
-        std::ofstream f(filename);
-        if (!f.is_open()) {
-            log_error("Could not open file '%s' for writing.\n", filename.c_str());
-        }
+    // Extract initial memory content using Mem::get_init_data()
+    void extract_init_content(RTLIL::Module * /*module*/, std::vector<MemInfo> &memories) {
+        for (auto &mi : memories) {
+            auto &mem = *mi.mem;
 
-        uint32_t total_bits = 0;
+            // get_init_data() returns a single Const covering all memory entries.
+            // Bits are width*depth total. Uninitialized bits are State::Sx.
+            RTLIL::Const init_data = mem.get_init_data();
+
+            // Check if there's any valid (non-x) init data
+            bool has_valid = false;
+            for (int i = 0; i < GetSize(init_data); i++) {
+                if (init_data[i] == RTLIL::State::S0 || init_data[i] == RTLIL::State::S1) {
+                    has_valid = true;
+                    break;
+                }
+            }
+
+            if (!has_valid)
+                continue;
+
+            // Pack init data as LE bytes
+            int bytes_per_entry = (mi.width + 7) / 8;
+            mi.initial_content.resize(mi.depth * bytes_per_entry, 0);
+
+            for (int entry = 0; entry < mi.depth; entry++) {
+                int entry_offset = entry * bytes_per_entry;
+                for (int b = 0; b < mi.width; b++) {
+                    int bit_idx = entry * mi.width + b;
+                    if (bit_idx < GetSize(init_data) &&
+                        init_data[bit_idx] == RTLIL::State::S1) {
+                        mi.initial_content[entry_offset + b / 8] |= (1 << (b % 8));
+                    }
+                }
+            }
+            mi.has_initial_content = true;
+            log("  Memory %s: extracted %d entries of init data (%d bytes)\n",
+                mi.memid.c_str(), mi.depth, (int)mi.initial_content.size());
+
+            // Clear init data from the memory — it will be loaded at runtime
+            // via the shadow port preload mechanism. Leaving `initial` blocks
+            // in the output Verilog is wrong for FPGA synthesis.
+            mem.clear_inits();
+        }
+    }
+
+    // Write MemMap protobuf
+    void write_mem_map(const std::string &filename, const std::vector<MemInfo> &memories) {
+        loom::MemMap mem_map;
+
         uint32_t total_size = 0;
         int max_width = 0;
         for (const auto &mi : memories) {
-            total_bits += mi.depth * mi.width;
             int words_per_entry = (mi.width + 31) / 32;
             if (words_per_entry < 1) words_per_entry = 1;
             total_size = mi.base_addr + mi.depth * words_per_entry * 4;
@@ -504,48 +608,45 @@ struct MemShadowPass : public Pass {
         int global_addr_bits = ceil_log2(total_size);
         if (global_addr_bits < 2) global_addr_bits = 2;
 
-        f << "{\n";
-        f << "  \"total_bits\": " << total_bits << ",\n";
-        f << "  \"total_bytes\": " << total_size << ",\n";
-        f << "  \"addr_bits\": " << global_addr_bits << ",\n";
-        f << "  \"data_bits\": " << max_width << ",\n";
-        f << "  \"num_memories\": " << memories.size() << ",\n";
-        f << "  \"unified_interface\": {\n";
-        f << "    \"clk\": \"loom_shadow_clk\",\n";
-        f << "    \"addr\": \"loom_shadow_addr\",\n";
-        f << "    \"wdata\": \"loom_shadow_wdata\",\n";
-        f << "    \"rdata\": \"loom_shadow_rdata\",\n";
-        f << "    \"wen\": \"loom_shadow_wen\",\n";
-        f << "    \"ren\": \"loom_shadow_ren\"\n";
-        f << "  },\n";
-        f << "  \"memories\": [\n";
+        mem_map.set_total_bytes(total_size);
+        mem_map.set_addr_bits(global_addr_bits);
+        mem_map.set_data_bits(max_width);
+        mem_map.set_num_memories(memories.size());
 
-        for (size_t i = 0; i < memories.size(); i++) {
-            const auto &mi = memories[i];
+        for (const auto &mi : memories) {
+            auto *entry = mem_map.add_memories();
+            entry->set_name(mi.memid);
+            entry->set_depth(mi.depth);
+            entry->set_width(mi.width);
+            entry->set_addr_bits(mi.abits);
+            entry->set_base_addr(mi.base_addr);
+
             int words_per_entry = (mi.width + 31) / 32;
             if (words_per_entry < 1) words_per_entry = 1;
-            uint32_t mem_size = mi.depth * words_per_entry * 4;
-            uint32_t end_addr = mi.base_addr + mem_size;
+            uint32_t end_addr = mi.base_addr + mi.depth * words_per_entry * 4;
+            entry->set_end_addr(end_addr);
 
-            f << "    {\n";
-            f << "      \"index\": " << i << ",\n";
-            f << "      \"memid\": \"" << mi.memid << "\",\n";
-            f << "      \"depth\": " << mi.depth << ",\n";
-            f << "      \"width\": " << mi.width << ",\n";
-            f << "      \"addr_bits\": " << mi.abits << ",\n";
-            f << "      \"base_addr\": " << mi.base_addr << ",\n";
-            f << "      \"end_addr\": " << end_addr << ",\n";
-            f << "      \"size_bytes\": " << mem_size << "\n";
-            f << "    }";
-            if (i < memories.size() - 1) f << ",";
-            f << "\n";
+            if (mi.has_initial_content) {
+                entry->set_initial_content(
+                    std::string(mi.initial_content.begin(), mi.initial_content.end()));
+            }
+            if (!mi.init_file.empty()) {
+                entry->set_init_file(mi.init_file);
+                entry->set_init_file_hex(mi.init_file_hex);
+            }
         }
 
-        f << "  ]\n";
-        f << "}\n";
+        std::ofstream f(filename, std::ios::binary);
+        if (!f.is_open()) {
+            log_error("Could not open file '%s' for writing.\n", filename.c_str());
+        }
+        if (!mem_map.SerializeToOstream(&f)) {
+            log_error("Failed to serialize MemMap to '%s'.\n", filename.c_str());
+        }
         f.close();
 
-        log("Wrote memory address map to '%s'\n", filename.c_str());
+        log("Wrote memory map protobuf to '%s' (%zu memories, %u bytes addr space)\n",
+            filename.c_str(), memories.size(), total_size);
     }
 } MemShadowPass;
 

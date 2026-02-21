@@ -52,8 +52,12 @@ Result<void> Context::connect(std::string_view target) {
     if (!val.ok()) return val.error();
     loom_version_ = val.value();
 
-    logger.info("Connected. Design ID: 0x%08x, Version: 0x%08x, DPI funcs: %u, Scan bits: %u",
-             design_id_, loom_version_, n_dpi_funcs_, scan_chain_length_);
+    val = read32(addr::EmuCtrl + reg::NMemories);
+    if (!val.ok()) return val.error();
+    n_memories_ = val.value();
+
+    logger.info("Connected. Design ID: 0x%08x, Version: 0x%08x, DPI funcs: %u, Scan bits: %u, Memories: %u",
+             design_id_, loom_version_, n_dpi_funcs_, scan_chain_length_, n_memories_);
 
     // Ensure emu_top is coupled (accessible through decoupler)
     auto couple_rc = couple();
@@ -320,6 +324,112 @@ Result<bool> Context::scan_is_busy() {
     auto status_result = read32(addr::ScanCtrl + reg::ScanStatus);
     if (!status_result.ok()) return status_result.error();
     return (status_result.value() & status::ScanBusy) != 0;
+}
+
+// ============================================================================
+// Memory Shadow Access
+// ============================================================================
+
+Result<void> Context::mem_clear_done() {
+    return write32(addr::MemCtrl + reg::MemStatus, status::MemDone);
+}
+
+Result<void> Context::mem_wait_done(int timeout_ms) {
+    int elapsed = 0;
+    const int poll_interval = 10;  // ms
+
+    while (elapsed < timeout_ms) {
+        auto status_result = read32(addr::MemCtrl + reg::MemStatus);
+        if (!status_result.ok()) return status_result.error();
+
+        if (status_result.value() & status::MemDone) {
+            return {};
+        }
+
+        usleep(poll_interval * 1000);
+        elapsed += poll_interval;
+    }
+
+    return Error::Timeout;
+}
+
+Result<void> Context::mem_write_entry(uint32_t global_addr, const std::vector<uint32_t>& data) {
+    // Write data words
+    for (size_t i = 0; i < data.size(); i++) {
+        auto rc = write32(addr::MemCtrl + reg::MemDataBase + (i * 4), data[i]);
+        if (!rc.ok()) return rc;
+    }
+    // Write address
+    auto rc = write32(addr::MemCtrl + reg::MemAddr, global_addr);
+    if (!rc.ok()) return rc;
+
+    // Issue write command
+    rc = mem_clear_done();
+    if (!rc.ok()) return rc;
+    rc = write32(addr::MemCtrl + reg::MemControl, cmd::MemWrite);
+    if (!rc.ok()) return rc;
+
+    return mem_wait_done(1000);
+}
+
+Result<std::vector<uint32_t>> Context::mem_read_entry(uint32_t global_addr, int n_data_words) {
+    // Write address
+    auto rc = write32(addr::MemCtrl + reg::MemAddr, global_addr);
+    if (!rc.ok()) return rc.error();
+
+    // Issue read command
+    rc = mem_clear_done();
+    if (!rc.ok()) return rc.error();
+    rc = write32(addr::MemCtrl + reg::MemControl, cmd::MemRead);
+    if (!rc.ok()) return rc.error();
+
+    rc = mem_wait_done(1000);
+    if (!rc.ok()) return rc.error();
+
+    // Read data words
+    std::vector<uint32_t> data(n_data_words);
+    for (int i = 0; i < n_data_words; i++) {
+        auto val = read32(addr::MemCtrl + reg::MemDataBase + (i * 4));
+        if (!val.ok()) return val.error();
+        data[i] = val.value();
+    }
+
+    return data;
+}
+
+Result<void> Context::mem_preload_start(uint32_t global_addr, const std::vector<uint32_t>& data) {
+    // Write data words
+    for (size_t i = 0; i < data.size(); i++) {
+        auto rc = write32(addr::MemCtrl + reg::MemDataBase + (i * 4), data[i]);
+        if (!rc.ok()) return rc;
+    }
+    // Write start address
+    auto rc = write32(addr::MemCtrl + reg::MemAddr, global_addr);
+    if (!rc.ok()) return rc;
+
+    // Issue preload start command
+    rc = mem_clear_done();
+    if (!rc.ok()) return rc;
+    rc = write32(addr::MemCtrl + reg::MemControl, cmd::MemPreloadStart);
+    if (!rc.ok()) return rc;
+
+    return mem_wait_done(1000);
+}
+
+Result<void> Context::mem_preload_next(const std::vector<uint32_t>& data) {
+    // Write data words
+    for (size_t i = 0; i < data.size(); i++) {
+        auto rc = write32(addr::MemCtrl + reg::MemDataBase + (i * 4), data[i]);
+        if (!rc.ok()) return rc;
+    }
+
+    // Issue preload next command (auto-increments address)
+    auto rc = mem_clear_done();
+    if (!rc.ok()) return rc;
+    rc = write32(addr::MemCtrl + reg::MemControl, cmd::MemPreloadNext);
+    if (!rc.ok()) return rc;
+
+    return mem_wait_done(1000);
 }
 
 // ============================================================================

@@ -38,7 +38,6 @@ struct Options {
     std::vector<fs::path> sources;
     std::vector<fs::path> filelists;
     std::vector<std::string> defines;
-    bool mem_shadow = false;
     bool verbose = false;
 };
 
@@ -53,7 +52,6 @@ void print_usage(const char *prog) {
         "  -clk SIGNAL    Clock signal name (default: clk_i)\n"
         "  -rst SIGNAL    Reset signal name (default: rst_ni)\n"
         "  -D DEFINE      Preprocessor define (passed to slang)\n"
-        "  --mem-shadow   Enable memory shadow ports\n"
         "  -v             Verbose output\n"
         "  -h             Show this help\n",
         prog);
@@ -76,8 +74,6 @@ Options parse_args(int argc, char **argv) {
             opts.rst = argv[++i];
         } else if (arg == "-D" && i + 1 < argc) {
             opts.defines.emplace_back(argv[++i]);
-        } else if (arg == "--mem-shadow") {
-            opts.mem_shadow = true;
         } else if (arg == "-v") {
             opts.verbose = true;
         } else if (arg == "-h" || arg == "--help") {
@@ -175,11 +171,14 @@ std::string build_yosys_script(const Options &opts,
     ys << "opt\n";
 
     // Memory shadow (before flatten)
-    if (opts.mem_shadow) {
-        ys << "memory_collect\n";
-        ys << "memory_dff\n";
-        ys << "mem_shadow\n";
-    }
+    ys << "memory_collect\n";
+    ys << "memory_dff\n";
+    ys << "mem_shadow";
+    if (!opts.clk.empty())
+        ys << " -clk " << opts.clk;
+    else
+        ys << " -clk clk_i";
+    ys << " -map mem_map.pb\n";
 
     // Flatten
     ys << "flatten\n";
@@ -251,7 +250,7 @@ int main(int argc, char **argv) {
     logger.info("Running Yosys transformation...");
     {
         auto args = std::vector<std::string>{paths.yosys_bin.string()};
-        auto plugins = paths.plugin_args(opts.mem_shadow);
+        auto plugins = paths.plugin_args();
         args.insert(args.end(), plugins.begin(), plugins.end());
         args.push_back("-s");
         args.push_back(script_path.string());
@@ -328,6 +327,7 @@ int main(int argc, char **argv) {
     logger.info("  transformed.v");
     logger.info("  loom_dpi_dispatch.so");
     logger.info("  scan_map.pb");
+    logger.info("  mem_map.pb");
 
     return 0;
 }

@@ -121,6 +121,207 @@ void Shell::load_scan_map(const std::string& path) {
 }
 
 // ============================================================================
+// Memory Map Loading
+// ============================================================================
+
+void Shell::load_mem_map(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f.is_open()) {
+        logger.debug("No mem map at %s", path.c_str());
+        return;
+    }
+
+    if (!mem_map_.ParseFromIstream(&f)) {
+        logger.warning("Failed to parse mem map: %s", path.c_str());
+        return;
+    }
+
+    mem_map_loaded_ = true;
+    logger.debug("Loaded mem map: %d memories, %u bytes addr space",
+                 mem_map_.num_memories(), mem_map_.total_bytes());
+
+    // For each memory with init_file, resolve and parse the file
+    for (int i = 0; i < mem_map_.memories_size(); i++) {
+        auto* entry = mem_map_.mutable_memories(i);
+        if (entry->init_file().empty())
+            continue;
+
+        // Parse the memory file into initial_content
+        auto content = entry->init_file_hex()
+            ? parse_readmemh(entry->init_file(), entry->width(), entry->depth())
+            : parse_readmemb(entry->init_file(), entry->width(), entry->depth());
+
+        if (!content.empty()) {
+            entry->set_initial_content(
+                std::string(content.begin(), content.end()));
+            logger.debug("Parsed %s: %zu bytes for memory %s",
+                         entry->init_file().c_str(), content.size(),
+                         entry->name().c_str());
+        }
+    }
+}
+
+std::vector<uint8_t> Shell::parse_readmemh(const std::string& path, int width, int depth) {
+    std::ifstream f(path);
+    if (!f.is_open()) {
+        logger.warning("Cannot open init file: %s", path.c_str());
+        return {};
+    }
+
+    int bytes_per_entry = (width + 7) / 8;
+    std::vector<uint8_t> content(depth * bytes_per_entry, 0);
+
+    int addr = 0;
+    std::string line;
+    while (std::getline(f, line)) {
+        // Strip comments
+        auto comment_pos = line.find("//");
+        if (comment_pos != std::string::npos)
+            line = line.substr(0, comment_pos);
+
+        // Trim whitespace
+        auto start = line.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos)
+            continue;
+        line = line.substr(start);
+
+        // Address marker
+        if (line[0] == '@') {
+            addr = static_cast<int>(std::strtoul(line.c_str() + 1, nullptr, 16));
+            continue;
+        }
+
+        // Parse hex values (space-separated on same line)
+        std::istringstream iss(line);
+        std::string token;
+        while (iss >> token) {
+            if (addr >= depth) break;
+            uint64_t val = std::strtoull(token.c_str(), nullptr, 16);
+            int offset = addr * bytes_per_entry;
+            for (int b = 0; b < bytes_per_entry; b++) {
+                content[offset + b] = static_cast<uint8_t>((val >> (b * 8)) & 0xFF);
+            }
+            addr++;
+        }
+    }
+
+    return content;
+}
+
+std::vector<uint8_t> Shell::parse_readmemb(const std::string& path, int width, int depth) {
+    std::ifstream f(path);
+    if (!f.is_open()) {
+        logger.warning("Cannot open init file: %s", path.c_str());
+        return {};
+    }
+
+    int bytes_per_entry = (width + 7) / 8;
+    std::vector<uint8_t> content(depth * bytes_per_entry, 0);
+
+    int addr = 0;
+    std::string line;
+    while (std::getline(f, line)) {
+        auto comment_pos = line.find("//");
+        if (comment_pos != std::string::npos)
+            line = line.substr(0, comment_pos);
+
+        auto start = line.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos)
+            continue;
+        line = line.substr(start);
+
+        if (line[0] == '@') {
+            addr = static_cast<int>(std::strtoul(line.c_str() + 1, nullptr, 16));
+            continue;
+        }
+
+        // Parse binary values
+        std::istringstream iss(line);
+        std::string token;
+        while (iss >> token) {
+            if (addr >= depth) break;
+            int offset = addr * bytes_per_entry;
+            // Parse binary string MSB first
+            for (int i = 0; i < static_cast<int>(token.size()) && i < width; i++) {
+                int bit_pos = static_cast<int>(token.size()) - 1 - i;
+                if (token[bit_pos] == '1') {
+                    content[offset + i / 8] |= (1 << (i % 8));
+                }
+            }
+            addr++;
+        }
+    }
+
+    return content;
+}
+
+void Shell::apply_initial_state() {
+    // Scan-based init: execute initial DPI calls and scan in image
+    if (has_initial_image_ && !initial_dpi_executed_) {
+        execute_initial_dpi_calls();
+    }
+    if (has_initial_image_ && !initial_image_applied_) {
+        logger.info("Scanning in initial state...");
+        ctx_.scan_write_data(initial_scan_image_);
+        ctx_.scan_restore();
+        initial_image_applied_ = true;
+    }
+    // Memory preload
+    preload_memories();
+}
+
+void Shell::preload_memories() {
+    if (!mem_map_loaded_ || mem_preloaded_)
+        return;
+
+    int preloaded = 0;
+    for (const auto& entry : mem_map_.memories()) {
+        if (entry.initial_content().empty())
+            continue;
+
+        const auto& content = entry.initial_content();
+        int bytes_per_entry = (entry.width() + 7) / 8;
+        int words_per_entry = (entry.width() + 31) / 32;
+
+        logger.info("Preloading memory %s (%u entries)...",
+                    entry.name().c_str(), entry.depth());
+
+        // Use bulk preload: CMD_PRELOAD_START for first entry, CMD_PRELOAD_NEXT for rest
+        for (uint32_t a = 0; a < entry.depth(); a++) {
+            // Pack entry into 32-bit words
+            std::vector<uint32_t> data(words_per_entry, 0);
+            int content_offset = a * bytes_per_entry;
+            for (int b = 0; b < bytes_per_entry && content_offset + b < static_cast<int>(content.size()); b++) {
+                data[b / 4] |= static_cast<uint32_t>(
+                    static_cast<uint8_t>(content[content_offset + b])) << ((b % 4) * 8);
+            }
+
+            if (a == 0) {
+                uint32_t global_addr = entry.base_addr();
+                auto rc = ctx_.mem_preload_start(global_addr, data);
+                if (!rc.ok()) {
+                    logger.error("Memory preload failed for %s at addr 0x%x",
+                                entry.name().c_str(), global_addr);
+                    return;
+                }
+            } else {
+                auto rc = ctx_.mem_preload_next(data);
+                if (!rc.ok()) {
+                    logger.error("Memory preload next failed for %s at entry %u",
+                                entry.name().c_str(), a);
+                    return;
+                }
+            }
+        }
+        preloaded++;
+    }
+
+    mem_preloaded_ = true;
+    if (preloaded > 0)
+        logger.info("Preloaded %d memory/memories", preloaded);
+}
+
+// ============================================================================
 // Value Extraction
 // ============================================================================
 
@@ -274,6 +475,17 @@ void Shell::register_commands() {
         [this](const auto& args) { return cmd_decouple(args); }
     });
     commands_.push_back({
+        "loadmem", {"lm"},
+        "Load data file into a memory via shadow ports",
+        "Usage: loadmem <memory> <file> [hex|bin]\n"
+        "  Load a $readmemh (hex, default) or $readmemb (bin) formatted file\n"
+        "  into the named memory. The data persists across resets.\n"
+        "\n"
+        "  Example: loadmem u_rom.rom rom_data.hex\n"
+        "           loadmem u_lut.lut lut_data.bin bin",
+        [this](const auto& args) { return cmd_loadmem(args); }
+    });
+    commands_.push_back({
         "exit", {"quit", "q"},
         "Disconnect and exit",
         "Usage: exit\n"
@@ -400,6 +612,9 @@ int Shell::execute(const std::string& line) {
 // ============================================================================
 
 int Shell::run_interactive() {
+    // Apply initial state eagerly so dump/inspect before first step sees correct values
+    apply_initial_state();
+
     logger.info("Loom interactive shell. Type 'help' for commands.");
 
     while (!exit_requested_) {
@@ -424,6 +639,9 @@ int Shell::run_interactive() {
 // ============================================================================
 
 int Shell::run_script(const std::string& filename) {
+    // Apply initial state eagerly so dump/inspect before first step sees correct values
+    apply_initial_state();
+
     std::ifstream file(filename);
     if (!file.is_open()) {
         logger.error("Cannot open script: %s", filename.c_str());
@@ -495,16 +713,7 @@ int Shell::cmd_run(const std::vector<std::string>& args) {
     }
 
     if (state_result.value() == State::Idle || state_result.value() == State::Frozen) {
-        // Scan-based init: execute initial DPI calls and scan in image before first run
-        if (has_initial_image_ && !initial_dpi_executed_) {
-            execute_initial_dpi_calls();
-        }
-        if (has_initial_image_ && !initial_image_applied_) {
-            logger.info("Scanning in initial state...");
-            ctx_.scan_write_data(initial_scan_image_);
-            ctx_.scan_restore();
-            initial_image_applied_ = true;
-        }
+        apply_initial_state();
         auto rc = ctx_.start();
         if (!rc.ok()) {
             logger.error("Failed to start emulation");
@@ -631,16 +840,7 @@ int Shell::cmd_step(const std::vector<std::string>& args) {
         n = static_cast<uint32_t>(std::stoul(args[1]));
     }
 
-    // Scan-based init on first step, or release DUT reset (legacy)
-    if (has_initial_image_ && !initial_dpi_executed_) {
-        execute_initial_dpi_calls();
-    }
-    if (has_initial_image_ && !initial_image_applied_) {
-        logger.info("Scanning in initial state...");
-        ctx_.scan_write_data(initial_scan_image_);
-        ctx_.scan_restore();
-        initial_image_applied_ = true;
-    }
+    apply_initial_state();
 
     // SW-based step: set time_cmp = time + N, then CMD_START
     auto rc = ctx_.step(n);
@@ -707,6 +907,10 @@ int Shell::cmd_status(const std::vector<std::string>& /*args*/) {
     std::printf("  Loom ver:    0x%08x\n", ctx_.loom_version());
     std::printf("  DPI funcs:   %u\n", ctx_.n_dpi_funcs());
     std::printf("  Scan bits:   %u\n", ctx_.scan_chain_length());
+    std::printf("  Memories:    %u\n", ctx_.n_memories());
+    if (mem_map_loaded_) {
+        std::printf("  Mem space:   %u bytes\n", mem_map_.total_bytes());
+    }
     std::printf("  DPI calls:   %llu\n", static_cast<unsigned long long>(dpi_service_.call_count()));
     std::printf("  DPI errors:  %llu\n", static_cast<unsigned long long>(dpi_service_.error_count()));
 
@@ -778,6 +982,37 @@ int Shell::cmd_dump(const std::vector<std::string>& args) {
         }
     }
 
+    // Dump memory contents via shadow ports
+    std::string raw_mem_bytes;
+    if (mem_map_loaded_ && ctx_.n_memories() > 0) {
+        std::printf("\n  Memories: %d\n", mem_map_.num_memories());
+        for (const auto& entry : mem_map_.memories()) {
+            int words_per_entry = (entry.width() + 31) / 32;
+            std::printf("    %s: %u x %u bits (0x%x - 0x%x)\n",
+                        entry.name().c_str(), entry.depth(), entry.width(),
+                        entry.base_addr(), entry.end_addr());
+
+            // Read all entries and accumulate raw bytes
+            int bytes_per_entry = words_per_entry * 4;
+            for (uint32_t a = 0; a < entry.depth(); a++) {
+                uint32_t global_addr = entry.base_addr() + a * words_per_entry * 4;
+                auto mem_data = ctx_.mem_read_entry(global_addr, words_per_entry);
+                if (mem_data.ok()) {
+                    for (int w = 0; w < words_per_entry; w++) {
+                        uint32_t word = mem_data.value()[w];
+                        raw_mem_bytes += static_cast<char>((word >>  0) & 0xFF);
+                        raw_mem_bytes += static_cast<char>((word >>  8) & 0xFF);
+                        raw_mem_bytes += static_cast<char>((word >> 16) & 0xFF);
+                        raw_mem_bytes += static_cast<char>((word >> 24) & 0xFF);
+                    }
+                } else {
+                    // Pad with zeros on error
+                    raw_mem_bytes.append(bytes_per_entry, '\0');
+                }
+            }
+        }
+    }
+
     // Save snapshot to file if requested
     if (args.size() > 1) {
         const std::string& filename = args[1];
@@ -807,6 +1042,12 @@ int Shell::cmd_dump(const std::vector<std::string>& args) {
         // Embed scan map for self-contained file
         if (scan_map_loaded_) {
             *snapshot.mutable_scan_map() = scan_map_;
+        }
+
+        // Embed memory map and data
+        if (mem_map_loaded_) {
+            *snapshot.mutable_mem_map() = mem_map_;
+            snapshot.set_raw_mem_data(raw_mem_bytes);
         }
 
         std::ofstream out(filename, std::ios::binary);
@@ -906,6 +1147,37 @@ int Shell::cmd_inspect(const std::vector<std::string>& args) {
                     var.width(), format_value(var, val).c_str());
     }
 
+    // Display memory contents if present
+    if (snapshot.has_mem_map() && !snapshot.raw_mem_data().empty()) {
+        const auto& mmap = snapshot.mem_map();
+        std::printf("\n  Memories: %u (%u bytes total)\n",
+                    mmap.num_memories(), mmap.total_bytes());
+        const auto& mem_bytes = snapshot.raw_mem_data();
+        size_t byte_offset = 0;
+        for (const auto& entry : mmap.memories()) {
+            int words_per_entry = (entry.width() + 31) / 32;
+            int bytes_per_entry = words_per_entry * 4;
+            std::printf("    %s: %u x %u bits\n",
+                        entry.name().c_str(), entry.depth(), entry.width());
+            for (uint32_t a = 0; a < entry.depth() && byte_offset + bytes_per_entry <= mem_bytes.size(); a++) {
+                // Display first few entries (limit output)
+                if (a < 8 || a == entry.depth() - 1) {
+                    uint64_t val = 0;
+                    for (int b = 0; b < bytes_per_entry && b < 8; b++) {
+                        val |= static_cast<uint64_t>(static_cast<uint8_t>(
+                            mem_bytes[byte_offset + b])) << (b * 8);
+                    }
+                    int hex_digits = (entry.width() + 3) / 4;
+                    std::printf("      [%3u] = 0x%0*llx\n", a, hex_digits,
+                                static_cast<unsigned long long>(val));
+                } else if (a == 8) {
+                    std::printf("      ... (%u more entries)\n", entry.depth() - 9);
+                }
+                byte_offset += bytes_per_entry;
+            }
+        }
+    }
+
     return 0;
 }
 
@@ -995,6 +1267,31 @@ int Shell::cmd_deposit_script(const std::vector<std::string>& args) {
         }
     }
 
+    // Memory deposits
+    if (snapshot.has_mem_map() && !snapshot.raw_mem_data().empty()) {
+        const auto& mmap = snapshot.mem_map();
+        const auto& mem_bytes = snapshot.raw_mem_data();
+        emit("\n// Memory contents\n");
+        size_t byte_offset = 0;
+        for (const auto& entry : mmap.memories()) {
+            int words_per_entry = (entry.width() + 31) / 32;
+            int bytes_per_entry = words_per_entry * 4;
+            int hex_digits = (entry.width() + 3) / 4;
+            if (hex_digits < 1) hex_digits = 1;
+            for (uint32_t a = 0; a < entry.depth() && byte_offset + bytes_per_entry <= mem_bytes.size(); a++) {
+                uint64_t val = 0;
+                for (int b = 0; b < bytes_per_entry && b < 8; b++) {
+                    val |= static_cast<uint64_t>(static_cast<uint8_t>(
+                        mem_bytes[byte_offset + b])) << (b * 8);
+                }
+                emit("$deposit(%s[%u], %u'h%0*llx);\n",
+                     entry.name().c_str(), a, entry.width(), hex_digits,
+                     static_cast<unsigned long long>(val));
+                byte_offset += bytes_per_entry;
+            }
+        }
+    }
+
     if (out_file.is_open()) {
         logger.info("Deposit script written to %s", args[2].c_str());
     }
@@ -1012,6 +1309,9 @@ int Shell::cmd_reset(const std::vector<std::string>& /*args*/) {
     ctx_.scan_write_data(initial_scan_image_);
     ctx_.scan_restore();
     initial_image_applied_ = true;
+    // Re-preload memories
+    mem_preloaded_ = false;
+    preload_memories();
     logger.info("DUT reset via scan chain");
     return 0;
 }
@@ -1141,6 +1441,95 @@ int Shell::cmd_decouple(const std::vector<std::string>& /*args*/) {
         return -1;
     }
     logger.info("Decoupler asserted — emu_top isolated");
+    return 0;
+}
+
+// ============================================================================
+// Command: loadmem
+// ============================================================================
+
+int Shell::cmd_loadmem(const std::vector<std::string>& args) {
+    if (args.size() < 3 || args.size() > 4) {
+        logger.error("Usage: loadmem <memory> <file> [hex|bin]");
+        return -1;
+    }
+
+    if (!mem_map_loaded_) {
+        logger.error("No memory map loaded");
+        return -1;
+    }
+
+    const std::string& mem_name = args[1];
+    const std::string& filepath = args[2];
+    bool is_hex = true;
+    if (args.size() == 4) {
+        if (args[3] == "bin" || args[3] == "binary")
+            is_hex = false;
+        else if (args[3] != "hex")
+            logger.warning("Unknown format '%s', assuming hex", args[3].c_str());
+    }
+
+    // Find the memory in the map
+    loom::MemoryEntry* target = nullptr;
+    for (int i = 0; i < mem_map_.memories_size(); i++) {
+        auto* entry = mem_map_.mutable_memories(i);
+        if (entry->name() == mem_name) {
+            target = entry;
+            break;
+        }
+    }
+
+    if (!target) {
+        logger.error("Memory '%s' not found. Available memories:", mem_name.c_str());
+        for (const auto& entry : mem_map_.memories())
+            logger.error("  %s (%u x %u)", entry.name().c_str(), entry.depth(), entry.width());
+        return -1;
+    }
+
+    // Parse the file using existing parsers
+    auto content = is_hex
+        ? parse_readmemh(filepath, target->width(), target->depth())
+        : parse_readmemb(filepath, target->width(), target->depth());
+
+    if (content.empty()) {
+        logger.error("Failed to load '%s'", filepath.c_str());
+        return -1;
+    }
+
+    // Store in initial_content so preload_memories() uses it on reset
+    target->set_initial_content(std::string(content.begin(), content.end()));
+
+    // Write immediately via shadow ports
+    int bytes_per_entry = (target->width() + 7) / 8;
+    int words_per_entry = (target->width() + 31) / 32;
+
+    for (uint32_t a = 0; a < target->depth(); a++) {
+        std::vector<uint32_t> data(words_per_entry, 0);
+        int content_offset = a * bytes_per_entry;
+        for (int b = 0; b < bytes_per_entry &&
+             content_offset + b < static_cast<int>(content.size()); b++) {
+            data[b / 4] |= static_cast<uint32_t>(
+                static_cast<uint8_t>(content[content_offset + b])) << ((b % 4) * 8);
+        }
+
+        if (a == 0) {
+            auto rc = ctx_.mem_preload_start(target->base_addr(), data);
+            if (!rc.ok()) {
+                logger.error("Memory write failed for %s", mem_name.c_str());
+                return -1;
+            }
+        } else {
+            auto rc = ctx_.mem_preload_next(data);
+            if (!rc.ok()) {
+                logger.error("Memory write failed for %s at entry %u", mem_name.c_str(), a);
+                return -1;
+            }
+        }
+    }
+
+    logger.info("Loaded %s into %s (%u entries, %s format)",
+                filepath.c_str(), mem_name.c_str(), target->depth(),
+                is_hex ? "hex" : "bin");
     return 0;
 }
 

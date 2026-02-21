@@ -183,6 +183,30 @@ endfunction()
 # mem_shadow E2E test
 add_mem_shadow_e2e_test(mem_shadow_e2e)
 
+# Helper function for mem_shadow + emu_top integration tests
+function(add_mem_shadow_emu_top_test TEST_NAME)
+    set(TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/${TEST_NAME})
+    add_test(
+        NAME mem_shadow_emu_top_${TEST_NAME}
+        COMMAND ${YOSYS_BIN}
+            -m ${YOSYS_SLANG_PLUGIN}
+            -m ${CMAKE_BINARY_DIR}/passes/reset_extract/reset_extract.so
+            -m ${CMAKE_BINARY_DIR}/passes/scan_insert/scan_insert.so
+            -m ${CMAKE_BINARY_DIR}/passes/loom_instrument/loom_instrument.so
+            -m ${CMAKE_BINARY_DIR}/passes/mem_shadow/mem_shadow.so
+            -m ${CMAKE_BINARY_DIR}/passes/emu_top/emu_top.so
+            -s ${TEST_DIR}/run.ys
+        WORKING_DIRECTORY ${TEST_DIR}
+    )
+    set_tests_properties(mem_shadow_emu_top_${TEST_NAME} PROPERTIES
+        DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;mem_shadow;emu_top"
+        TIMEOUT 60
+    )
+endfunction()
+
+# mem_shadow + emu_top integration test
+add_mem_shadow_emu_top_test(mem_shadow_emu_top)
+
 # End-to-end scan dump test using loomc/loomx
 add_test(NAME e2e_scan_dump
     COMMAND make test
@@ -249,6 +273,17 @@ add_test(NAME e2e_multisim_read_write
 )
 set_tests_properties(e2e_multisim_read_write PROPERTIES
     DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
+    TIMEOUT 120
+    ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
+)
+
+# End-to-end mem_shadow test (memory preload, DPI, dump, reset, $readmemh, $readmemb, init)
+add_test(NAME e2e_mem_shadow
+    COMMAND make test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/e2e_mem_shadow
+)
+set_tests_properties(e2e_mem_shadow PROPERTIES
+    DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;mem_shadow;emu_top;loomc;loomx;verilator_ext"
     TIMEOUT 120
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )

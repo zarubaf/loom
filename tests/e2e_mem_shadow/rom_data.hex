@@ -1,0 +1,10 @@
+// 8-bit x 8 ROM data loaded via $readmemh
+// addr 0-7: known pattern for verification
+DE
+AD
+BE
+EF
+CA
+FE
+BA
+BE

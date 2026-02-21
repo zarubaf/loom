@@ -33,6 +33,27 @@ message ScanMap {
   repeated ResetDpiMapping reset_dpi_mappings = 4;  // reset DPI → scan position mappings
 }
 
+// One per shadow-ported memory
+message MemoryEntry {
+  string name = 1;           // HDL path (dot-separated)
+  uint32 depth = 2;          // number of entries
+  uint32 width = 3;          // bits per entry
+  uint32 addr_bits = 4;      // ceil_log2(depth)
+  uint32 base_addr = 5;      // byte offset in unified address space
+  uint32 end_addr = 6;       // exclusive byte end
+  bytes  initial_content = 7; // LE-packed inline init (from initial assignments)
+  string init_file = 8;      // path to $readmemh/$readmemb file (resolved at runtime)
+  bool   init_file_hex = 9;  // true = $readmemh, false = $readmemb
+}
+
+message MemMap {
+  uint32 total_bytes = 1;    // address space size
+  uint32 addr_bits = 2;      // global address width
+  uint32 data_bits = 3;      // max data width
+  uint32 num_memories = 4;
+  repeated MemoryEntry memories = 5;
+}
+
 // Single state snapshot (dump file)
 message Snapshot {
   uint64 cycle_count = 1;
@@ -40,4 +61,6 @@ message Snapshot {
   uint32 design_id = 3;
   bytes  raw_scan_data = 4;        // raw chain words packed LE
   ScanMap scan_map = 5;            // embedded — makes file self-contained
+  MemMap mem_map = 6;              // memory map metadata
+  bytes raw_mem_data = 7;          // concatenated memory dump
 }

@@ -104,6 +104,7 @@ namespace addr {
     constexpr uint32_t EmuCtrl = 0x00000;
     constexpr uint32_t DpiRegfile = 0x10000;
     constexpr uint32_t ScanCtrl = 0x20000;
+    constexpr uint32_t MemCtrl = 0x30000;
     constexpr uint32_t ClkGen = 0x40000;
     constexpr uint32_t ShellCtrl = 0x50000;
 }
@@ -150,6 +151,13 @@ namespace reg {
     constexpr uint32_t ScanControl = 0x04;
     constexpr uint32_t ScanLength = 0x08;
     constexpr uint32_t ScanDataBase = 0x10;
+
+    // mem_ctrl register offsets
+    constexpr uint32_t MemStatus = 0x00;
+    constexpr uint32_t MemControl = 0x04;
+    constexpr uint32_t MemAddr = 0x08;
+    constexpr uint32_t MemLength = 0x0C;
+    constexpr uint32_t MemDataBase = 0x10;
 }
 
 namespace cmd {
@@ -161,6 +169,11 @@ namespace cmd {
 
     constexpr uint32_t ScanCapture = 0x01;
     constexpr uint32_t ScanRestore = 0x02;
+
+    constexpr uint32_t MemRead = 0x01;
+    constexpr uint32_t MemWrite = 0x02;
+    constexpr uint32_t MemPreloadStart = 0x03;
+    constexpr uint32_t MemPreloadNext = 0x04;
 }
 
 namespace status {
@@ -170,6 +183,9 @@ namespace status {
 
     constexpr uint32_t ScanBusy = 1 << 0;
     constexpr uint32_t ScanDone = 1 << 1;
+
+    constexpr uint32_t MemBusy = 1 << 0;
+    constexpr uint32_t MemDone = 1 << 1;
 }
 
 namespace ctrl {
@@ -274,6 +290,16 @@ public:
     Result<void> dpi_error(uint32_t func_id);
 
     // ========================================================================
+    // Memory Shadow Access
+    // ========================================================================
+
+    uint32_t n_memories() const { return n_memories_; }
+    Result<void> mem_write_entry(uint32_t global_addr, const std::vector<uint32_t>& data);
+    Result<std::vector<uint32_t>> mem_read_entry(uint32_t global_addr, int n_data_words);
+    Result<void> mem_preload_start(uint32_t global_addr, const std::vector<uint32_t>& data);
+    Result<void> mem_preload_next(const std::vector<uint32_t>& data);
+
+    // ========================================================================
     // Scan Chain Control
     // ========================================================================
 
@@ -308,11 +334,14 @@ public:
 
 private:
     Result<void> scan_wait_done(int timeout_ms);
+    Result<void> mem_wait_done(int timeout_ms);
+    Result<void> mem_clear_done();
 
     std::unique_ptr<Transport> transport_;
     uint32_t n_dpi_funcs_ = 0;
     uint32_t max_dpi_args_ = 8;
     uint32_t scan_chain_length_ = 0;
+    uint32_t n_memories_ = 0;
     uint32_t design_id_ = 0;
     uint32_t loom_version_ = 0;
 };

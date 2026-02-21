@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: Apache-2.0
+# Full pipeline test: mem_shadow + emu_top integration
+# Verifies that the generated wrapper has 4 demux slaves when memories are present.
+
+# Read design
+read_slang mem_dut.sv
+
+# Elaborate
+hierarchy -check -top mem_dut
+proc
+opt
+
+# Memory shadow (before flatten)
+memory_collect
+memory_dff
+mem_shadow -clk clk_i -map mem_map.pb
+
+# Flatten
+flatten
+opt
+
+# Extract resets
+reset_extract -rst rst_ni
+opt
+
+# DPI instrument
+loom_instrument -header_out loom_dpi_dispatch.c
+
+# Scan insert
+scan_insert -map scan_map.pb
+
+# Emulation top wrapper — should detect memories and create 4 demux masters
+emu_top -top mem_dut -rst rst_ni
+
+# Verify generated output
+opt_clean
+stat
+write_verilog -noattr transformed.v

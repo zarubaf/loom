@@ -11,6 +11,7 @@ target_compile_definitions(mem_shadow PRIVATE
     YOSYS_ENABLE_GLOB
     YOSYS_ENABLE_ZLIB
 )
+target_link_libraries(mem_shadow PRIVATE loom_proto)
 # On macOS, use -undefined dynamic_lookup to allow unresolved symbols
 if(APPLE)
     set_target_properties(mem_shadow PROPERTIES

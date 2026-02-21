@@ -57,7 +57,8 @@ Options:
 | `dump [file.pb]` | `d` | Stop if running, scan capture, display scan data. Optionally save snapshot to protobuf file. |
 | `inspect <file.pb> [var]` | | Load a saved snapshot protobuf and display metadata + variable values. Optionally filter by name prefix. |
 | `deposit_script <file.pb> [out.sv]` | | Generate `$deposit` SystemVerilog statements from a snapshot. Paths come from the original HDL hierarchy. |
-| `reset` | | Re-scan the initial state image (scan-based reset) |
+| `reset` | | Re-scan the initial state image and re-preload memories (scan-based reset) |
+| `loadmem <mem> <file> [hex\|bin]` | `lm` | Load data file into a memory via shadow ports. Data persists across resets. Default format: hex. |
 | `couple` | | Clear decoupler — connect emu_top to AXI bus |
 | `decouple` | | Assert decoupler — isolate emu_top (transactions return SLVERR) |
 | `help [cmd]` | `h`, `?` | List commands or show detailed help |
@@ -180,6 +181,30 @@ auto data = ctx.scan_read_data();
 ctx.scan_write_data(image);
 ctx.scan_restore();
 ```
+
+### Memory Shadow Access
+
+When memories are present (`n_memories() > 0`), the host can read/write
+memory contents via the shadow port controller:
+
+```cpp
+// Read a memory entry (returns n_data_words 32-bit words)
+auto data = ctx.mem_read_entry(global_addr, n_data_words);
+
+// Write a memory entry
+ctx.mem_write_entry(global_addr, {0xDEADBEEF});
+
+// Bulk preload (sequential writes with auto-increment)
+ctx.mem_preload_start(base_addr, first_entry_data);
+ctx.mem_preload_next(second_entry_data);
+ctx.mem_preload_next(third_entry_data);
+// ... continues auto-incrementing
+```
+
+Memory preload is handled transparently by the shell: on first `run` or
+`step`, if a `mem_map.pb` is loaded, the shell preloads all memories with
+initial content (from inline assignments or `$readmemh`/`$readmemb` files).
+The `reset` command re-preloads memories alongside scan restore.
 
 ### DPI Service
 

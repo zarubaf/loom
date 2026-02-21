@@ -131,7 +131,7 @@ struct LoomPaths {
     }
 
     // Return Yosys plugin load arguments: -m plugin1.so -m plugin2.so ...
-    std::vector<std::string> plugin_args(bool mem_shadow = false) const {
+    std::vector<std::string> plugin_args() const {
         std::vector<std::string> args;
         args.push_back("-m");
         args.push_back(slang_plugin.string());
@@ -143,10 +143,8 @@ struct LoomPaths {
         args.push_back(loom_instrument_plugin.string());
         args.push_back("-m");
         args.push_back(emu_top_plugin.string());
-        if (mem_shadow) {
-            args.push_back("-m");
-            args.push_back(mem_shadow_plugin.string());
-        }
+        args.push_back("-m");
+        args.push_back(mem_shadow_plugin.string());
         return args;
     }
 };

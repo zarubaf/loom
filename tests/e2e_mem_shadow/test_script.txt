@@ -1,0 +1,41 @@
+# E2E mem_shadow test script
+#
+# Exercises:
+#   1. Memory preload (inline init for ram, $readmemh/$readmemb for rom/lut)
+#   2. DPI call alongside memory shadow
+#   3. Dump with memory content
+#   4. Reset and re-preload
+#   5. Status showing memory info
+#   6. Inspect snapshot with memory data
+
+# Show status — should report memories
+status
+
+# After reset: initial state with preloaded memories
+# The 'dump' command captures both scan chain and memory contents
+dump build/snap_init.pb
+
+# Step 1 cycle: StIdle -> StCompute (DPI call executes)
+step 1
+dump build/snap_after_dpi.pb
+
+# Step 2 more cycles: StCompute -> StDone, counter increments
+step 2
+dump build/snap_running.pb
+
+# Reset: should re-preload memories to initial state
+reset
+dump build/snap_after_reset.pb
+
+# Run a few more cycles after reset
+step 3
+dump build/snap_post_reset_run.pb
+
+# Inspect all snapshots
+inspect build/snap_init.pb
+inspect build/snap_after_dpi.pb
+inspect build/snap_running.pb
+inspect build/snap_after_reset.pb
+inspect build/snap_post_reset_run.pb
+
+exit

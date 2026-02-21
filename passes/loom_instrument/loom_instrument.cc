@@ -26,6 +26,7 @@
 
 #include "kernel/yosys.h"
 #include "kernel/sigtools.h"
+#include "kernel/mem.h"
 #include "kernel/fmt.h"
 #include <fstream>
 
@@ -400,7 +401,28 @@ struct LoomInstrumentPass : public Pass {
             }
         }
 
-        if (dffs.empty()) {
+        // Check if there are also memory write ports to gate
+        auto mems = Mem::get_all_memories(module);
+        bool has_mem_writes = false;
+        for (auto &mem : mems) {
+            for (auto &wr : mem.wr_ports) {
+                bool is_shadow = false;
+                for (auto &bit : wr.en) {
+                    if (bit.wire) {
+                        std::string wn = bit.wire->name.str();
+                        if (wn.find("loom_shadow") != std::string::npos ||
+                            wn.find("loom_mem_ctrl") != std::string::npos) {
+                            is_shadow = true;
+                            break;
+                        }
+                    }
+                }
+                if (!is_shadow) { has_mem_writes = true; break; }
+            }
+            if (has_mem_writes) break;
+        }
+
+        if (dffs.empty() && !has_mem_writes) {
             log("  No flip-flops found for flop enable.\n");
             return;
         }
@@ -475,6 +497,46 @@ struct LoomInstrumentPass : public Pass {
                 cell->setParam(pol_param, RTLIL::Const(1, 1));
             }
         }
+
+        // Also gate memory write enables with loom_en.
+        // Memory writes must be frozen when loom_en=0 (DUT halted) so that
+        // shadow port writes aren't immediately overwritten by normal writes.
+        int n_gated_wr = 0;
+        for (auto &mem : mems) {
+            for (size_t wi = 0; wi < mem.wr_ports.size(); wi++) {
+                auto &wr = mem.wr_ports[wi];
+                // Skip shadow write ports — these are added by mem_shadow and
+                // must fire when loom_en=0 (DUT frozen). Detect by checking
+                // if the enable signal comes from the loom_mem_ctrl address
+                // decode (wire name contains "loom_shadow" or "loom_mem_ctrl").
+                bool is_shadow = false;
+                for (auto &bit : wr.en) {
+                    if (bit.wire) {
+                        std::string wn = bit.wire->name.str();
+                        if (wn.find("loom_shadow") != std::string::npos ||
+                            wn.find("loom_mem_ctrl") != std::string::npos) {
+                            is_shadow = true;
+                            break;
+                        }
+                    }
+                }
+                if (is_shadow)
+                    continue;
+
+                // Gate each enable bit with loom_en: new_en[i] = old_en[i] & loom_en
+                RTLIL::SigSpec new_en;
+                for (int i = 0; i < GetSize(wr.en); i++) {
+                    RTLIL::Wire *gated = module->addWire(NEW_ID, 1);
+                    module->addAnd(NEW_ID, wr.en[i], RTLIL::SigSpec(loom_en), RTLIL::SigSpec(gated));
+                    new_en.append(RTLIL::SigSpec(gated));
+                }
+                wr.en = new_en;
+                n_gated_wr++;
+            }
+            mem.emit();
+        }
+        if (n_gated_wr > 0)
+            log("  Gated %d memory write port(s) with loom_en\n", n_gated_wr);
 
         module->fixup_ports();
         log("  Added loom_en port, instrumented %zu FF(s)\n", dffs.size());

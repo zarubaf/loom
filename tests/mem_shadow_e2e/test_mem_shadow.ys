@@ -23,7 +23,7 @@ select -list t:$mem_v2
 
 # Load and run mem_shadow pass
 plugin -i ../../build/passes/mem_shadow/mem_shadow.so
-mem_shadow -map mem_shadow_map.json
+mem_shadow -clk clk -map mem_shadow_map.pb
 
 # Show state after shadow insertion
 log "=== After mem_shadow ==="

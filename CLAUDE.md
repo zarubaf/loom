@@ -30,18 +30,20 @@ Source SV → yosys-slang (--loom, FSM extraction) → Loom passes → Vivado/Ve
 ```
 
 **Transformation passes (required order):**
-1. `reset_extract` — Strip async resets, record initial values as wire attributes
-2. `loom_instrument` — DPI bridge, FF enable (`loom_en`), `$finish` → `loom_finish_o`
-3. `scan_insert` — Scan chain insertion, protobuf state map with reset values
-4. `emu_top` — Emulation wrapper with AXI-Lite interface, IRQ, DPI regfile
+1. `mem_shadow` — Shadow read/write ports for memory access (before flatten, no-op without memories)
+2. `reset_extract` — Strip async resets, record initial values as wire attributes
+3. `loom_instrument` — DPI bridge, FF enable (`loom_en`), `$finish` → `loom_finish_o`
+4. `scan_insert` — Scan chain insertion, protobuf state map with reset values
+5. `emu_top` — Emulation wrapper with AXI-Lite interface, IRQ, DPI regfile
 
 **Frontend (yosys-slang `--loom`):**
 - FSM extraction: multi-cycle `always` blocks with inner `@(posedge clk)`, `while-wait`, `repeat` → state machines
 - DPI detection: `$__loom_dpi_call` cells for DPI imports
 - `$finish`/`$display` detection: `$__loom_finish` / `$print` cells
+- `$readmemh`/`$readmemb` metadata capture for runtime memory loading
 
 **Other key components:**
-- `passes/mem_shadow/` - Shadow read/write ports for BRAM access (optional, before flatten)
+- `passes/mem_shadow/` - Shadow read/write ports for BRAM access (always runs, before flatten)
 - `src/host/` - Host-side C++ library (interrupt-driven DPI service, socket + XDMA transports)
 - `src/rtl/` - Infrastructure RTL (emu_ctrl, dpi_regfile, scan_ctrl, shell)
 - `src/bfm/` - Behavioral models for sim (socket BFM, clock gen, CDC, decoupler)
@@ -84,7 +86,7 @@ All Loom-generated signals use the `loom_` prefix:
 | `reset_extract` | `loom_reset_value` (wire attr), `loom_resets_extracted` (module attr) |
 | `loom_instrument` | `loom_en`, `loom_dpi_valid`, `loom_dpi_func_id`, `loom_dpi_args`, `loom_dpi_result`, `loom_finish_o` |
 | `scan_insert` | `loom_scan_enable`, `loom_scan_in`, `loom_scan_out`, `loom_scan_chain_length` (module attr) |
-| `mem_shadow` | `loom_shadow_*_addr`, `loom_shadow_*_rdata/wdata/wen`, `loom_shadow_clk` |
+| `mem_shadow` | `loom_shadow_addr`, `loom_shadow_rdata/wdata/wen/ren`, `loom_n_memories` (module attr) |
 
 ## Files to Never Commit
 

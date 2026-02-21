@@ -34,7 +34,8 @@ Source SV ─── read_slang ───► Elaborate, detect DPI, extract FSMs
                           write_verilog ──► transformed.v
 ```
 
-Optional: `mem_shadow` runs before `flatten` to add shadow ports to memories.
+`mem_shadow` always runs before `flatten` to add shadow ports to memories.
+Designs without memories are handled as a no-op.
 
 ### `loomc` orchestration
 
@@ -45,6 +46,9 @@ read_slang --loom [sources] --top <module>
 hierarchy -check -top <module>
 proc
 opt
+memory_collect
+memory_dff
+mem_shadow -clk clk_i -map mem_map.pb
 flatten
 opt
 reset_extract -rst rst_ni
@@ -309,37 +313,58 @@ functional equivalence.
 
 ---
 
-## Pass 4: `mem_shadow` (optional)
+## Pass 4: `mem_shadow`
 
 **Location:** `passes/mem_shadow/mem_shadow.cc`
 
 Adds shadow read/write ports to `$mem_v2` cells for random-access host
-access to memory contents. Much faster than serial scan for large memories.
+access to memory contents. Always runs (designs without memories are a
+no-op). Much faster than serial scan for large memories.
 
 ### Usage
 
 ```tcl
-mem_shadow [-map file.json] [-ctrl module_name]
+mem_shadow [-clk name] [-map file.pb] [-ctrl module_name]
 ```
 
-### When to use
+Options:
+- `-clk <name>`: DUT clock signal name (default: `clk_i`). Shadow ports use the DUT clock since accesses only occur while `loom_en=0` (DUT frozen).
+- `-map <file.pb>`: Write `MemMap` protobuf for host driver (contains memory metadata + initial content).
+- `-ctrl <module_name>`: Name for generated address-decode module (default: `loom_mem_ctrl`).
 
-Run **before** `flatten` and **before** `memory_bram` (must operate on
+### Pipeline placement
+
+Runs **before** `flatten` and **before** `memory_bram` (must operate on
 `$mem_v2` cells, not BRAM primitives):
 
 ```tcl
 memory_collect
 memory_dff
-mem_shadow -map mem_map.json
+mem_shadow -clk clk_i -map mem_map.pb
 flatten
 ```
 
 ### What it does
 
-- Adds shadow read/write port to each memory
+- Adds shadow read/write port to each memory (uses DUT clock)
 - Generates `loom_mem_ctrl` module with address decode logic
-- Creates a memory address map JSON for the host driver
+- Extracts initial memory content from `Mem::inits` (inline `initial begin` assignments)
+- Reads `$readmemh`/`$readmemb` metadata from module attributes (set by frontend) and stores file paths in protobuf for runtime loading by `loomx`
+- Emits `MemMap` protobuf with memory metadata, initial content, and init file paths
+- Sets module attributes (`loom_n_memories`, `loom_shadow_addr_bits`, `loom_shadow_data_bits`, `loom_shadow_total_bytes`) for `emu_top` auto-detection
 - Address space is word-addressed (4 bytes per word for AXI alignment)
+
+### `$readmemh` / `$readmemb` support
+
+Memory initialization via `$readmemh`/`$readmemb` in `initial` blocks is
+handled transparently:
+
+1. **Frontend** (yosys-slang) detects the calls and captures `{filename, memory_name, is_hex}` as module-level attributes (`\loom_readmem_file_<mem>`, `\loom_readmem_hex_<mem>`)
+2. **mem_shadow** reads these attributes and stores `init_file` / `init_file_hex` in the `MemMap` protobuf
+3. **loomx** resolves file paths at runtime, parses the files, and preloads via shadow write ports — automatically on startup and after every `reset`
+
+No file I/O occurs during synthesis. Data files must be available in the
+`loomx` work directory at runtime.
 
 ---
 
@@ -360,10 +385,11 @@ emu_top -top <module> [-clk name] [-rst name] [-addr_width N] [-n_irq N]
 
 ```
 loom_emu_top
-├── u_interconnect (loom_axil_demux)  AXI-Lite 1:3 demux
+├── u_interconnect (loom_axil_demux)  AXI-Lite 1:N demux (3 or 4 masters)
 ├── u_emu_ctrl     (loom_emu_ctrl)    Emulation FSM + DPI bridge
 ├── u_dpi_regfile  (loom_dpi_regfile) Per-function DPI registers
 ├── u_scan_ctrl    (loom_scan_ctrl)   Scan chain controller
+├── u_mem_ctrl     (loom_mem_ctrl)    Memory controller (when memories present)
 └── u_dut          (original DUT)     Transformed design
 ```
 
@@ -490,4 +516,4 @@ All Loom-generated signals use the `loom_` prefix:
 |------|---------|
 | `loom_instrument` | `loom_en`, `loom_dpi_valid`, `loom_dpi_func_id`, `loom_dpi_args`, `loom_dpi_result`, `loom_finish_o` |
 | `scan_insert` | `loom_scan_enable`, `loom_scan_in`, `loom_scan_out` |
-| `mem_shadow` | `loom_shadow_*_addr`, `loom_shadow_*_rdata`, `loom_shadow_*_wdata`, `loom_shadow_*_wen`, `loom_shadow_clk` |
+| `mem_shadow` | `loom_shadow_addr`, `loom_shadow_rdata`, `loom_shadow_wdata`, `loom_shadow_wen`, `loom_shadow_ren` |

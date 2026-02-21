@@ -360,6 +360,11 @@ int main(int argc, char **argv) {
     auto scan_map_path = work / "scan_map.pb";
     shell.load_scan_map(scan_map_path.string());
 
+    // Load memory map for memory preload/dump
+    auto mem_map_path = work / "mem_map.pb";
+    if (fs::exists(mem_map_path))
+        shell.load_mem_map(mem_map_path.string());
+
     int exit_code;
     if (!opts.script_file.empty()) {
         exit_code = shell.run_script(opts.script_file);

@@ -18,8 +18,7 @@ module tb_mem_shadow;
     logic [15:0] mem_b_wdata;
     logic [15:0] mem_b_rdata;
 
-    // Unified shadow interface
-    logic        loom_shadow_clk;
+    // Unified shadow interface (uses DUT clock — no separate shadow clock)
     logic [10:0] loom_shadow_addr;   // Global byte address
     logic [15:0] loom_shadow_wdata;  // Padded to max width
     logic [15:0] loom_shadow_rdata;
@@ -38,7 +37,6 @@ module tb_mem_shadow;
         .mem_b_addr(mem_b_addr),
         .mem_b_wdata(mem_b_wdata),
         .mem_b_rdata(mem_b_rdata),
-        .loom_shadow_clk(loom_shadow_clk),
         .loom_shadow_addr(loom_shadow_addr),
         .loom_shadow_wdata(loom_shadow_wdata),
         .loom_shadow_rdata(loom_shadow_rdata),
@@ -49,9 +47,6 @@ module tb_mem_shadow;
     // Clock generation
     initial clk = 0;
     always #5 clk = ~clk;
-
-    initial loom_shadow_clk = 0;
-    always #5 loom_shadow_clk = ~loom_shadow_clk;
 
     // Test sequences
     int errors = 0;
@@ -91,21 +86,21 @@ module tb_mem_shadow;
     endtask
 
     task automatic write_shadow(input [10:0] addr, input [15:0] data);
-        @(posedge loom_shadow_clk);
+        @(posedge clk);
         loom_shadow_wen <= 1;
         loom_shadow_addr <= addr;
         loom_shadow_wdata <= data;
-        @(posedge loom_shadow_clk);
+        @(posedge clk);
         loom_shadow_wen <= 0;
     endtask
 
     task automatic read_shadow(input [10:0] addr, output [15:0] data);
-        @(posedge loom_shadow_clk);
+        @(posedge clk);
         loom_shadow_ren <= 1;
         loom_shadow_addr <= addr;
-        @(posedge loom_shadow_clk);
+        @(posedge clk);
         loom_shadow_ren <= 0;
-        @(posedge loom_shadow_clk);
+        @(posedge clk);
         data = loom_shadow_rdata;
     endtask
 

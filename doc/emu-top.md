@@ -74,14 +74,16 @@ write_verilog -noattr transformed.v
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-The AXI-Lite demux (`loom_axil_demux`) routes host traffic to three
-sub-modules based on address:
+The AXI-Lite demux (`loom_axil_demux`) routes host traffic to sub-modules
+based on address. When memories are present (via `mem_shadow` pass), a 4th
+slave is added:
 
-| Range               | Target          |
-| ------------------- | --------------- |
-| `0x0_0000–0x0_FFFF` | loom_emu_ctrl   |
-| `0x1_0000–0x1_FFFF` | loom_dpi_regfile|
-| `0x2_0000–0x2_FFFF` | loom_scan_ctrl  |
+| Range               | Target           | Present when      |
+| ------------------- | ---------------- | ----------------- |
+| `0x0_0000–0x0_FFFF` | loom_emu_ctrl    | Always            |
+| `0x1_0000–0x1_FFFF` | loom_dpi_regfile | Always            |
+| `0x2_0000–0x2_FFFF` | loom_scan_ctrl   | Always            |
+| `0x3_0000–0x3_FFFF` | loom_mem_ctrl    | When memories exist|
 
 ## Infrastructure Modules
 
@@ -160,11 +162,38 @@ Controls scan chain capture/restore operations. With the free-running
 clock and FF enable override (`loom_en | loom_scan_enable`), the scan
 controller asserts `scan_enable` and shifts one bit per cycle.
 
+### loom_mem_ctrl (conditional)
+
+**Location:** `src/rtl/loom_mem_ctrl.sv`
+
+AXI-Lite wrapper for the unified shadow memory interface. Instantiated as
+the 4th demux slave when the DUT has shadow-ported memories (auto-detected
+from `loom_n_memories` module attribute set by `mem_shadow`).
+
+**Register Map (offset from base 0x3_0000):**
+
+| Offset | Name        | R/W | Description                              |
+| ------ | ----------- | --- | ---------------------------------------- |
+| 0x00   | MEM_STATUS  | R   | `[0]=busy, [1]=done`                     |
+| 0x04   | MEM_CONTROL | W   | Command: 1=read, 2=write, 3=preload_start, 4=preload_next |
+| 0x08   | MEM_ADDR    | RW  | Target address (global byte address)     |
+| 0x0C   | MEM_LENGTH  | R   | Total address space bytes (parameter)    |
+| 0x10   | MEM_DATA[0] | RW  | Data word 0                              |
+| 0x14   | MEM_DATA[1] | RW  | Data word 1 (for wide memories)          |
+| ...    | ...         | RW  | Up to DATA_BITS/32 words                 |
+
+**Operations:**
+- **Read:** Write MEM_ADDR, issue CMD_READ (1). Wait for done, read MEM_DATA.
+- **Write:** Write MEM_DATA + MEM_ADDR, issue CMD_WRITE (2). Wait for done.
+- **Preload start:** Write MEM_DATA + MEM_ADDR, issue CMD_PRELOAD_START (3). Latches address.
+- **Preload next:** Write MEM_DATA, issue CMD_PRELOAD_NEXT (4). Auto-increments address by 4.
+
 ### loom_axil_demux
 
 Parameterizable AXI-Lite 1:N demux with configurable `N_MASTERS`,
-`BASE_ADDR`, and `ADDR_MASK`. Used both inside `loom_emu_top` (3 masters)
-and in `loom_shell` (3 masters for decoupler, clock gen, shell control).
+`BASE_ADDR`, and `ADDR_MASK`. Used both inside `loom_emu_top` (3 or 4
+masters depending on memory presence) and in `loom_shell` (3 masters for
+decoupler, clock gen, shell control).
 
 ## FF Enable (loom_en)
 

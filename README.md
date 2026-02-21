@@ -287,6 +287,8 @@ loomx -work build/ -t xdma -f fpga_script.txt      # scripted FPGA control
 - [ ] Re-calculating sim time from clock period
 - [ ] More than one clock (some fixed ratio design seems the most
   straight-forward)
+- [ ] Annotate bram or ultram onto memories. brams are dual-ported, the shadow
+  ports could go directly there (-> less resource utilization).
 
 ## License
 

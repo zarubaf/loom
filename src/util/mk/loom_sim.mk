@@ -37,6 +37,7 @@ LOOM_SIM_RTL := \
     $(_LOOM_RTL)/loom_axi4_err_slv.sv \
     $(_LOOM_RTL)/loom_dpi_regfile.sv \
     $(_LOOM_RTL)/loom_scan_ctrl.sv \
+    $(_LOOM_RTL)/loom_mem_ctrl.sv \
     $(_LOOM_RTL)/loom_shell.sv \
     $(_LOOM_BFM)/loom_axil_socket_bfm.sv \
     $(_LOOM_BFM)/xlnx_xdma.sv \
