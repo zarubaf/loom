@@ -17,8 +17,6 @@
 // Scan data is stored LSB-first: DATA[0][0] is the first bit shifted out/in.
 // Maximum supported chain length is 32 * N_DATA_WORDS bits.
 
-`timescale 1ns/1ps
-
 module loom_scan_ctrl #(
     parameter int unsigned CHAIN_LENGTH  = 64,   // Total scan chain bits
     parameter int unsigned N_DATA_WORDS  = (CHAIN_LENGTH + 31) / 32  // Data buffer size

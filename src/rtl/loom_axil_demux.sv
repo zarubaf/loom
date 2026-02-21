@@ -4,8 +4,9 @@
 // Parameterizable address decoder that routes AXI-Lite transactions to N slaves.
 // Address decode: route to master i when (addr & ADDR_MASK[i]) == BASE_ADDR[i].
 // Checked in order 0..N-1; first match wins.
-
-`timescale 1ns/1ps
+//
+// Unmapped addresses are accepted and answered with SLVERR (decode error) so
+// that no AXI transaction ever hangs.
 
 module loom_axil_demux #(
     parameter int unsigned ADDR_WIDTH = 20,
@@ -75,6 +76,9 @@ module loom_axil_demux #(
     // Master index width — enough bits for 0..N_MASTERS-1
     localparam int IDX_W = N_MASTERS > 1 ? $clog2(N_MASTERS) : 1;
 
+    // Selector value representing "no slave matched" (unmapped address)
+    localparam logic [SEL_W-1:0] UNMAPPED = N_MASTERS[SEL_W-1:0];
+
     // =========================================================================
     // Read Path
     // =========================================================================
@@ -87,24 +91,32 @@ module loom_axil_demux #(
         rd_slave_sel = decode_slave(s_axil_araddr_i);
     end
 
-    // Address routing — subtract BASE_ADDR to give each slave base-relative addresses
+    // Address routing — pass through the address; the mask-based decode uses
+    // power-of-two aligned regions so the slave only sees the in-region bits
+    // (upper bits are don't-care to the slave).
     always_comb begin
         for (int i = 0; i < int'(N_MASTERS); i++) begin
-            m_axil_araddr_o[i*ADDR_WIDTH +: ADDR_WIDTH] = s_axil_araddr_i - BASE_ADDR[i];
+            m_axil_araddr_o[i*ADDR_WIDTH +: ADDR_WIDTH] = s_axil_araddr_i;
             m_axil_arvalid_o[i] = 1'b0;
         end
         if (s_axil_arvalid_i && !rd_in_progress_q &&
-            rd_slave_sel < N_MASTERS[SEL_W-1:0]) begin
+            rd_slave_sel < UNMAPPED) begin
             m_axil_arvalid_o[rd_slave_sel[IDX_W-1:0]] = 1'b1;
         end
     end
 
-    // Ready mux
+    // Ready mux — unmapped addresses are accepted immediately so the bus
+    // never stalls.  The registered rd_slave_active_q == UNMAPPED path
+    // will generate the SLVERR response on the next cycle.
     always_comb begin
-        if (!rd_in_progress_q && rd_slave_sel < N_MASTERS[SEL_W-1:0])
-            s_axil_arready_o = m_axil_arready_i[rd_slave_sel[IDX_W-1:0]];
-        else
+        if (!rd_in_progress_q) begin
+            if (rd_slave_sel < UNMAPPED)
+                s_axil_arready_o = m_axil_arready_i[rd_slave_sel[IDX_W-1:0]];
+            else
+                s_axil_arready_o = 1'b1;   // accept unmapped immediately
+        end else begin
             s_axil_arready_o = 1'b0;
+        end
     end
 
     // Track active read slave
@@ -123,11 +135,12 @@ module loom_axil_demux #(
         end
     end
 
-    // Response mux
+    // Response mux — when rd_slave_active_q == UNMAPPED the defaults
+    // (DEAD_BEEF / SLVERR / rvalid from rd_in_progress_q) apply.
     always_comb begin
         s_axil_rdata_o  = 32'hDEAD_BEEF;
         s_axil_rresp_o  = 2'b10; // SLVERR
-        s_axil_rvalid_o = 1'b0;
+        s_axil_rvalid_o = rd_in_progress_q && (rd_slave_active_q == UNMAPPED);
         for (int i = 0; i < int'(N_MASTERS); i++) begin
             if (rd_slave_active_q == i[SEL_W-1:0]) begin
                 s_axil_rdata_o  = m_axil_rdata_i[i*32 +: 32];
@@ -157,14 +170,14 @@ module loom_axil_demux #(
         wr_slave_sel = decode_slave(s_axil_awaddr_i);
     end
 
-    // Address routing — subtract BASE_ADDR to give each slave base-relative addresses
+    // Address routing — pass through (power-of-two aligned, no subtraction needed)
     always_comb begin
         for (int i = 0; i < int'(N_MASTERS); i++) begin
-            m_axil_awaddr_o[i*ADDR_WIDTH +: ADDR_WIDTH] = s_axil_awaddr_i - BASE_ADDR[i];
+            m_axil_awaddr_o[i*ADDR_WIDTH +: ADDR_WIDTH] = s_axil_awaddr_i;
             m_axil_awvalid_o[i] = 1'b0;
         end
         if (s_axil_awvalid_i && !wr_in_progress_q &&
-            wr_slave_sel < N_MASTERS[SEL_W-1:0]) begin
+            wr_slave_sel < UNMAPPED) begin
             m_axil_awvalid_o[wr_slave_sel[IDX_W-1:0]] = 1'b1;
         end
     end
@@ -177,16 +190,22 @@ module loom_axil_demux #(
             m_axil_wvalid_o[i] = 1'b0;
         end
         if (s_axil_wvalid_i && !wr_in_progress_q &&
-            wr_slave_sel < N_MASTERS[SEL_W-1:0]) begin
+            wr_slave_sel < UNMAPPED) begin
             m_axil_wvalid_o[wr_slave_sel[IDX_W-1:0]] = 1'b1;
         end
     end
 
-    // Ready mux
+    // Ready mux — unmapped addresses accepted immediately (SLVERR response
+    // generated on the next cycle via wr_slave_active_q == UNMAPPED).
     always_comb begin
-        if (!wr_in_progress_q && wr_slave_sel < N_MASTERS[SEL_W-1:0]) begin
-            s_axil_awready_o = m_axil_awready_i[wr_slave_sel[IDX_W-1:0]];
-            s_axil_wready_o  = m_axil_wready_i[wr_slave_sel[IDX_W-1:0]];
+        if (!wr_in_progress_q) begin
+            if (wr_slave_sel < UNMAPPED) begin
+                s_axil_awready_o = m_axil_awready_i[wr_slave_sel[IDX_W-1:0]];
+                s_axil_wready_o  = m_axil_wready_i[wr_slave_sel[IDX_W-1:0]];
+            end else begin
+                s_axil_awready_o = 1'b1;    // accept unmapped immediately
+                s_axil_wready_o  = 1'b1;
+            end
         end else begin
             s_axil_awready_o = 1'b0;
             s_axil_wready_o  = 1'b0;
@@ -209,10 +228,11 @@ module loom_axil_demux #(
         end
     end
 
-    // Response mux
+    // Response mux — when wr_slave_active_q == UNMAPPED the defaults
+    // (SLVERR / bvalid from wr_in_progress_q) apply.
     always_comb begin
         s_axil_bresp_o  = 2'b10; // SLVERR
-        s_axil_bvalid_o = 1'b0;
+        s_axil_bvalid_o = wr_in_progress_q && (wr_slave_active_q == UNMAPPED);
         for (int i = 0; i < int'(N_MASTERS); i++) begin
             if (wr_slave_active_q == i[SEL_W-1:0]) begin
                 s_axil_bresp_o  = m_axil_bresp_i[i*2 +: 2];

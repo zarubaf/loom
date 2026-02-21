@@ -16,8 +16,6 @@
 //   addr[15:6] = function index (up to 1024 functions)
 //   addr[5:0]  = register within function
 
-`timescale 1ns/1ps
-
 module loom_dpi_regfile #(
     parameter int unsigned N_DPI_FUNCS = 1,
     parameter int unsigned MAX_ARGS    = 8

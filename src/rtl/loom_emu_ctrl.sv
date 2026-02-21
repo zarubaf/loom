@@ -33,8 +33,6 @@
 //   0x44  EMU_TIME_CMP_LO  RW    Time compare [31:0]
 //   0x48  EMU_TIME_CMP_HI  RW    Time compare [63:32]
 
-`timescale 1ns/1ps
-
 module loom_emu_ctrl #(
     parameter int unsigned N_DPI_FUNCS     = 1,
     parameter int unsigned N_MEMORIES      = 0,

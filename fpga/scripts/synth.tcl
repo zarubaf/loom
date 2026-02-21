@@ -26,6 +26,7 @@ read_ip $ip_dir/xlnx_decoupler/xlnx_decoupler.srcs/sources_1/ip/xlnx_decoupler/x
 # Infrastructure RTL
 set loom_src $::env(LOOM_SRC)
 read_verilog -sv \
+  $loom_src/rtl/loom_axi4_err_slv.sv \
   $loom_src/rtl/loom_axil_demux.sv \
   $loom_src/rtl/loom_emu_ctrl.sv \
   $loom_src/rtl/loom_dpi_regfile.sv \

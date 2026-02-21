@@ -13,8 +13,6 @@
 //   [0x4_0000 – 0x4_FFFF]  xlnx_clk_gen DRP
 //   [0x5_0000 – 0x5_FFFF]  shell control register
 
-`timescale 1ns/1ps
-
 module loom_shell (
     // PCIe (XDMA)
     input  wire        pcie_refclk_p,
@@ -484,42 +482,130 @@ module loom_shell (
         .s_intf1_RVALID  (xdma_axi4_rvalid),
         .s_intf1_RREADY  (xdma_axi4_rready),
 
-        // Interface 1 (AXI4): RP side — unconnected (future DMA slave)
-        .rp_intf1_AWID    (),
-        .rp_intf1_AWADDR  (),
-        .rp_intf1_AWLEN   (),
-        .rp_intf1_AWSIZE  (),
-        .rp_intf1_AWBURST (),
-        .rp_intf1_AWLOCK  (),
-        .rp_intf1_AWCACHE (),
-        .rp_intf1_AWPROT  (),
-        .rp_intf1_AWVALID (),
-        .rp_intf1_AWREADY (1'b0),
-        .rp_intf1_WDATA   (),
-        .rp_intf1_WSTRB   (),
-        .rp_intf1_WLAST   (),
-        .rp_intf1_WVALID  (),
-        .rp_intf1_WREADY  (1'b0),
-        .rp_intf1_BID     (4'd0),
-        .rp_intf1_BRESP   (2'b00),
-        .rp_intf1_BVALID  (1'b0),
-        .rp_intf1_BREADY  (),
-        .rp_intf1_ARID    (),
-        .rp_intf1_ARADDR  (),
-        .rp_intf1_ARLEN   (),
-        .rp_intf1_ARSIZE  (),
-        .rp_intf1_ARBURST (),
-        .rp_intf1_ARLOCK  (),
-        .rp_intf1_ARCACHE (),
-        .rp_intf1_ARPROT  (),
-        .rp_intf1_ARVALID (),
-        .rp_intf1_ARREADY (1'b0),
-        .rp_intf1_RID     (4'd0),
-        .rp_intf1_RDATA   (128'd0),
-        .rp_intf1_RRESP   (2'b00),
-        .rp_intf1_RLAST   (1'b0),
-        .rp_intf1_RVALID  (1'b0),
-        .rp_intf1_RREADY  ()
+        // Interface 1 (AXI4): RP side → error slave (future: DMA slave)
+        .rp_intf1_AWID    (axi4_err_awid),
+        .rp_intf1_AWADDR  (axi4_err_awaddr),
+        .rp_intf1_AWLEN   (axi4_err_awlen),
+        .rp_intf1_AWSIZE  (axi4_err_awsize),
+        .rp_intf1_AWBURST (axi4_err_awburst),
+        .rp_intf1_AWLOCK  (axi4_err_awlock),
+        .rp_intf1_AWCACHE (axi4_err_awcache),
+        .rp_intf1_AWPROT  (axi4_err_awprot),
+        .rp_intf1_AWVALID (axi4_err_awvalid),
+        .rp_intf1_AWREADY (axi4_err_awready),
+        .rp_intf1_WDATA   (axi4_err_wdata),
+        .rp_intf1_WSTRB   (axi4_err_wstrb),
+        .rp_intf1_WLAST   (axi4_err_wlast),
+        .rp_intf1_WVALID  (axi4_err_wvalid),
+        .rp_intf1_WREADY  (axi4_err_wready),
+        .rp_intf1_BID     (axi4_err_bid),
+        .rp_intf1_BRESP   (axi4_err_bresp),
+        .rp_intf1_BVALID  (axi4_err_bvalid),
+        .rp_intf1_BREADY  (axi4_err_bready),
+        .rp_intf1_ARID    (axi4_err_arid),
+        .rp_intf1_ARADDR  (axi4_err_araddr),
+        .rp_intf1_ARLEN   (axi4_err_arlen),
+        .rp_intf1_ARSIZE  (axi4_err_arsize),
+        .rp_intf1_ARBURST (axi4_err_arburst),
+        .rp_intf1_ARLOCK  (axi4_err_arlock),
+        .rp_intf1_ARCACHE (axi4_err_arcache),
+        .rp_intf1_ARPROT  (axi4_err_arprot),
+        .rp_intf1_ARVALID (axi4_err_arvalid),
+        .rp_intf1_ARREADY (axi4_err_arready),
+        .rp_intf1_RID     (axi4_err_rid),
+        .rp_intf1_RDATA   (axi4_err_rdata),
+        .rp_intf1_RRESP   (axi4_err_rresp),
+        .rp_intf1_RLAST   (axi4_err_rlast),
+        .rp_intf1_RVALID  (axi4_err_rvalid),
+        .rp_intf1_RREADY  (axi4_err_rready)
+    );
+
+    // =========================================================================
+    // 4b. AXI4 Error Slave (DMA RP side)
+    // =========================================================================
+    // The XDMA AXI4 DMA port is not used yet.  A proper error slave
+    // ensures that any stray DMA transaction gets a DECERR response
+    // instead of hanging the bus.
+
+    wire [3:0]   axi4_err_awid;
+    wire [63:0]  axi4_err_awaddr;
+    wire [7:0]   axi4_err_awlen;
+    wire [2:0]   axi4_err_awsize;
+    wire [1:0]   axi4_err_awburst;
+    wire         axi4_err_awlock;
+    wire [3:0]   axi4_err_awcache;
+    wire [2:0]   axi4_err_awprot;
+    wire         axi4_err_awvalid;
+    wire         axi4_err_awready;
+    wire [127:0] axi4_err_wdata;
+    wire [15:0]  axi4_err_wstrb;
+    wire         axi4_err_wlast;
+    wire         axi4_err_wvalid;
+    wire         axi4_err_wready;
+    wire [3:0]   axi4_err_bid;
+    wire [1:0]   axi4_err_bresp;
+    wire         axi4_err_bvalid;
+    wire         axi4_err_bready;
+    wire [3:0]   axi4_err_arid;
+    wire [63:0]  axi4_err_araddr;
+    wire [7:0]   axi4_err_arlen;
+    wire [2:0]   axi4_err_arsize;
+    wire [1:0]   axi4_err_arburst;
+    wire         axi4_err_arlock;
+    wire [3:0]   axi4_err_arcache;
+    wire [2:0]   axi4_err_arprot;
+    wire         axi4_err_arvalid;
+    wire         axi4_err_arready;
+    wire [3:0]   axi4_err_rid;
+    wire [127:0] axi4_err_rdata;
+    wire [1:0]   axi4_err_rresp;
+    wire         axi4_err_rlast;
+    wire         axi4_err_rvalid;
+    wire         axi4_err_rready;
+
+    loom_axi4_err_slv #(
+        .ID_WIDTH   (4),
+        .DATA_WIDTH (128),
+        .RESP       (2'b11)  // DECERR
+    ) u_axi4_err_slv (
+        .clk_i  (aclk),
+        .rst_ni (aresetn),
+
+        .s_axi_awid    (axi4_err_awid),
+        .s_axi_awaddr  (axi4_err_awaddr),
+        .s_axi_awlen   (axi4_err_awlen),
+        .s_axi_awsize  (axi4_err_awsize),
+        .s_axi_awburst (axi4_err_awburst),
+        .s_axi_awlock  (axi4_err_awlock),
+        .s_axi_awcache (axi4_err_awcache),
+        .s_axi_awprot  (axi4_err_awprot),
+        .s_axi_awvalid (axi4_err_awvalid),
+        .s_axi_awready (axi4_err_awready),
+        .s_axi_wdata   (axi4_err_wdata),
+        .s_axi_wstrb   (axi4_err_wstrb),
+        .s_axi_wlast   (axi4_err_wlast),
+        .s_axi_wvalid  (axi4_err_wvalid),
+        .s_axi_wready  (axi4_err_wready),
+        .s_axi_bid     (axi4_err_bid),
+        .s_axi_bresp   (axi4_err_bresp),
+        .s_axi_bvalid  (axi4_err_bvalid),
+        .s_axi_bready  (axi4_err_bready),
+        .s_axi_arid    (axi4_err_arid),
+        .s_axi_araddr  (axi4_err_araddr),
+        .s_axi_arlen   (axi4_err_arlen),
+        .s_axi_arsize  (axi4_err_arsize),
+        .s_axi_arburst (axi4_err_arburst),
+        .s_axi_arlock  (axi4_err_arlock),
+        .s_axi_arcache (axi4_err_arcache),
+        .s_axi_arprot  (axi4_err_arprot),
+        .s_axi_arvalid (axi4_err_arvalid),
+        .s_axi_arready (axi4_err_arready),
+        .s_axi_rid     (axi4_err_rid),
+        .s_axi_rdata   (axi4_err_rdata),
+        .s_axi_rresp   (axi4_err_rresp),
+        .s_axi_rlast   (axi4_err_rlast),
+        .s_axi_rvalid  (axi4_err_rvalid),
+        .s_axi_rready  (axi4_err_rready)
     );
 
     // =========================================================================

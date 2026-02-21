@@ -1,0 +1,137 @@
+# AXI-Lite completeness test
+#
+# Every read/write MUST complete (no hangs). Invalid addresses return
+# 0xdeadbeef. The test timeout catches any unterminated AXI transaction.
+#
+# Address map (20-bit, from host perspective):
+#   0x00000–0x0FFFF  emu_ctrl        (via emu_top demux master 0)
+#   0x10000–0x1FFFF  dpi_regfile     (via emu_top demux master 1)
+#   0x20000–0x2FFFF  scan_ctrl       (via emu_top demux master 2)
+#   0x30000–0x3FFFF  emu_top UNMAPPED (shell demux master 0 range, emu_top demux hole)
+#   0x40000–0x4FFFF  clk_gen DRP     (shell demux master 1)
+#   0x50000–0x5FFFF  shell_ctrl      (shell demux master 2)
+#   0x60000–0xFFFFF  shell UNMAPPED  (no slave)
+
+# =====================================================================
+# Section 1: emu_ctrl — valid registers (0x00000 – 0x00048)
+# =====================================================================
+read 0x00000     # EMU_STATUS
+read 0x00008     # EMU_CYCLE_LO
+read 0x0000c     # EMU_CYCLE_HI
+read 0x00014     # N_DPI_FUNCS
+read 0x00018     # N_MEMORIES
+read 0x0001c     # N_SCAN_CHAINS
+read 0x00020     # TOTAL_SCAN_BITS
+read 0x00024     # MAX_ARGS
+read 0x00028     # DESIGN_ID
+read 0x0002c     # LOOM_VERSION
+read 0x00030     # IRQ_STATUS
+read 0x00034     # IRQ_ENABLE
+read 0x00038     # EMU_FINISH
+read 0x0003c     # EMU_TIME_LO
+read 0x00040     # EMU_TIME_HI
+read 0x00044     # EMU_TIME_CMP_LO
+read 0x00048     # EMU_TIME_CMP_HI
+
+# =====================================================================
+# Section 2: emu_ctrl — out-of-bound offsets (within emu_ctrl range)
+# =====================================================================
+read 0x0004c     # first unmapped emu_ctrl offset
+read 0x00050
+read 0x000fc     # last word in 256-byte emu_ctrl window
+
+# =====================================================================
+# Section 3: emu_ctrl — writes to writable registers
+# =====================================================================
+write 0x00004 0x00   # EMU_CONTROL (no-op command 0x00)
+write 0x00010 0x00   # EMU_CLK_DIV
+write 0x00034 0x00   # IRQ_ENABLE
+write 0x00044 0xff   # EMU_TIME_CMP_LO
+write 0x00048 0x00   # EMU_TIME_CMP_HI
+
+# =====================================================================
+# Section 4: dpi_regfile — valid addresses (0x10000)
+# =====================================================================
+read 0x10000     # DPI func 0 STATUS
+read 0x10004     # DPI func 0 CONTROL
+read 0x10008     # DPI func 0 ARG0
+read 0x1ffc0     # DPI_PENDING_MASK (global, func_idx=0x3FF)
+
+# =====================================================================
+# Section 5: dpi_regfile — OOB function index (SLVERR from regfile)
+# =====================================================================
+read 0x10500     # func_idx = 20 (design has only 1 DPI func)
+read 0x1ff00     # func_idx = 0x3FC (high but not the magic 0x3FF)
+read 0x1ff80     # func_idx = 0x3FE
+
+# =====================================================================
+# Section 6: scan_ctrl — valid registers (0x20000)
+# =====================================================================
+read 0x20000     # SCAN_STATUS
+read 0x20008     # SCAN_LENGTH
+
+# =====================================================================
+# Section 7: scan_ctrl — out-of-bound offsets
+# =====================================================================
+read 0x20ffc     # deep into scan_ctrl address range
+
+# =====================================================================
+# Section 8: emu_top demux hole — address 0x30000–0x3FFFF
+#
+# The shell demux routes 0x00000–0x3FFFF to emu_top (mask 0xC0000).
+# But emu_top's own demux only maps 0x0/0x1/0x2xxxx. So 0x3xxxx
+# reaches emu_top's demux as an unmapped address.
+# Before the fix this would HANG.
+# =====================================================================
+read 0x30000     # emu_top demux hole — must return, not hang
+read 0x30004
+read 0x3fffc     # last word in the hole
+
+write 0x30000 0xaa   # write into emu_top demux hole
+write 0x3fffc 0xbb
+
+# =====================================================================
+# Section 9: shell demux — clk_gen region (0x40000)
+# =====================================================================
+read 0x40000     # clk_gen DRP base
+read 0x40004
+
+# =====================================================================
+# Section 10: shell demux — shell_ctrl region (0x50000)
+# =====================================================================
+read 0x50000     # shell DecouplerCtrl
+
+# =====================================================================
+# Section 11: shell demux unmapped — 0x60000 and above
+#
+# No slave maps here. Before the fix this would HANG.
+# =====================================================================
+read 0x60000     # first unmapped shell region
+read 0x70000
+read 0x80000
+read 0x90000
+read 0xa0000
+read 0xb0000
+read 0xc0000
+read 0xd0000
+read 0xe0000
+read 0xf0000
+read 0xffffc     # highest addressable word
+
+write 0x60000 0xcc   # write to unmapped shell region
+write 0x70000 0xdd
+write 0xffffc 0xee
+
+# =====================================================================
+# Section 12: boundary addresses at region edges
+# =====================================================================
+read 0x0fffc     # last word of emu_ctrl range
+read 0x1fffc     # last word of dpi_regfile range
+read 0x2fffc     # last word of scan_ctrl range
+read 0x4fffc     # last word of clk_gen range
+read 0x5fffc     # last word of shell_ctrl range
+
+# =====================================================================
+# Done — if we reach here, no AXI transaction hung
+# =====================================================================
+exit
