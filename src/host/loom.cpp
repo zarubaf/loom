@@ -44,20 +44,25 @@ Result<void> Context::connect(std::string_view target) {
     if (!val.ok()) return val.error();
     scan_chain_length_ = val.value();
 
-    val = read32(addr::EmuCtrl + reg::DesignId);
+    val = read32(addr::EmuCtrl + reg::ShellVersion);
     if (!val.ok()) return val.error();
-    design_id_ = val.value();
-
-    val = read32(addr::EmuCtrl + reg::LoomVersion);
-    if (!val.ok()) return val.error();
-    loom_version_ = val.value();
+    shell_version_ = val.value();
 
     val = read32(addr::EmuCtrl + reg::NMemories);
     if (!val.ok()) return val.error();
     n_memories_ = val.value();
 
-    logger.info("Connected. Design ID: 0x%08x, Version: 0x%08x, DPI funcs: %u, Scan bits: %u, Memories: %u",
-             design_id_, loom_version_, n_dpi_funcs_, scan_chain_length_, n_memories_);
+    // Read 8-word design hash
+    for (int i = 0; i < 8; i++) {
+        val = read32(addr::EmuCtrl + reg::DesignHash0 + i * 4);
+        if (!val.ok()) return val.error();
+        design_hash_[i] = val.value();
+    }
+
+    logger.info("Connected. Shell: %s, Hash: %.16s..., DPI funcs: %u, Scan bits: %u, Memories: %u",
+             version_string(shell_version_).c_str(),
+             design_hash_hex().c_str(),
+             n_dpi_funcs_, scan_chain_length_, n_memories_);
 
     // Ensure emu_top is coupled (accessible through decoupler)
     auto couple_rc = couple();
@@ -76,6 +81,24 @@ void Context::disconnect() {
 
 bool Context::is_connected() const {
     return transport_ && transport_->is_connected();
+}
+
+std::string Context::design_hash_hex() const {
+    static const char hex[] = "0123456789abcdef";
+    // Reconstruct big-endian hash from words (word 7 = MSB, word 0 = LSB)
+    // Word 7 goes first in the hex string (most significant)
+    std::string result(64, '0');
+    for (int i = 7; i >= 0; i--) {
+        int pos = (7 - i) * 8;  // word 7 → pos 0, word 0 → pos 56
+        uint32_t w = design_hash_[i];
+        // Big-endian byte order within each word
+        for (int b = 3; b >= 0; b--) {
+            uint8_t byte = (w >> (b * 8)) & 0xFF;
+            result[pos++] = hex[(byte >> 4) & 0xF];
+            result[pos++] = hex[byte & 0xF];
+        }
+    }
+    return result;
 }
 
 // ============================================================================

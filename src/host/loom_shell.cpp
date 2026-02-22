@@ -903,8 +903,8 @@ int Shell::cmd_status(const std::vector<std::string>& /*args*/) {
     } else {
         std::printf("  Time cmp:    %llu\n", static_cast<unsigned long long>(time_cmp));
     }
-    std::printf("  Design ID:   0x%08x\n", ctx_.design_id());
-    std::printf("  Loom ver:    0x%08x\n", ctx_.loom_version());
+    std::printf("  Shell ver:   %s\n", version_string(ctx_.shell_version()).c_str());
+    std::printf("  Design hash: %s\n", ctx_.design_hash_hex().c_str());
     std::printf("  DPI funcs:   %u\n", ctx_.n_dpi_funcs());
     std::printf("  Scan bits:   %u\n", ctx_.scan_chain_length());
     std::printf("  Memories:    %u\n", ctx_.n_memories());
@@ -1027,7 +1027,7 @@ int Shell::cmd_dump(const std::vector<std::string>& args) {
         if (time_val.ok())
             snapshot.set_dut_time(time_val.value());
 
-        snapshot.set_design_id(ctx_.design_id());
+        snapshot.set_design_id(ctx_.design_hash()[0]);
 
         // Pack raw scan data as LE bytes
         std::string raw_bytes(scan.size() * 4, '\0');
@@ -1099,7 +1099,7 @@ int Shell::cmd_inspect(const std::vector<std::string>& args) {
                 static_cast<unsigned long long>(snapshot.cycle_count()));
     std::printf("  DUT time:   %llu\n",
                 static_cast<unsigned long long>(snapshot.dut_time()));
-    std::printf("  Design ID:  0x%08x\n", snapshot.design_id());
+    std::printf("  Design hash[0]: 0x%08x\n", snapshot.design_id());
 
     if (!snapshot.has_scan_map() || snapshot.scan_map().variables_size() == 0) {
         std::printf("  (no embedded scan map)\n");

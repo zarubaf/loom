@@ -7,7 +7,9 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -110,7 +112,7 @@ namespace addr {
 }
 
 namespace reg {
-    // emu_ctrl register offsets
+    // emu_ctrl register offsets (compacted layout)
     constexpr uint32_t Status = 0x00;
     constexpr uint32_t Control = 0x04;
     constexpr uint32_t CycleLo = 0x08;
@@ -121,15 +123,22 @@ namespace reg {
     constexpr uint32_t NScanChains = 0x1C;
     constexpr uint32_t TotalScanBits = 0x20;
     constexpr uint32_t MaxDpiArgs = 0x24;
-    constexpr uint32_t DesignId = 0x28;
-    constexpr uint32_t LoomVersion = 0x2C;
-    constexpr uint32_t IrqStatus = 0x30;
-    constexpr uint32_t IrqEnable = 0x34;
-    constexpr uint32_t Finish = 0x38;
-    constexpr uint32_t TimeLo = 0x3C;
-    constexpr uint32_t TimeHi = 0x40;
-    constexpr uint32_t TimeCmpLo = 0x44;
-    constexpr uint32_t TimeCmpHi = 0x48;
+    constexpr uint32_t ShellVersion = 0x28;
+    constexpr uint32_t IrqStatus = 0x2C;
+    constexpr uint32_t IrqEnable = 0x30;
+    constexpr uint32_t Finish = 0x34;
+    constexpr uint32_t TimeLo = 0x38;
+    constexpr uint32_t TimeHi = 0x3C;
+    constexpr uint32_t TimeCmpLo = 0x40;
+    constexpr uint32_t TimeCmpHi = 0x44;
+    constexpr uint32_t DesignHash0 = 0x48;  // 8 contiguous words
+    constexpr uint32_t DesignHash1 = 0x4C;
+    constexpr uint32_t DesignHash2 = 0x50;
+    constexpr uint32_t DesignHash3 = 0x54;
+    constexpr uint32_t DesignHash4 = 0x58;
+    constexpr uint32_t DesignHash5 = 0x5C;
+    constexpr uint32_t DesignHash6 = 0x60;
+    constexpr uint32_t DesignHash7 = 0x64;
 
     // DPI regfile register offsets (per function, 64 bytes each)
     constexpr uint32_t DpiFuncSize = 0x40;
@@ -203,6 +212,20 @@ namespace ctrl {
 }
 
 // ============================================================================
+// Shell Version
+// ============================================================================
+
+constexpr uint32_t LOOM_SHELL_VERSION = 0x000100;  // 0.1.0
+
+// Convert packed version (0xMMNNPP) to "M.N.P" string
+inline std::string version_string(uint32_t v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%u.%u.%u",
+                  (v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
+    return buf;
+}
+
+// ============================================================================
 // Transport Interface
 // ============================================================================
 
@@ -268,8 +291,11 @@ public:
     uint32_t n_dpi_funcs() const { return n_dpi_funcs_; }
     uint32_t max_dpi_args() const { return max_dpi_args_; }
     uint32_t scan_chain_length() const { return scan_chain_length_; }
-    uint32_t design_id() const { return design_id_; }
-    uint32_t loom_version() const { return loom_version_; }
+    uint32_t shell_version() const { return shell_version_; }
+    const std::array<uint32_t, 8>& design_hash() const { return design_hash_; }
+
+    // Return design hash as hex string (64 chars)
+    std::string design_hash_hex() const;
 
     // ========================================================================
     // Emulation Control
@@ -350,8 +376,8 @@ private:
     uint32_t max_dpi_args_ = 8;
     uint32_t scan_chain_length_ = 0;
     uint32_t n_memories_ = 0;
-    uint32_t design_id_ = 0;
-    uint32_t loom_version_ = 0;
+    uint32_t shell_version_ = 0;
+    std::array<uint32_t, 8> design_hash_ = {};
 };
 
 // ============================================================================

@@ -24,6 +24,15 @@
 #include "kernel/yosys.h"
 #include "kernel/sigtools.h"
 
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <cstdio>
+#include <string>
+#include <vector>
+
+#include "picosha2.h"
+
 USING_YOSYS_NAMESPACE
 PRIVATE_NAMESPACE_BEGIN
 
@@ -177,6 +186,87 @@ struct EmuTopPass : public Pass {
                 log("  Promoting internal wire '%s' to input port\n", sig_name.c_str());
                 w->port_input = true;
                 dut->fixup_ports();
+            }
+        }
+
+        // =========================================================================
+        // Compute SHA-256 of DUT netlist (canonical serialization)
+        // =========================================================================
+        std::string canonical;
+        {
+            // Collect and sort cell names
+            std::vector<RTLIL::IdString> cell_names;
+            for (auto cell : dut->cells())
+                cell_names.push_back(cell->name);
+            std::sort(cell_names.begin(), cell_names.end());
+
+            for (auto &cn : cell_names) {
+                auto *cell = dut->cell(cn);
+                canonical += "cell:" + cell->type.str() + "\n";
+                // Sort parameters by name
+                std::vector<RTLIL::IdString> param_names;
+                for (auto &p : cell->parameters)
+                    param_names.push_back(p.first);
+                std::sort(param_names.begin(), param_names.end());
+                for (auto &pn : param_names) {
+                    canonical += "  param:" + pn.str() + "=" + cell->parameters[pn].as_string() + "\n";
+                }
+                // Sort connections by port name
+                std::vector<RTLIL::IdString> conn_names;
+                for (auto &c : cell->connections())
+                    conn_names.push_back(c.first);
+                std::sort(conn_names.begin(), conn_names.end());
+                for (auto &pn : conn_names) {
+                    canonical += "  port:" + pn.str() + ":" + std::to_string(cell->connections().at(pn).size()) + "\n";
+                }
+            }
+
+            // Collect and sort wire names
+            std::vector<RTLIL::IdString> wire_names;
+            for (auto wire : dut->wires())
+                wire_names.push_back(wire->name);
+            std::sort(wire_names.begin(), wire_names.end());
+
+            for (auto &wn : wire_names) {
+                auto *wire = dut->wire(wn);
+                canonical += "wire:" + wire->name.str() + ":"
+                           + std::to_string(wire->width)
+                           + (wire->port_input ? ":i" : "")
+                           + (wire->port_output ? ":o" : "") + "\n";
+            }
+        }
+
+        auto hash_hex = picosha2::hash256_hex_string(canonical);
+
+        // Extract 8 x 32-bit words for emu_ctrl registers
+        // Word 0 = hash[31:0] (LSB), Word 7 = hash[255:224] (MSB)
+        std::vector<uint8_t> hash_bytes(picosha2::k_digest_size);
+        picosha2::hash256(canonical, hash_bytes);
+        std::array<uint32_t, 8> hash_words;
+        for (int i = 0; i < 8; i++) {
+            int b = (7 - i) * 4;
+            hash_words[i] = (static_cast<uint32_t>(hash_bytes[b]) << 24)
+                          | (static_cast<uint32_t>(hash_bytes[b + 1]) << 16)
+                          | (static_cast<uint32_t>(hash_bytes[b + 2]) << 8)
+                          | (static_cast<uint32_t>(hash_bytes[b + 3]));
+        }
+
+        log("  Design hash: %s\n", hash_hex.c_str());
+
+        // Write loom_manifest.toml to CWD (= work dir when invoked by loomc)
+        {
+            FILE *mf = std::fopen("loom_manifest.toml", "w");
+            if (mf) {
+                std::fprintf(mf, "[design]\n");
+                std::fprintf(mf, "hash = \"%s\"\n", hash_hex.c_str());
+                std::fprintf(mf, "top_module = \"%s\"\n\n", top_name.c_str());
+                std::fprintf(mf, "[shell]\n");
+                std::fprintf(mf, "version = \"0.1.0\"\n");
+                std::fprintf(mf, "version_hex = 0x000100\n\n");
+                std::fclose(mf);
+                log("  Wrote loom_manifest.toml\n");
+            } else {
+                log("  WARNING: Could not write loom_manifest.toml\n");
             }
         }
 
@@ -421,8 +511,12 @@ struct EmuTopPass : public Pass {
         emu_ctrl->setParam(ID(MAX_ARG_WIDTH), dut_args_width);
         emu_ctrl->setParam(ID(MAX_RET_WIDTH), dut_result_width);
         emu_ctrl->setParam(ID(MAX_ARGS), max_args);
-        emu_ctrl->setParam(ID(DESIGN_ID), 0xE2E00001);
-        emu_ctrl->setParam(ID(LOOM_VERSION), 0x000100);
+        emu_ctrl->setParam(ID(SHELL_VERSION), 0x000100);
+        for (int i = 0; i < 8; i++) {
+            char pname[32];
+            std::snprintf(pname, sizeof(pname), "DESIGN_HASH_%d", i);
+            emu_ctrl->setParam(RTLIL::escape_id(pname), (int)hash_words[i]);
+        }
         emu_ctrl->setPort(ID(clk_i), clk_i);
         emu_ctrl->setPort(ID(rst_ni), rst_ni);
         // AXI-Lite (from demux master 0)

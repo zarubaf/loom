@@ -69,14 +69,15 @@ Options:
 ```
 $ loomx -work build/ -sv_lib dpi
 [main] INFO  Loom Execution Host
-[loom] INFO  Connected. Design ID: 0x00000001 ...
+[loom] INFO  Connected. Shell: 0.1.0, Hash: e3b0c44298fc1c14...
 [shell] INFO  Loom interactive shell. Type 'help' for commands.
 loom> status
   State:       Idle
   Cycles:      0
   DUT time:    0
   Time cmp:    unlimited
-  Design ID:   0x00000001
+  Shell ver:   0.1.0
+  Design hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   DPI funcs:   2
   Scan bits:   64
 loom> step 10
@@ -131,7 +132,8 @@ loom::Context ctx(std::move(transport));
 // Connect to simulation
 auto rc = ctx.connect("/tmp/loom_sim.sock");
 if (rc.ok()) {
-    printf("Design ID: 0x%08x\n", ctx.design_id());
+    printf("Shell version: %s\n", loom::version_string(ctx.shell_version()).c_str());
+    printf("Design hash: %s\n", ctx.design_hash_hex().c_str());
     printf("DPI funcs: %u\n", ctx.n_dpi_funcs());
 }
 

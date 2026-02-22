@@ -15,6 +15,7 @@
 #include "loom_dpi_service.h"
 #include "loom_log.h"
 #include "loom_shell.h"
+#include "toml_utils.h"
 
 #include <cerrno>
 #include <csignal>
@@ -333,6 +334,58 @@ int main(int argc, char **argv) {
             waitpid(sim_pid, nullptr, 0);
         }
         return 1;
+    }
+
+    // Read manifest and verify design hash + shell version
+    {
+        auto manifest_path = work / "loom_manifest.toml";
+        if (fs::exists(manifest_path)) {
+            auto manifest = loom::toml_read(manifest_path.string());
+
+            // Compare design hash
+            auto it_design = manifest.find("design");
+            if (it_design != manifest.end()) {
+                auto it_hash = it_design->second.find("hash");
+                if (it_hash != it_design->second.end()) {
+                    std::string manifest_hash = it_hash->second;
+                    std::string hw_hash = ctx.design_hash_hex();
+                    if (manifest_hash != hw_hash) {
+                        logger.warning("Design hash mismatch!");
+                        logger.warning("  Manifest: %s", manifest_hash.c_str());
+                        logger.warning("  Hardware: %s", hw_hash.c_str());
+                        logger.warning("  The hardware may have been built from a different design.");
+                    }
+                }
+            }
+
+            // Compare shell version
+            auto it_shell = manifest.find("shell");
+            if (it_shell != manifest.end()) {
+                auto it_ver = it_shell->second.find("version_hex");
+                if (it_ver != it_shell->second.end()) {
+                    uint32_t manifest_ver = static_cast<uint32_t>(
+                        std::strtoul(it_ver->second.c_str(), nullptr, 0));
+                    uint32_t hw_ver = ctx.shell_version();
+
+                    uint32_t sw_major = (manifest_ver >> 16) & 0xFF;
+                    uint32_t hw_major = (hw_ver >> 16) & 0xFF;
+                    uint32_t sw_minor = (manifest_ver >> 8) & 0xFF;
+                    uint32_t hw_minor = (hw_ver >> 8) & 0xFF;
+
+                    if (sw_major != hw_major) {
+                        logger.warning("Shell major version mismatch! SW=%s HW=%s",
+                                       loom::version_string(manifest_ver).c_str(),
+                                       loom::version_string(hw_ver).c_str());
+                    } else if (hw_minor > sw_minor) {
+                        logger.warning("Shell is newer than loomx (HW=%s SW=%s)",
+                                       loom::version_string(hw_ver).c_str(),
+                                       loom::version_string(manifest_ver).c_str());
+                    }
+                }
+            }
+        } else {
+            logger.debug("No loom_manifest.toml found in work directory");
+        }
     }
 
     // Configure DPI service

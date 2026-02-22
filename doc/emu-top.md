@@ -106,15 +106,38 @@ bridges DUT DPI calls to the regfile, and generates the `loom_en` signal.
 | 0x1C   | N_SCAN_CHAINS  | R   | Number of scan chains                          |
 | 0x20   | TOTAL_SCAN_BITS| R   | Total scan chain length                        |
 | 0x24   | MAX_ARGS       | R   | Max DPI arguments per function                 |
-| 0x28   | DESIGN_ID      | R   | Design CRC32 (version check)                   |
-| 0x2C   | LOOM_VERSION   | R   | Toolchain version                              |
-| 0x30   | IRQ_STATUS     | R   | Aggregated IRQ status                          |
-| 0x34   | IRQ_ENABLE     | W   | Aggregated IRQ enable                          |
-| 0x38   | EMU_FINISH     | RW  | Finish request: [0]=req, [15:8]=exit_code      |
-| 0x3C   | EMU_TIME_LO    | R   | DUT time counter [31:0]                        |
-| 0x40   | EMU_TIME_HI    | R   | DUT time counter [63:32]                       |
-| 0x44   | EMU_TIME_CMP_LO| RW  | Time compare [31:0] (emulation freezes at cmp) |
-| 0x48   | EMU_TIME_CMP_HI| RW  | Time compare [63:32]                           |
+| 0x28   | SHELL_VERSION  | R   | Shell semver (0xMMNNPP, e.g. 0x000100 = 0.1.0)|
+| 0x2C   | IRQ_STATUS     | R   | Aggregated IRQ status                          |
+| 0x30   | IRQ_ENABLE     | W   | Aggregated IRQ enable                          |
+| 0x34   | EMU_FINISH     | RW  | Finish request: [0]=req, [15:8]=exit_code      |
+| 0x38   | EMU_TIME_LO    | R   | DUT time counter [31:0]                        |
+| 0x3C   | EMU_TIME_HI    | R   | DUT time counter [63:32]                       |
+| 0x40   | EMU_TIME_CMP_LO| RW  | Time compare [31:0] (emulation freezes at cmp) |
+| 0x44   | EMU_TIME_CMP_HI| RW  | Time compare [63:32]                           |
+| 0x48   | DESIGN_HASH_0  | R   | SHA-256 of DUT netlist [31:0]                  |
+| 0x4C   | DESIGN_HASH_1  | R   | SHA-256 [63:32]                                |
+| 0x50   | DESIGN_HASH_2  | R   | SHA-256 [95:64]                                |
+| 0x54   | DESIGN_HASH_3  | R   | SHA-256 [127:96]                               |
+| 0x58   | DESIGN_HASH_4  | R   | SHA-256 [159:128]                              |
+| 0x5C   | DESIGN_HASH_5  | R   | SHA-256 [191:160]                              |
+| 0x60   | DESIGN_HASH_6  | R   | SHA-256 [223:192]                              |
+| 0x64   | DESIGN_HASH_7  | R   | SHA-256 [255:224]                               |
+
+**Design Hash:**
+
+The `emu_top` pass computes a SHA-256 hash of the DUT RTLIL netlist (cells,
+parameters, connections, and wires in canonical sorted order) and bakes the
+full 256-bit hash into 8 contiguous read-only registers. The same hash is
+written to `loom_manifest.toml` in the work directory. On connect, `loomx`
+reads the hardware hash registers and compares them against the manifest
+to detect mismatched build artifacts (warning, not error).
+
+**Shell Version:**
+
+The `SHELL_VERSION` register contains a semver-encoded version (0xMMNNPP)
+identifying the register map and protocol version. `loomx` compares the
+hardware shell version against the manifest to detect major/minor
+incompatibilities.
 
 **DPI state machine:**
 

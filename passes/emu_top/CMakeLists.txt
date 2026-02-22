@@ -4,7 +4,10 @@
 
 add_library(emu_top MODULE emu_top.cc)
 # Don't link against libyosys - symbols resolved at runtime from yosys executable
-target_include_directories(emu_top PRIVATE ${YOSYS_INCLUDE})
+target_include_directories(emu_top PRIVATE
+    ${YOSYS_INCLUDE}
+    ${CMAKE_SOURCE_DIR}/third_party/picosha2
+)
 target_compile_definitions(emu_top PRIVATE
     _YOSYS_
     YOSYS_ENABLE_PLUGINS
