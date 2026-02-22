@@ -32,7 +32,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build
-          key: loom-build-${{ runner.os }}-${{ hashFiles('cmake/**', 'passes/**', 'src/**') }}
+          key: loom-build-${{ runner.os }}-${{ hashFiles('cmake/**', 'passes/**', 'src/**', 'third_party/**') }}
           restore-keys: |
             loom-build-${{ runner.os }}-
 

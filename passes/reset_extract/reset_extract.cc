@@ -213,9 +213,11 @@ struct ResetExtractPass : public Pass {
             }
         }
 
-        if (async_stripped + sync_kept > 0) {
-            module->set_string_attribute(ID(loom_resets_extracted), "1");
+        // Always mark the module so downstream passes (emu_top) know
+        // reset_extract has run, even when the DUT has no reset FFs.
+        module->set_string_attribute(ID(loom_resets_extracted), "1");
 
+        if (async_stripped + sync_kept > 0) {
             // Tie the reset signal to constant inactive and remove the port.
             // For active-low rst_ni: drive to 1.  A subsequent `opt` pass
             // propagates this constant through all remaining sync-reset
