@@ -97,4 +97,9 @@ test: $(_TEST_DEPS)
 	@grep -A 50 'File:.*snap_post_reset_run' $(BUILD)/test.log | grep -q '\[  0\] = 0xde'
 	@echo "  OK"
 	@echo ""
+	@# 15. Verify power-of-two memory preload (address width overflow regression)
+	@echo "[check] pot_mem preloaded (2^N address width regression)..."
+	@grep -q 'pot_mem:.*64 x 32' $(BUILD)/test.log
+	@echo "  OK"
+	@echo ""
 	@echo "=== PASS: all mem_shadow E2E checks passed ==="

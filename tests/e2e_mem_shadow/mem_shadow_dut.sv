@@ -153,4 +153,20 @@ module mem_shadow_dut (
         .data_o (lut_data_o)
     );
 
+    // =========================================================================
+    // Power-of-two memory (address width overflow regression test)
+    // =========================================================================
+    // 32-bit x 64 = 256 bytes. The address space is exactly 2^8, which
+    // previously caused end_addr to overflow global_addr_bits in mem_shadow's
+    // $lt comparator (end_addr=256 doesn't fit in 8 bits → always-false select).
+    logic [31:0] pot_mem [0:63];
+    initial begin
+        for (int i = 0; i < 64; i++)
+            pot_mem[i] = 32'hA0A0_0000 + i;
+    end
+
+    always_ff @(posedge clk_i) begin
+        pot_mem[counter_q[5:0]] <= {16'hBEEF, counter_q};
+    end
+
 endmodule

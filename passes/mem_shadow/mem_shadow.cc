@@ -412,15 +412,18 @@ struct MemShadowPass : public Pass {
             ge_cell->setPort(ID::Y, RTLIL::SigSpec(ge_result));
 
             // addr < end_addr (unsigned comparison)
+            // Use global_addr_bits+1 for B_WIDTH to avoid overflow when
+            // end_addr == 2^global_addr_bits (e.g., 64KB memory with 16-bit addr).
+            int lt_width = global_addr_bits + 1;
             RTLIL::Wire *lt_result = ctrl->addWire(NEW_ID, 1);
             RTLIL::Cell *lt_cell = ctrl->addCell(NEW_ID, ID($lt));
             lt_cell->parameters[ID::A_SIGNED] = RTLIL::Const(0);
             lt_cell->parameters[ID::B_SIGNED] = RTLIL::Const(0);
             lt_cell->parameters[ID::A_WIDTH] = RTLIL::Const(global_addr_bits);
-            lt_cell->parameters[ID::B_WIDTH] = RTLIL::Const(global_addr_bits);
+            lt_cell->parameters[ID::B_WIDTH] = RTLIL::Const(lt_width);
             lt_cell->parameters[ID::Y_WIDTH] = RTLIL::Const(1);
             lt_cell->setPort(ID::A, addr_sig);
-            lt_cell->setPort(ID::B, RTLIL::SigSpec(RTLIL::Const(end_addr, global_addr_bits)));
+            lt_cell->setPort(ID::B, RTLIL::SigSpec(RTLIL::Const(end_addr, lt_width)));
             lt_cell->setPort(ID::Y, RTLIL::SigSpec(lt_result));
 
             // sel = ge_result && lt_result
