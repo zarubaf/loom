@@ -332,8 +332,10 @@ struct ScanInsertPass : public Pass {
         // Update port list
         module->fixup_ports();
 
-        // Build initial scan image from accumulated reset entries
-        if (!reset_entries.empty()) {
+        // Build initial scan image: FFs with loom_reset_value get their
+        // reset value; FFs without default to 0 (matches Verilator behavior).
+        // TODO: support randomized initial values for verification.
+        {
             int n_words = (chain_pos + 31) / 32;
             std::vector<uint32_t> init_words(n_words, 0);
             for (auto &e : reset_entries) {
