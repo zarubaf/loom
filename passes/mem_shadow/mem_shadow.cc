@@ -241,7 +241,14 @@ struct MemShadowPass : public Pass {
 
         // Find the DUT clock wire — shadow accesses happen while loom_en=0
         // (DUT frozen), so the DUT clock is sufficient.
+        // Try: explicit -clk, then loom_tbx_clk attribute, then common names.
         RTLIL::Wire *dut_clk = module->wire(RTLIL::escape_id(clk_name));
+        if (!dut_clk) {
+            auto tbx_clk = module->get_string_attribute(ID(loom_tbx_clk));
+            if (!tbx_clk.empty())
+                dut_clk = module->wire(RTLIL::escape_id(tbx_clk));
+        }
+        if (!dut_clk) dut_clk = module->wire(ID(clk));
         if (!dut_clk) {
             log_error("DUT clock '%s' not found. Use -clk to specify.\n", clk_name.c_str());
         }
@@ -493,8 +500,14 @@ struct MemShadowPass : public Pass {
         int global_addr_bits = ceil_log2(total_addr_space);
         if (global_addr_bits < 2) global_addr_bits = 2;
 
-        // Find the DUT clock wire for the controller
+        // Find the DUT clock wire for the controller (same fallback as add_shadow_ports)
         RTLIL::Wire *dut_clk = module->wire(RTLIL::escape_id(clk_name));
+        if (!dut_clk) {
+            auto tbx_clk = module->get_string_attribute(ID(loom_tbx_clk));
+            if (!tbx_clk.empty())
+                dut_clk = module->wire(RTLIL::escape_id(tbx_clk));
+        }
+        if (!dut_clk) dut_clk = module->wire(ID(clk));
         if (!dut_clk)
             log_error("DUT clock '%s' not found.\n", clk_name.c_str());
 

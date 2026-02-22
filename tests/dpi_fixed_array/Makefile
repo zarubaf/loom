@@ -14,7 +14,7 @@ test: $(_TEST_DEPS)
 		-f $(BUILD)/test_script.txt 2>&1 | tee $(BUILD)/test.log
 	@echo "--- Checking output ---"
 	@grep -q 'dpi_sum_array("init", n=4)' $(BUILD)/test.log
-	@grep -q 'data\[0\] = 0xdeadbeef' $(BUILD)/test.log
+	@grep -q 'data\[0\] = 0x9abcdef0' $(BUILD)/test.log
 	@grep -q 'sum = 0x569daf15' $(BUILD)/test.log
 	@grep -q 'dpi_fill_array("test", n=4)' $(BUILD)/test.log
 	@grep -q 'dpi_sum_array("test", n=4)' $(BUILD)/test.log

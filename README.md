@@ -6,6 +6,10 @@
 <h1 align="center">Loom</h1>
 
 <p align="center">
+  <a href="https://github.com/zarubaf/loom/actions/workflows/ci.yml"><img src="https://github.com/zarubaf/loom/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
+
+<p align="center">
   <i>Weaving simulation into silicon, one thread at a time.</i>
 </p>
 
