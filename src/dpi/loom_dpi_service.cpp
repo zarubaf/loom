@@ -42,6 +42,9 @@ const DpiFunc* DpiService::find_func_by_id(int func_id) const {
 }
 
 int DpiService::service_once(Context& ctx) {
+    // Set context so user DPI functions can call vpi_control etc.
+    current_ctx_ = &ctx;
+
     // Poll for pending DPI calls
     auto poll_result = ctx.dpi_poll();
     if (!poll_result.ok()) {

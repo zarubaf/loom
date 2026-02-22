@@ -25,10 +25,10 @@ int vpi_control(int op, ...) {
     case vpiFinish: {
         int exit_code = va_arg(args, int);
         if (ctx) {
-            logger.debug("vpi_control(vpiFinish, %d)", exit_code);
+            logger.info("vpi_control(vpiFinish, %d)", exit_code);
             ctx->finish(exit_code);
         } else {
-            logger.warning("vpi_control(vpiFinish) called without context");
+            logger.warning("vpi_control(vpiFinish, %d) called without context", exit_code);
         }
         break;
     }
@@ -36,8 +36,6 @@ int vpi_control(int op, ...) {
         if (ctx) {
             logger.debug("vpi_control(vpiStop)");
             ctx->stop();
-        } else {
-            logger.warning("vpi_control(vpiStop) called without context");
         }
         break;
     default:
