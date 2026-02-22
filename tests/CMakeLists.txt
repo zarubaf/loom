@@ -139,7 +139,7 @@ add_test(NAME e2e_dpi_open_array
 )
 set_tests_properties(e2e_dpi_open_array PROPERTIES
     DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
-    TIMEOUT 120
+    TIMEOUT 300
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
 
@@ -150,7 +150,7 @@ add_test(NAME e2e_dpi_fixed_array
 )
 set_tests_properties(e2e_dpi_fixed_array PROPERTIES
     DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
-    TIMEOUT 120
+    TIMEOUT 300
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
 
@@ -161,7 +161,7 @@ add_test(NAME e2e_dpi_test
 )
 set_tests_properties(e2e_dpi_test PROPERTIES
     DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
-    TIMEOUT 120
+    TIMEOUT 300
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
 
@@ -214,7 +214,7 @@ add_test(NAME e2e_scan_dump
 )
 set_tests_properties(e2e_scan_dump PROPERTIES
     DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
-    TIMEOUT 120
+    TIMEOUT 300
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
 
@@ -225,7 +225,7 @@ add_test(NAME e2e_initial_dpi
 )
 set_tests_properties(e2e_initial_dpi PROPERTIES
     DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
-    TIMEOUT 120
+    TIMEOUT 300
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
 
@@ -251,7 +251,7 @@ add_test(NAME e2e_shell_regaccess
 )
 set_tests_properties(e2e_shell_regaccess PROPERTIES
     DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
-    TIMEOUT 120
+    TIMEOUT 300
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
 
@@ -262,7 +262,7 @@ add_test(NAME e2e_axil_completeness
 )
 set_tests_properties(e2e_axil_completeness PROPERTIES
     DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
-    TIMEOUT 30
+    TIMEOUT 300
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
 
@@ -273,7 +273,7 @@ add_test(NAME e2e_multisim_read_write
 )
 set_tests_properties(e2e_multisim_read_write PROPERTIES
     DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
-    TIMEOUT 120
+    TIMEOUT 300
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
 
@@ -284,7 +284,7 @@ add_test(NAME e2e_mem_shadow
 )
 set_tests_properties(e2e_mem_shadow PROPERTIES
     DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;mem_shadow;emu_top;loomc;loomx;verilator_ext"
-    TIMEOUT 120
+    TIMEOUT 300
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
 

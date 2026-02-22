@@ -21,6 +21,7 @@ cmake-build-*/
 
 # Generated files
 compile_commands.json
+*.pb
 
 # Test outputs
 tests/**/*.v
@@ -41,3 +42,6 @@ third_party/snitch/
 third_party/riscv-toolchain/
 
 Testing/
+
+# NFS...
+.nfs*
