@@ -32,9 +32,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build
-          key: loom-build-${{ runner.os }}-${{ hashFiles('cmake/**', 'passes/**', 'src/**') }}
+          # Primary key includes the specific git commit (github.sha)
+          key: loom-build-v3-${{ runner.os }}-deps-${{ hashFiles('third-party/**') }}-src-${{ github.sha }}
+          # Fallback strictly requires the third-party hash to match
           restore-keys: |
-            loom-build-${{ runner.os }}-
+            loom-build-v3-${{ runner.os }}-deps-${{ hashFiles('third-party/**') }}-
 
       - name: Configure
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
