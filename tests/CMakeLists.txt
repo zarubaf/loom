@@ -298,3 +298,41 @@ set_tests_properties(e2e_axil_firewall PROPERTIES
     TIMEOUT 120
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
+
+# Snitch RISC-V Hello World — requires deps from fetch_deps.sh
+# Check for RISC-V toolchain and snitch RTL deps
+set(_SNITCH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/snitch_hello)
+set(_SNITCH_DEPS_DIR ${CMAKE_SOURCE_DIR}/third_party/snitch)
+set(_RISCV_TC_DIR ${CMAKE_SOURCE_DIR}/third_party/riscv-toolchain)
+
+# Detect RISC-V toolchain (xPack or standard)
+find_program(RISCV_GCC NAMES riscv-none-elf-gcc riscv32-unknown-elf-gcc
+    HINTS ${_RISCV_TC_DIR}/bin
+    NO_DEFAULT_PATH
+)
+
+if(RISCV_GCC AND EXISTS "${_SNITCH_DEPS_DIR}/snitch_cluster/hw/snitch/src/snitch.sv")
+    # Ref test (plain Verilator, no Loom) — validates RTL correctness
+    add_test(NAME snitch_hello_ref
+        COMMAND make ref
+        WORKING_DIRECTORY ${_SNITCH_DIR}
+    )
+    set_tests_properties(snitch_hello_ref PROPERTIES
+        DEPENDS "verilator_ext"
+        TIMEOUT 300
+        ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
+    )
+
+    # Loom test (full pipeline)
+    add_test(NAME snitch_hello_loom
+        COMMAND make test
+        WORKING_DIRECTORY ${_SNITCH_DIR}
+    )
+    set_tests_properties(snitch_hello_loom PROPERTIES
+        DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;mem_shadow;emu_top;loomc;loomx;verilator_ext;snitch_hello_ref"
+        TIMEOUT 600
+        ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
+    )
+else()
+    message(STATUS "Skipping snitch_hello tests (run tests/snitch_hello/fetch_deps.sh first)")
+endif()

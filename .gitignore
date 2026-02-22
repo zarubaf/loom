@@ -36,4 +36,8 @@ tests/**/obj_dir/
 # Generated JSON
 *_map*.json
 
+# Third-party dependencies (fetched at runtime)
+third_party/snitch/
+third_party/riscv-toolchain/
+
 Testing/
