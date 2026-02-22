@@ -165,10 +165,10 @@ std::string build_yosys_script(const Options &opts,
         ys << " --top " << opts.top_module;
     ys << "\n";
 
-    // Elaborate
+    // Elaborate — no optimization until after Loom passes wire DPI/finish
+    // to output ports. Without outputs, opt_clean removes all internal logic.
     ys << "hierarchy -check -top " << opts.top_module << "\n";
     ys << "proc\n";
-    ys << "opt\n";
 
     // Memory shadow (before flatten)
     ys << "memory_collect\n";
@@ -182,26 +182,40 @@ std::string build_yosys_script(const Options &opts,
 
     // Flatten
     ys << "flatten\n";
-    ys << "opt\n";
 
     // Extract reset values, strip async resets, remove reset port
     ys << "reset_extract -rst " << opts.rst << "\n";
-    ys << "opt\n";
 
-    // DPI instrument (before scan_insert — assigns func_ids, creates loom_en + scan_enable)
+    // DPI instrument (creates loom_en, DPI/finish output ports).
+    // From here on, DPI args/result and finish are module outputs —
+    // opt_clean preserves FFs in their fan-in, removes dead ones.
     ys << "loom_instrument -header_out loom_dpi_dispatch.c\n";
 
-    // Scan insert (after loom_instrument — builds chain, records reset DPI scan offsets)
+    // Optimize: DPI/finish outputs anchor the live fan-in cone.
+    // Dead FFs (unused register file entries, tied-off subsystems)
+    // are correctly removed before scan chain insertion.
+    // WORKAROUND: use opt_expr + opt_merge + opt_clean instead of full opt.
+    // Yosys opt_dff treats $memrd output from X-initialized memory as
+    // "don't care", proving D==Q for FFs whose data path goes through
+    // memory reads (register file, PC). This is incorrect — memory content
+    // is unknown at synthesis time. TODO: fix in Yosys opt_dff.
+    ys << "opt_expr\n";
+    ys << "opt_merge\n";
+    ys << "opt_clean\n";
+
+    // Scan insert (after opt — only live FFs end up on the chain)
     ys << "scan_insert -map scan_map.pb\n";
+
 
     // Emulation top wrapper
     ys << "emu_top -top " << opts.top_module;
     if (!opts.clk.empty())
-        ys << " -clk " << opts.clk;
-    ys << " -rst " << opts.rst << "\n";
+    ys << " -clk " << opts.clk;
+ys << " -rst " << opts.rst << "\n";
 
-    // Cleanup and output
-    ys << "opt_clean\n";
+    // Final cleanup
+    ys << "opt\n";
+    ys << "bwmuxmap\n";
     ys << "write_verilog -noattr transformed.v\n";
 
     return ys.str();
