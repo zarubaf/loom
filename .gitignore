@@ -21,6 +21,7 @@ cmake-build-*/
 
 # Generated files
 compile_commands.json
+*.pb
 
 # Test outputs
 tests/**/*.v
@@ -37,3 +38,6 @@ tests/**/obj_dir/
 *_map*.json
 
 Testing/
+
+# NFS...
+.nfs*

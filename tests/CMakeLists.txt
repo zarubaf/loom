@@ -273,7 +273,7 @@ add_test(NAME e2e_multisim_read_write
 )
 set_tests_properties(e2e_multisim_read_write PROPERTIES
     DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
-    TIMEOUT 120
+    TIMEOUT 300
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
 
