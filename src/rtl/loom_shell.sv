@@ -130,10 +130,32 @@ module loom_shell (
     wire         xdma_axi4_rlast;
     wire         xdma_axi4_rvalid;
 
+    // finish / IRQ — synchronize from emu_clk → aclk domain
+    wire [N_IRQ-1:0] irq_emu;       // emu_clk domain (from emu_top)
+    wire              finish_emu;    // emu_clk domain (from emu_top)
+
+    reg [N_IRQ-1:0] irq_sync_q1, irq_sync_q2;
+    reg              finish_sync_q1, finish_sync_q2;
+
+    always @(posedge aclk or negedge aresetn) begin
+        if (!aresetn) begin
+            irq_sync_q1    <= '0;
+            irq_sync_q2    <= '0;
+            finish_sync_q1 <= 1'b0;
+            finish_sync_q2 <= 1'b0;
+        end else begin
+            irq_sync_q1    <= irq_emu;
+            irq_sync_q2    <= irq_sync_q1;
+            finish_sync_q1 <= finish_emu;
+            finish_sync_q2 <= finish_sync_q1;
+        end
+    end
+
+    wire [N_IRQ-1:0] irq    = irq_sync_q2;
+    wire              finish = finish_sync_q2;
+
     // finish + DPI stall → XDMA user IRQ
-    wire [N_IRQ-1:0] irq;
-    wire              finish;
-    wire              usr_irq = finish | irq[0];
+    wire              usr_irq = irq[0];
 
     xlnx_xdma u_xdma (
         .sys_clk    (pcie_refclk),
@@ -213,7 +235,7 @@ module loom_shell (
         .usr_irq_ack      (),
         .msi_enable       (),
         .msi_vector_width (),
-        .loom_irq_i       (irq),
+        .loom_finish_i    (finish),
 
         // Config management — unused
         .cfg_mgmt_addr           (19'd0),
@@ -727,8 +749,8 @@ module loom_shell (
         .s_axil_bvalid_o  (cdc_axil_bvalid),
         .s_axil_bready_i  (cdc_axil_bready),
 
-        .irq_o    (irq),
-        .finish_o (finish)
+        .irq_o    (irq_emu),
+        .finish_o (finish_emu)
     );
 
 endmodule

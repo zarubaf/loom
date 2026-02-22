@@ -84,9 +84,7 @@ module xlnx_xdma (
     output wire [0:0]  usr_irq_ack,
     output wire        msi_enable,
     output wire [2:0]  msi_vector_width,
-
-    // Simulation-only: IRQ lines forwarded to socket BFM
-    input  wire [15:0] loom_irq_i,
+    input  wire        loom_finish_i,
 
     // Config management
     input  wire [18:0] cfg_mgmt_addr,
@@ -207,6 +205,10 @@ module xlnx_xdma (
 
     wire                  bfm_shutdown;
 
+    wire [15:0] loom_irq;
+
+    assign loom_irq = {15'd0, usr_irq_req[0]};
+
     loom_axil_socket_bfm #(
         .ADDR_WIDTH (ADDR_WIDTH),
         .N_IRQ      (N_IRQ)
@@ -233,8 +235,8 @@ module xlnx_xdma (
         .m_axil_bvalid_i  (bfm_bvalid),
         .m_axil_bready_o  (bfm_bready),
 
-        .irq_i     (loom_irq_i),
-        .finish_i  (usr_irq_req[0]),
+        .irq_i     (loom_irq),
+        .finish_i  (loom_finish_i),
         .shutdown_o(bfm_shutdown)
     );
 
