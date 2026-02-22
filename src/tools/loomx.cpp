@@ -372,6 +372,20 @@ int main(int argc, char **argv) {
         exit_code = shell.run_interactive();
     }
 
+    // Check if sim died unexpectedly (helps diagnose CI failures)
+    if (sim_pid > 0) {
+        int status;
+        pid_t rc = waitpid(sim_pid, &status, WNOHANG);
+        if (rc > 0) {
+            if (WIFSIGNALED(status)) {
+                logger.error("Simulation crashed (signal %d: %s)",
+                             WTERMSIG(status), strsignal(WTERMSIG(status)));
+            } else if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+                logger.error("Simulation exited with code %d", WEXITSTATUS(status));
+            }
+        }
+    }
+
     // Final stats
     auto cycle_result = ctx.get_cycle_count();
     if (cycle_result.ok()) {
@@ -394,10 +408,22 @@ int main(int argc, char **argv) {
     if (sim_pid > 0) {
         // Wait briefly for clean exit, then force kill
         int status;
+        bool we_killed_it = false;
         pid_t rc = waitpid(sim_pid, &status, WNOHANG);
         if (rc == 0) {
             kill(sim_pid, SIGTERM);
-            waitpid(sim_pid, nullptr, 0);
+            we_killed_it = true;
+            waitpid(sim_pid, &status, 0);
+        }
+        if (WIFEXITED(status)) {
+            int sim_exit = WEXITSTATUS(status);
+            if (sim_exit != 0)
+                logger.error("Simulation exited with code %d", sim_exit);
+        } else if (WIFSIGNALED(status) && !we_killed_it) {
+            // Only report signals we didn't send ourselves
+            logger.error("Simulation crashed (signal %d: %s)",
+                         WTERMSIG(status), strsignal(WTERMSIG(status)));
+            if (exit_code == 0) exit_code = 128 + WTERMSIG(status);
         }
         // Remove socket file
         if (fs::exists(opts.socket_path)) {
