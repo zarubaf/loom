@@ -25,13 +25,18 @@ $(BUILD)/sw_test: $(SW_SRCS) $(SW_HDRS) | $(BUILD)
 # Override default test: run sim in background, then client, check results
 test: $(_TEST_DEPS) $(BUILD)/sw_test
 	@rm -rf .multisim && mkdir -p .multisim
+	@# Kill any stale sim processes from previous runs
+	@-pkill -f '$(CURDIR)/$(BUILD)/sim/obj_dir/Vloom_shell' 2>/dev/null; true
 	@echo "run" > $(BUILD)/test_script.txt
 	@echo "exit" >> $(BUILD)/test_script.txt
 	$(LOOMX) -work $(BUILD) $(_LOOMX_DPI) $(_LOOMX_TIMEOUT) -sim Vloom_shell -f $(BUILD)/test_script.txt & \
 	SIM_PID=$$!; \
+	cleanup() { kill $$SIM_PID 2>/dev/null; wait $$SIM_PID 2>/dev/null; }; \
+	trap cleanup EXIT; \
 	sleep 2; \
 	$(BUILD)/sw_test; \
 	SW_RC=$$?; \
+	trap - EXIT; \
 	wait $$SIM_PID; \
 	SIM_RC=$$?; \
 	echo "--- sim exit: $$SIM_RC, client exit: $$SW_RC ---"; \
@@ -60,11 +65,15 @@ ref: $(REF_DIR)/obj_dir/Vtop $(BUILD)/sw_test
 
 ref-test: $(REF_DIR)/obj_dir/Vtop $(BUILD)/sw_test
 	@rm -rf .multisim && mkdir -p .multisim
+	@-pkill -f '$(CURDIR)/$(REF_DIR)/obj_dir/Vtop' 2>/dev/null; true
 	$(REF_DIR)/obj_dir/Vtop & \
 	SIM_PID=$$!; \
+	cleanup() { kill $$SIM_PID 2>/dev/null; wait $$SIM_PID 2>/dev/null; }; \
+	trap cleanup EXIT; \
 	sleep 2; \
 	$(BUILD)/sw_test; \
 	SW_RC=$$?; \
+	trap - EXIT; \
 	wait $$SIM_PID; \
 	SIM_RC=$$?; \
 	echo "--- sim exit: $$SIM_RC, client exit: $$SW_RC ---"; \

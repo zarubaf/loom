@@ -45,32 +45,12 @@ int Client::startWithAddressAndPort(char const *server_address, int server_port)
   }
   fcntl(new_socket, F_SETFL, O_NONBLOCK);
 
-  clientIp = getIp();
+  clientIp = "127.0.0.1";
 
   return 1;
 }
 
 int Client::getSocket() { return new_socket; }
-
-char const *Client::getIp() {
-  struct ifaddrs *ifaddr, *ifa;
-  if (getifaddrs(&ifaddr) == -1)
-    return "127.0.0.1";
-  for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
-    if (ifa->ifa_addr == NULL || ifa->ifa_addr->sa_family != AF_INET)
-      continue;
-    // Skip loopback
-    if (strcmp(ifa->ifa_name, "lo") == 0 || strcmp(ifa->ifa_name, "lo0") == 0)
-      continue;
-    char *ip = new char[INET_ADDRSTRLEN];
-    struct sockaddr_in *sa = (struct sockaddr_in *)ifa->ifa_addr;
-    inet_ntop(AF_INET, &sa->sin_addr, ip, INET_ADDRSTRLEN);
-    freeifaddrs(ifaddr);
-    return ip;
-  }
-  freeifaddrs(ifaddr);
-  return "127.0.0.1";
-}
 
 int Client::getServerIpAndPort(char const *server_file) {
   FILE *fp = fopen(server_file, "r");

@@ -15,7 +15,6 @@ Server::Server(char const *server_info_dir, char const *name)
 }
 
 void Server::start() {
-  int i = 0;
   FILE *fp;
   std::string server_info_file;
 
@@ -28,21 +27,34 @@ void Server::start() {
     perror("socket failed");
     exit(EXIT_FAILURE);
   }
+
+  // Allow immediate port reuse after process exit (avoids TIME_WAIT conflicts)
+  int opt = 1;
+  setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
   fcntl(server_fd, F_SETFL, O_NONBLOCK);
   address.sin_family = AF_INET;
-  address.sin_addr.s_addr = INADDR_ANY;
-  while (1) {
-    serverPort = BASE_PORT + i;
-    address.sin_port = htons(serverPort);
-    if (::bind(server_fd, (struct sockaddr *)&address, addrlen) >= 0)
-      break;
-    i++;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  address.sin_port = 0;  // OS-assigned ephemeral port
+  if (::bind(server_fd, (struct sockaddr *)&address, addrlen) < 0) {
+    perror("bind");
+    exit(EXIT_FAILURE);
   }
+
+  // Read back the assigned port
+  struct sockaddr_in bound_addr;
+  socklen_t bound_len = sizeof(bound_addr);
+  if (getsockname(server_fd, (struct sockaddr *)&bound_addr, &bound_len) < 0) {
+    perror("getsockname");
+    exit(EXIT_FAILURE);
+  }
+  serverPort = ntohs(bound_addr.sin_port);
+
   if (listen(server_fd, 8) < 0) {
     perror("listen");
     exit(EXIT_FAILURE);
   }
-  serverIp = getIp();
+  serverIp = "127.0.0.1";
   serverIsRunning = true;
 
   // print server's ip and port
@@ -53,7 +65,8 @@ void Server::start() {
   fprintf(fp, "port: %0d\n", serverPort);
   fflush(fp);
   fclose(fp);
-  printf("Server: [%s] has started, info in %s\n", serverName, server_info_file.c_str());
+  printf("Server: [%s] has started on port %d, info in %s\n", serverName, serverPort,
+         server_info_file.c_str());
 }
 
 int Server::acceptNewSocket() {
@@ -61,24 +74,4 @@ int Server::acceptNewSocket() {
   new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen);
   fcntl(new_socket, F_SETFL, O_NONBLOCK);
   return new_socket;
-}
-
-char const *Server::getIp() {
-  struct ifaddrs *ifaddr, *ifa;
-  if (getifaddrs(&ifaddr) == -1)
-    return "127.0.0.1";
-  for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
-    if (ifa->ifa_addr == NULL || ifa->ifa_addr->sa_family != AF_INET)
-      continue;
-    // Skip loopback
-    if (strcmp(ifa->ifa_name, "lo") == 0 || strcmp(ifa->ifa_name, "lo0") == 0)
-      continue;
-    char *ip = new char[INET_ADDRSTRLEN];
-    struct sockaddr_in *sa = (struct sockaddr_in *)ifa->ifa_addr;
-    inet_ntop(AF_INET, &sa->sin_addr, ip, INET_ADDRSTRLEN);
-    freeifaddrs(ifaddr);
-    return ip;
-  }
-  freeifaddrs(ifaddr);
-  return "127.0.0.1";
 }

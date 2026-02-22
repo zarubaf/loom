@@ -1,9 +1,8 @@
-#ifndef SERVER_H
-#define SERVER_H
+#ifndef CLIENT_H
+#define CLIENT_H
 
 #include <arpa/inet.h>
 #include <fcntl.h>
-#include <ifaddrs.h>
 #include <set>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,7 +26,6 @@ public:
   int serverPort;
 
 private:
-  char const *getIp();
   int new_socket;
   int getServerIpAndPort(char const *server_file);
 };

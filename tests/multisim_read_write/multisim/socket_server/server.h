@@ -3,7 +3,6 @@
 
 #include <arpa/inet.h>
 #include <fcntl.h>
-#include <ifaddrs.h>
 #include <set>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,14 +11,13 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define BASE_PORT 8100
 #define SERVERNAME_MAX_SIZE 200
 
 /**
  * Implementation of a non-blocking socket server
  *
  * Main features:
- *  - finds 1st port available starting from BASE_PORT
+ *  - binds to an OS-assigned ephemeral port on localhost
  *  - write port and ip info in 'server_<serverName>.txt' at start()
  *  - forbids servers with the same name
  */
@@ -38,7 +36,6 @@ private:
   struct sockaddr_in address;
   int addrlen = sizeof(address);
   bool serverIsRunning = false;
-  char const *getIp();
   static std::set<char const *> serverNameSet;
 };
 #endif
