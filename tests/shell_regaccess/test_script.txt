@@ -21,9 +21,12 @@ step 5
 # Read cycle counter low
 read 0x08
 
-# Verify couple/decouple commands
+# Verify couple/decouple commands (now via firewall CTRL register)
 decouple
 couple
+
+# Read firewall STATUS register (0x50004)
+read 0x50004
 
 # Ensure emulation is stopped
 stop

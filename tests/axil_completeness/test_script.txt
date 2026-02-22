@@ -9,7 +9,7 @@
 #   0x20000–0x2FFFF  scan_ctrl       (via emu_top demux master 2)
 #   0x30000–0x3FFFF  emu_top UNMAPPED (shell demux master 0 range, emu_top demux hole)
 #   0x40000–0x4FFFF  clk_gen DRP     (shell demux master 1)
-#   0x50000–0x5FFFF  shell_ctrl      (shell demux master 2)
+#   0x50000–0x5FFFF  firewall mgmt   (shell demux master 2)
 #   0x60000–0xFFFFF  shell UNMAPPED  (no slave)
 
 # =====================================================================
@@ -97,9 +97,10 @@ read 0x40000     # clk_gen DRP base
 read 0x40004
 
 # =====================================================================
-# Section 10: shell demux — shell_ctrl region (0x50000)
+# Section 10: shell demux — firewall mgmt region (0x50000)
 # =====================================================================
-read 0x50000     # shell DecouplerCtrl
+read 0x50000     # FwCtrl (expect 0x0 — no lockdown, no decouple)
+read 0x50004     # FwStatus
 
 # =====================================================================
 # Section 11: shell demux unmapped — 0x60000 and above
@@ -129,7 +130,7 @@ read 0x0fffc     # last word of emu_ctrl range
 read 0x1fffc     # last word of dpi_regfile range
 read 0x2fffc     # last word of scan_ctrl range
 read 0x4fffc     # last word of clk_gen range
-read 0x5fffc     # last word of shell_ctrl range
+read 0x5fffc     # last word of firewall mgmt range
 
 # =====================================================================
 # Done — if we reach here, no AXI transaction hung

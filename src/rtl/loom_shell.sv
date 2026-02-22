@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // Loom Shell — Unified top-level for both simulation and FPGA
 //
-// Instantiates all infrastructure: XDMA, AXI-Lite demux, DFX decoupler,
-// CDC, clock generator, reset synchronizer, shell control register,
+// Instantiates all infrastructure: XDMA, AXI-Lite demux, AXI-Lite firewall,
+// DFX decoupler (AXI4-only), CDC, clock generator, reset synchronizer,
 // and loom_emu_top.
 //
 // Sub-module implementations differ between sim (behavioral BFMs) and
 // FPGA (Xilinx IPs), but the shell module itself is identical.
 //
 // Address Map (20-bit, 3 masters on aclk domain):
-//   [0x0_0000 – 0x3_FFFF]  decoupler → CDC → loom_emu_top
+//   [0x0_0000 – 0x3_FFFF]  firewall → CDC → loom_emu_top
 //   [0x4_0000 – 0x4_FFFF]  xlnx_clk_gen DRP
-//   [0x5_0000 – 0x5_FFFF]  shell control register
+//   [0x5_0000 – 0x5_FFFF]  firewall management registers
 
 module loom_shell (
     // PCIe (XDMA)
@@ -228,9 +228,9 @@ module loom_shell (
     // =========================================================================
     // 2. AXI-Lite Demux (3 masters on aclk domain)
     // =========================================================================
-    // Master 0: [0x0_0000 – 0x3_FFFF] decoupler → CDC → emu_top
+    // Master 0: [0x0_0000 – 0x3_FFFF] firewall s_axi → CDC → emu_top
     // Master 1: [0x4_0000 – 0x4_FFFF] clk_gen DRP
-    // Master 2: [0x5_0000 – 0x5_FFFF] shell control register
+    // Master 2: [0x5_0000 – 0x5_FFFF] firewall s_mgmt (management registers)
 
     wire [N_MASTERS*ADDR_WIDTH-1:0] demux_m_araddr;
     wire [N_MASTERS-1:0]            demux_m_arvalid;
@@ -300,151 +300,116 @@ module loom_shell (
     );
 
     // =========================================================================
-    // 3. Shell Control Register (master 2)
-    // =========================================================================
-    // 0x00: bit 0 = decouple (drives xlnx_decoupler decouple pin)
-
-    reg         decouple_q;
-    reg         shell_rd_pending_q;
-    reg  [31:0] shell_rdata_q;
-    reg         shell_rvalid_q;
-    reg         shell_wr_addr_q;
-    reg         shell_wr_data_q;
-    reg  [31:0] shell_wdata_q;
-    reg         shell_bvalid_q;
-
-    localparam int M2 = 2;  // Master index for shell ctrl
-
-    assign demux_m_arready[M2] = 1'b1;
-    assign demux_m_rdata[M2*32 +: 32]  = shell_rdata_q;
-    assign demux_m_rresp[M2*2 +: 2]    = 2'b00;
-    assign demux_m_rvalid[M2]           = shell_rvalid_q;
-
-    assign demux_m_awready[M2] = 1'b1;
-    assign demux_m_wready[M2]  = 1'b1;
-    assign demux_m_bresp[M2*2 +: 2]    = 2'b00;
-    assign demux_m_bvalid[M2]           = shell_bvalid_q;
-
-    always_ff @(posedge aclk or negedge aresetn) begin
-        if (!aresetn) begin
-            decouple_q       <= 1'b0;
-            shell_rd_pending_q <= 1'b0;
-            shell_rdata_q    <= 32'd0;
-            shell_rvalid_q   <= 1'b0;
-            shell_wr_addr_q  <= 1'b0;
-            shell_wr_data_q  <= 1'b0;
-            shell_wdata_q    <= 32'd0;
-            shell_bvalid_q   <= 1'b0;
-        end else begin
-            // Read path
-            if (demux_m_arvalid[M2] && demux_m_arready[M2]) begin
-                shell_rd_pending_q <= 1'b1;
-            end
-
-            if (shell_rd_pending_q && !shell_rvalid_q) begin
-                shell_rvalid_q     <= 1'b1;
-                shell_rdata_q      <= {31'd0, decouple_q};
-                shell_rd_pending_q <= 1'b0;
-            end
-
-            if (shell_rvalid_q && demux_m_rready[M2]) begin
-                shell_rvalid_q <= 1'b0;
-            end
-
-            // Write path
-            if (demux_m_awvalid[M2] && demux_m_awready[M2]) begin
-                shell_wr_addr_q <= 1'b1;
-            end
-
-            if (demux_m_wvalid[M2] && demux_m_wready[M2]) begin
-                shell_wr_data_q <= 1'b1;
-                shell_wdata_q   <= demux_m_wdata[M2*32 +: 32];
-            end
-
-            if (shell_wr_addr_q && shell_wr_data_q && !shell_bvalid_q) begin
-                decouple_q      <= shell_wdata_q[0];
-                shell_bvalid_q  <= 1'b1;
-                shell_wr_addr_q <= 1'b0;
-                shell_wr_data_q <= 1'b0;
-            end
-
-            if (shell_bvalid_q && demux_m_bready[M2]) begin
-                shell_bvalid_q <= 1'b0;
-            end
-        end
-    end
-
-    // =========================================================================
-    // 4. DFX Decoupler (master 0 AXI-Lite + AXI4 DMA path)
+    // 3. AXI-Lite Firewall (demux master 0 → CDC, mgmt on master 2)
     // =========================================================================
 
-    // AXI-Lite: decoupler RP side → CDC
-    wire [ADDR_WIDTH-1:0] decoup_rp_araddr;
-    wire [2:0]            decoup_rp_arprot;
-    wire                  decoup_rp_arvalid;
-    wire                  decoup_rp_arready;
-    wire [31:0]           decoup_rp_rdata;
-    wire [1:0]            decoup_rp_rresp;
-    wire                  decoup_rp_rvalid;
-    wire                  decoup_rp_rready;
+    // Firewall master-side → CDC source
+    wire [ADDR_WIDTH-1:0] fw_m_araddr;
+    wire [2:0]            fw_m_arprot;
+    wire                  fw_m_arvalid;
+    wire                  fw_m_arready;
+    wire [31:0]           fw_m_rdata;
+    wire [1:0]            fw_m_rresp;
+    wire                  fw_m_rvalid;
+    wire                  fw_m_rready;
 
-    wire [ADDR_WIDTH-1:0] decoup_rp_awaddr;
-    wire [2:0]            decoup_rp_awprot;
-    wire                  decoup_rp_awvalid;
-    wire                  decoup_rp_awready;
-    wire [31:0]           decoup_rp_wdata;
-    wire [3:0]            decoup_rp_wstrb;
-    wire                  decoup_rp_wvalid;
-    wire                  decoup_rp_wready;
-    wire [1:0]            decoup_rp_bresp;
-    wire                  decoup_rp_bvalid;
-    wire                  decoup_rp_bready;
+    wire [ADDR_WIDTH-1:0] fw_m_awaddr;
+    wire [2:0]            fw_m_awprot;
+    wire                  fw_m_awvalid;
+    wire                  fw_m_awready;
+    wire [31:0]           fw_m_wdata;
+    wire [3:0]            fw_m_wstrb;
+    wire                  fw_m_wvalid;
+    wire                  fw_m_wready;
+    wire [1:0]            fw_m_bresp;
+    wire                  fw_m_bvalid;
+    wire                  fw_m_bready;
+
+    wire fw_decouple_status;
+
+    loom_axil_firewall #(
+        .DATA_WIDTH (32),
+        .ADDR_WIDTH (ADDR_WIDTH)
+    ) u_firewall (
+        .clk_i  (aclk),
+        .rst_ni (aresetn),
+
+        // Upstream: demux master 0
+        .s_axi_awaddr  (demux_m_awaddr[0*ADDR_WIDTH +: ADDR_WIDTH]),
+        .s_axi_awprot  (3'b000),
+        .s_axi_awvalid (demux_m_awvalid[0]),
+        .s_axi_awready (demux_m_awready[0]),
+        .s_axi_wdata   (demux_m_wdata[0*32 +: 32]),
+        .s_axi_wstrb   (demux_m_wstrb[0*4 +: 4]),
+        .s_axi_wvalid  (demux_m_wvalid[0]),
+        .s_axi_wready  (demux_m_wready[0]),
+        .s_axi_bresp   (demux_m_bresp[0*2 +: 2]),
+        .s_axi_bvalid  (demux_m_bvalid[0]),
+        .s_axi_bready  (demux_m_bready[0]),
+        .s_axi_araddr  (demux_m_araddr[0*ADDR_WIDTH +: ADDR_WIDTH]),
+        .s_axi_arprot  (3'b000),
+        .s_axi_arvalid (demux_m_arvalid[0]),
+        .s_axi_arready (demux_m_arready[0]),
+        .s_axi_rdata   (demux_m_rdata[0*32 +: 32]),
+        .s_axi_rresp   (demux_m_rresp[0*2 +: 2]),
+        .s_axi_rvalid  (demux_m_rvalid[0]),
+        .s_axi_rready  (demux_m_rready[0]),
+
+        // Downstream: → CDC
+        .m_axi_awaddr  (fw_m_awaddr),
+        .m_axi_awprot  (fw_m_awprot),
+        .m_axi_awvalid (fw_m_awvalid),
+        .m_axi_awready (fw_m_awready),
+        .m_axi_wdata   (fw_m_wdata),
+        .m_axi_wstrb   (fw_m_wstrb),
+        .m_axi_wvalid  (fw_m_wvalid),
+        .m_axi_wready  (fw_m_wready),
+        .m_axi_bresp   (fw_m_bresp),
+        .m_axi_bvalid  (fw_m_bvalid),
+        .m_axi_bready  (fw_m_bready),
+        .m_axi_araddr  (fw_m_araddr),
+        .m_axi_arprot  (fw_m_arprot),
+        .m_axi_arvalid (fw_m_arvalid),
+        .m_axi_arready (fw_m_arready),
+        .m_axi_rdata   (fw_m_rdata),
+        .m_axi_rresp   (fw_m_rresp),
+        .m_axi_rvalid  (fw_m_rvalid),
+        .m_axi_rready  (fw_m_rready),
+
+        // Management: demux master 2
+        .s_mgmt_awaddr  (demux_m_awaddr[2*ADDR_WIDTH +: ADDR_WIDTH]),
+        .s_mgmt_awvalid (demux_m_awvalid[2]),
+        .s_mgmt_awready (demux_m_awready[2]),
+        .s_mgmt_wdata   (demux_m_wdata[2*32 +: 32]),
+        .s_mgmt_wstrb   (demux_m_wstrb[2*4 +: 4]),
+        .s_mgmt_wvalid  (demux_m_wvalid[2]),
+        .s_mgmt_wready  (demux_m_wready[2]),
+        .s_mgmt_bresp   (demux_m_bresp[2*2 +: 2]),
+        .s_mgmt_bvalid  (demux_m_bvalid[2]),
+        .s_mgmt_bready  (demux_m_bready[2]),
+        .s_mgmt_araddr  (demux_m_araddr[2*ADDR_WIDTH +: ADDR_WIDTH]),
+        .s_mgmt_arvalid (demux_m_arvalid[2]),
+        .s_mgmt_arready (demux_m_arready[2]),
+        .s_mgmt_rdata   (demux_m_rdata[2*32 +: 32]),
+        .s_mgmt_rresp   (demux_m_rresp[2*2 +: 2]),
+        .s_mgmt_rvalid  (demux_m_rvalid[2]),
+        .s_mgmt_rready  (demux_m_rready[2]),
+
+        // Sideband
+        .decouple_i        (1'b0),
+        .decouple_status_o (fw_decouple_status),
+        .evt_timeout_o     (),
+        .evt_unsolicited_o (),
+        .irq_o             ()
+    );
+
+    // =========================================================================
+    // 4. DFX Decoupler (AXI4 DMA path only)
+    // =========================================================================
 
     xlnx_decoupler u_decoupler (
-        .decouple        (decouple_q),
+        .decouple        (fw_decouple_status),
         .decouple_status (),
-
-        // Interface 0 (AXI-Lite): static side = demux master 0
-        .s_intf0_AWADDR  (demux_m_awaddr[0*ADDR_WIDTH +: ADDR_WIDTH]),
-        .s_intf0_AWPROT  (3'b000),
-        .s_intf0_AWVALID (demux_m_awvalid[0]),
-        .s_intf0_AWREADY (demux_m_awready[0]),
-        .s_intf0_WDATA   (demux_m_wdata[0*32 +: 32]),
-        .s_intf0_WSTRB   (demux_m_wstrb[0*4 +: 4]),
-        .s_intf0_WVALID  (demux_m_wvalid[0]),
-        .s_intf0_WREADY  (demux_m_wready[0]),
-        .s_intf0_BRESP   (demux_m_bresp[0*2 +: 2]),
-        .s_intf0_BVALID  (demux_m_bvalid[0]),
-        .s_intf0_BREADY  (demux_m_bready[0]),
-        .s_intf0_ARADDR  (demux_m_araddr[0*ADDR_WIDTH +: ADDR_WIDTH]),
-        .s_intf0_ARPROT  (3'b000),
-        .s_intf0_ARVALID (demux_m_arvalid[0]),
-        .s_intf0_ARREADY (demux_m_arready[0]),
-        .s_intf0_RDATA   (demux_m_rdata[0*32 +: 32]),
-        .s_intf0_RRESP   (demux_m_rresp[0*2 +: 2]),
-        .s_intf0_RVALID  (demux_m_rvalid[0]),
-        .s_intf0_RREADY  (demux_m_rready[0]),
-
-        // Interface 0 (AXI-Lite): RP side → CDC
-        .rp_intf0_AWADDR  (decoup_rp_awaddr),
-        .rp_intf0_AWPROT  (decoup_rp_awprot),
-        .rp_intf0_AWVALID (decoup_rp_awvalid),
-        .rp_intf0_AWREADY (decoup_rp_awready),
-        .rp_intf0_WDATA   (decoup_rp_wdata),
-        .rp_intf0_WSTRB   (decoup_rp_wstrb),
-        .rp_intf0_WVALID  (decoup_rp_wvalid),
-        .rp_intf0_WREADY  (decoup_rp_wready),
-        .rp_intf0_BRESP   (decoup_rp_bresp),
-        .rp_intf0_BVALID  (decoup_rp_bvalid),
-        .rp_intf0_BREADY  (decoup_rp_bready),
-        .rp_intf0_ARADDR  (decoup_rp_araddr),
-        .rp_intf0_ARPROT  (decoup_rp_arprot),
-        .rp_intf0_ARVALID (decoup_rp_arvalid),
-        .rp_intf0_ARREADY (decoup_rp_arready),
-        .rp_intf0_RDATA   (decoup_rp_rdata),
-        .rp_intf0_RRESP   (decoup_rp_rresp),
-        .rp_intf0_RVALID  (decoup_rp_rvalid),
-        .rp_intf0_RREADY  (decoup_rp_rready),
 
         // Interface 1 (AXI4): static side = XDMA AXI4 master
         .s_intf1_AWID    (xdma_axi4_awid),
@@ -636,28 +601,28 @@ module loom_shell (
     wire emu_rst_n;
 
     xlnx_cdc u_cdc (
-        // Source side (aclk domain — from decoupler RP)
+        // Source side (aclk domain — from firewall master)
         .s_axi_aclk    (aclk),
         .s_axi_aresetn (aresetn),
-        .s_axi_araddr  (decoup_rp_araddr),
-        .s_axi_arprot  (decoup_rp_arprot),
-        .s_axi_arvalid (decoup_rp_arvalid),
-        .s_axi_arready (decoup_rp_arready),
-        .s_axi_rdata   (decoup_rp_rdata),
-        .s_axi_rresp   (decoup_rp_rresp),
-        .s_axi_rvalid  (decoup_rp_rvalid),
-        .s_axi_rready  (decoup_rp_rready),
-        .s_axi_awaddr  (decoup_rp_awaddr),
-        .s_axi_awprot  (decoup_rp_awprot),
-        .s_axi_awvalid (decoup_rp_awvalid),
-        .s_axi_awready (decoup_rp_awready),
-        .s_axi_wdata   (decoup_rp_wdata),
-        .s_axi_wstrb   (decoup_rp_wstrb),
-        .s_axi_wvalid  (decoup_rp_wvalid),
-        .s_axi_wready  (decoup_rp_wready),
-        .s_axi_bresp   (decoup_rp_bresp),
-        .s_axi_bvalid  (decoup_rp_bvalid),
-        .s_axi_bready  (decoup_rp_bready),
+        .s_axi_araddr  (fw_m_araddr),
+        .s_axi_arprot  (fw_m_arprot),
+        .s_axi_arvalid (fw_m_arvalid),
+        .s_axi_arready (fw_m_arready),
+        .s_axi_rdata   (fw_m_rdata),
+        .s_axi_rresp   (fw_m_rresp),
+        .s_axi_rvalid  (fw_m_rvalid),
+        .s_axi_rready  (fw_m_rready),
+        .s_axi_awaddr  (fw_m_awaddr),
+        .s_axi_awprot  (fw_m_awprot),
+        .s_axi_awvalid (fw_m_awvalid),
+        .s_axi_awready (fw_m_awready),
+        .s_axi_wdata   (fw_m_wdata),
+        .s_axi_wstrb   (fw_m_wstrb),
+        .s_axi_wvalid  (fw_m_wvalid),
+        .s_axi_wready  (fw_m_wready),
+        .s_axi_bresp   (fw_m_bresp),
+        .s_axi_bvalid  (fw_m_bvalid),
+        .s_axi_bready  (fw_m_bready),
 
         // Destination side (emu_clk domain)
         .m_axi_aclk    (emu_clk),

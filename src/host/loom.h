@@ -106,7 +106,7 @@ namespace addr {
     constexpr uint32_t ScanCtrl = 0x20000;
     constexpr uint32_t MemCtrl = 0x30000;
     constexpr uint32_t ClkGen = 0x40000;
-    constexpr uint32_t ShellCtrl = 0x50000;
+    constexpr uint32_t Firewall = 0x50000;
 }
 
 namespace reg {
@@ -143,8 +143,16 @@ namespace reg {
     // Global DPI pending mask (func_idx=1023, one bit per function)
     constexpr uint32_t DpiPendingMask = 0xFFC0;
 
-    // shell control register offsets
-    constexpr uint32_t DecouplerCtrl = 0x00;
+    // Firewall management register offsets (at addr::Firewall = 0x50000)
+    constexpr uint32_t FwCtrl            = 0x00;  // bit0=lockdown, bit1=clear_counts, bit2=decouple
+    constexpr uint32_t FwStatus          = 0x04;  // bit0=locked, bit1=wr_outstanding, bit2=rd_outstanding, bit3=decouple_status
+    constexpr uint32_t FwTimeoutCycles   = 0x08;
+    constexpr uint32_t FwRespOnTimeout   = 0x0C;
+    constexpr uint32_t FwRdataOnTimeout  = 0x10;
+    constexpr uint32_t FwTimeoutCount    = 0x14;
+    constexpr uint32_t FwUnsolicitedCount= 0x18;
+    constexpr uint32_t FwMaxOutstanding  = 0x1C;
+    constexpr uint32_t FwIrqEnable       = 0x20;
 
     // scan_ctrl register offsets
     constexpr uint32_t ScanStatus = 0x00;

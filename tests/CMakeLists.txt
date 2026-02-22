@@ -287,3 +287,14 @@ set_tests_properties(e2e_mem_shadow PROPERTIES
     TIMEOUT 120
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
+
+# Standalone AXI-Lite firewall testbench (no loomc/loomx dependency)
+add_test(NAME e2e_axil_firewall
+    COMMAND make test
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/src/test/firewall
+)
+set_tests_properties(e2e_axil_firewall PROPERTIES
+    DEPENDS "verilator_ext"
+    TIMEOUT 120
+    ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
+)

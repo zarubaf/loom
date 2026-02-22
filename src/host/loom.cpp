@@ -437,17 +437,25 @@ Result<void> Context::mem_preload_next(const std::vector<uint32_t>& data) {
 // ============================================================================
 
 Result<void> Context::couple() {
-    return write32(addr::ShellCtrl + reg::DecouplerCtrl, 0x0);
+    // Read-modify-write: clear bit 2 (decouple), preserve bit 0 (lockdown)
+    auto val = read32(addr::Firewall + reg::FwCtrl);
+    if (!val.ok()) return val.error();
+    uint32_t ctrl = val.value() & ~0x4u;  // clear decouple bit
+    return write32(addr::Firewall + reg::FwCtrl, ctrl);
 }
 
 Result<void> Context::decouple() {
-    return write32(addr::ShellCtrl + reg::DecouplerCtrl, 0x1);
+    // Read-modify-write: set bit 2 (decouple), preserve bit 0 (lockdown)
+    auto val = read32(addr::Firewall + reg::FwCtrl);
+    if (!val.ok()) return val.error();
+    uint32_t ctrl = val.value() | 0x4u;  // set decouple bit
+    return write32(addr::Firewall + reg::FwCtrl, ctrl);
 }
 
 Result<bool> Context::is_coupled() {
-    auto val = read32(addr::ShellCtrl + reg::DecouplerCtrl);
+    auto val = read32(addr::Firewall + reg::FwStatus);
     if (!val.ok()) return val.error();
-    return (val.value() & 0x1) == 0;
+    return (val.value() & 0x8) == 0;  // bit 3 = decouple_status
 }
 
 } // namespace loom
