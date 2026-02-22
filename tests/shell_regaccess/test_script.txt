@@ -3,11 +3,11 @@
 
 status
 
-# Read Design ID register
-read 0x34
+# Read Shell Version register
+read 0x28
 
-# Read Loom Version register
-read 0x38
+# Read Design Hash word 0
+read 0x48
 
 # Write step count = 10
 write 0x10 0x0a

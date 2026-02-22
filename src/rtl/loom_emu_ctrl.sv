@@ -23,15 +23,22 @@
 //   0x1C  N_SCAN_CHAINS    R     Number of scan chains
 //   0x20  TOTAL_SCAN_BITS  R     Total scan chain length
 //   0x24  MAX_ARGS         R     Max DPI arguments per function
-//   0x28  DESIGN_ID        R     Design CRC32 (version check)
-//   0x2C  LOOM_VERSION     R     Toolchain version
-//   0x30  IRQ_STATUS       R     Aggregated IRQ status
-//   0x34  IRQ_ENABLE       W     Aggregated IRQ enable
-//   0x38  EMU_FINISH       RW    Finish request: [0]=req, [15:8]=exit_code
-//   0x3C  EMU_TIME_LO      R     DUT time counter [31:0]
-//   0x40  EMU_TIME_HI      R     DUT time counter [63:32]
-//   0x44  EMU_TIME_CMP_LO  RW    Time compare [31:0]
-//   0x48  EMU_TIME_CMP_HI  RW    Time compare [63:32]
+//   0x28  SHELL_VERSION    R     Shell semver (0xMMNNPP)
+//   0x2C  IRQ_STATUS       R     Aggregated IRQ status
+//   0x30  IRQ_ENABLE       W     Aggregated IRQ enable
+//   0x34  EMU_FINISH       RW    Finish request: [0]=req, [15:8]=exit_code
+//   0x38  EMU_TIME_LO      R     DUT time counter [31:0]
+//   0x3C  EMU_TIME_HI      R     DUT time counter [63:32]
+//   0x40  EMU_TIME_CMP_LO  RW    Time compare [31:0]
+//   0x44  EMU_TIME_CMP_HI  RW    Time compare [63:32]
+//   0x48  DESIGN_HASH_0    R     SHA-256 [31:0]
+//   0x4C  DESIGN_HASH_1    R     SHA-256 [63:32]
+//   0x50  DESIGN_HASH_2    R     SHA-256 [95:64]
+//   0x54  DESIGN_HASH_3    R     SHA-256 [127:96]
+//   0x58  DESIGN_HASH_4    R     SHA-256 [159:128]
+//   0x5C  DESIGN_HASH_5    R     SHA-256 [191:160]
+//   0x60  DESIGN_HASH_6    R     SHA-256 [223:192]
+//   0x64  DESIGN_HASH_7    R     SHA-256 [255:224]
 
 module loom_emu_ctrl #(
     parameter int unsigned N_DPI_FUNCS     = 1,
@@ -41,8 +48,15 @@ module loom_emu_ctrl #(
     parameter int unsigned MAX_ARG_WIDTH   = 64,
     parameter int unsigned MAX_RET_WIDTH   = 32,
     parameter int unsigned MAX_ARGS        = 8,
-    parameter logic [31:0] DESIGN_ID       = 32'h0,
-    parameter logic [31:0] LOOM_VERSION    = 32'h00_01_00  // 0.1.0
+    parameter logic [31:0] SHELL_VERSION   = 32'h00_01_00,  // 0.1.0
+    parameter logic [31:0] DESIGN_HASH_0  = 32'h0,
+    parameter logic [31:0] DESIGN_HASH_1  = 32'h0,
+    parameter logic [31:0] DESIGN_HASH_2  = 32'h0,
+    parameter logic [31:0] DESIGN_HASH_3  = 32'h0,
+    parameter logic [31:0] DESIGN_HASH_4  = 32'h0,
+    parameter logic [31:0] DESIGN_HASH_5  = 32'h0,
+    parameter logic [31:0] DESIGN_HASH_6  = 32'h0,
+    parameter logic [31:0] DESIGN_HASH_7  = 32'h0
 )(
     input  logic        clk_i,
     input  logic        rst_ni,
@@ -435,24 +449,31 @@ module loom_emu_ctrl #(
             rd_pending_d = 1'b0;
 
             unique case (rd_addr_q[7:2])
-                6'h00:   rdata_d = {29'd0, state_q};
-                6'h02:   rdata_d = cycle_count_q[31:0];
-                6'h03:   rdata_d = cycle_count_q[63:32];
-                6'h04:   rdata_d = clk_div_q;
-                6'h05:   rdata_d = N_DPI_FUNCS;
-                6'h06:   rdata_d = N_MEMORIES;
-                6'h07:   rdata_d = N_SCAN_CHAINS;
-                6'h08:   rdata_d = TOTAL_SCAN_BITS;
-                6'h09:   rdata_d = MAX_ARGS;
-                6'h0A:   rdata_d = DESIGN_ID;
-                6'h0B:   rdata_d = LOOM_VERSION;
-                6'h0C:   rdata_d = {29'd0, state_changed_q, (dpi_state_q != StDpiIdle), 1'b0};
-                6'h0D:   rdata_d = irq_enable_q;
-                6'h0E:   rdata_d = {16'd0, finish_reg_q};
-                6'h0F:   rdata_d = time_count_q[31:0];
-                6'h10:   rdata_d = time_count_q[63:32];
-                6'h11:   rdata_d = time_cmp_q[31:0];
-                6'h12:   rdata_d = time_cmp_q[63:32];
+                6'h00:   rdata_d = {29'd0, state_q};               // 0x00 EMU_STATUS
+                6'h02:   rdata_d = cycle_count_q[31:0];            // 0x08 EMU_CYCLE_LO
+                6'h03:   rdata_d = cycle_count_q[63:32];           // 0x0C EMU_CYCLE_HI
+                6'h04:   rdata_d = clk_div_q;                      // 0x10 EMU_CLK_DIV
+                6'h05:   rdata_d = N_DPI_FUNCS;                    // 0x14 N_DPI_FUNCS
+                6'h06:   rdata_d = N_MEMORIES;                     // 0x18 N_MEMORIES
+                6'h07:   rdata_d = N_SCAN_CHAINS;                  // 0x1C N_SCAN_CHAINS
+                6'h08:   rdata_d = TOTAL_SCAN_BITS;                // 0x20 TOTAL_SCAN_BITS
+                6'h09:   rdata_d = MAX_ARGS;                       // 0x24 MAX_ARGS
+                6'h0A:   rdata_d = SHELL_VERSION;                  // 0x28 SHELL_VERSION
+                6'h0B:   rdata_d = {29'd0, state_changed_q, (dpi_state_q != StDpiIdle), 1'b0}; // 0x2C IRQ_STATUS
+                6'h0C:   rdata_d = irq_enable_q;                   // 0x30 IRQ_ENABLE
+                6'h0D:   rdata_d = {16'd0, finish_reg_q};          // 0x34 EMU_FINISH
+                6'h0E:   rdata_d = time_count_q[31:0];             // 0x38 EMU_TIME_LO
+                6'h0F:   rdata_d = time_count_q[63:32];            // 0x3C EMU_TIME_HI
+                6'h10:   rdata_d = time_cmp_q[31:0];               // 0x40 EMU_TIME_CMP_LO
+                6'h11:   rdata_d = time_cmp_q[63:32];              // 0x44 EMU_TIME_CMP_HI
+                6'h12:   rdata_d = DESIGN_HASH_0;                  // 0x48 DESIGN_HASH_0
+                6'h13:   rdata_d = DESIGN_HASH_1;                  // 0x4C DESIGN_HASH_1
+                6'h14:   rdata_d = DESIGN_HASH_2;                  // 0x50 DESIGN_HASH_2
+                6'h15:   rdata_d = DESIGN_HASH_3;                  // 0x54 DESIGN_HASH_3
+                6'h16:   rdata_d = DESIGN_HASH_4;                  // 0x58 DESIGN_HASH_4
+                6'h17:   rdata_d = DESIGN_HASH_5;                  // 0x5C DESIGN_HASH_5
+                6'h18:   rdata_d = DESIGN_HASH_6;                  // 0x60 DESIGN_HASH_6
+                6'h19:   rdata_d = DESIGN_HASH_7;                  // 0x64 DESIGN_HASH_7
                 default: rdata_d = 32'hDEAD_BEEF;
             endcase
         end
@@ -526,29 +547,29 @@ module loom_emu_ctrl #(
 
         if (wr_addr_valid_q && wr_data_valid_q && !bvalid_q) begin
             unique case (wr_addr_q[7:2])
-                6'h01: begin  // EMU_CONTROL
+                6'h01: begin  // 0x04 EMU_CONTROL
                     wr_cmd_valid = 1'b1;
                     wr_cmd_data  = wr_data_q[7:0];
                 end
-                6'h04: begin  // EMU_CLK_DIV
+                6'h04: begin  // 0x10 EMU_CLK_DIV
                     wr_clk_div_en   = 1'b1;
                     wr_clk_div_data = wr_data_q;
                 end
-                6'h0D: begin  // IRQ_ENABLE
+                6'h0C: begin  // 0x30 IRQ_ENABLE
                     wr_irq_enable_en   = 1'b1;
                     wr_irq_enable_data = wr_data_q;
                 end
-                6'h0E: begin  // EMU_FINISH
+                6'h0D: begin  // 0x34 EMU_FINISH
                     if (wr_data_q[0]) begin
                         wr_finish_en   = 1'b1;
                         wr_finish_data = wr_data_q[15:0];
                     end
                 end
-                6'h11: begin  // EMU_TIME_CMP_LO
+                6'h10: begin  // 0x40 EMU_TIME_CMP_LO
                     wr_time_cmp_lo_en   = 1'b1;
                     wr_time_cmp_lo_data = wr_data_q;
                 end
-                6'h12: begin  // EMU_TIME_CMP_HI
+                6'h11: begin  // 0x44 EMU_TIME_CMP_HI
                     wr_time_cmp_hi_en   = 1'b1;
                     wr_time_cmp_hi_data = wr_data_q;
                 end

@@ -6,6 +6,7 @@ add_executable(loomc loomc.cpp)
 target_include_directories(loomc PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/src/util
+    ${CMAKE_SOURCE_DIR}/third_party/picosha2
 )
 target_compile_features(loomc PRIVATE cxx_std_20)
 

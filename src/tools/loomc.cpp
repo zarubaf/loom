@@ -12,8 +12,11 @@
 
 #include "loom_paths.h"
 #include "loom_log.h"
+#include "sha256.h"
+#include "toml_utils.h"
 
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -276,6 +279,34 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // Append build metadata to loom_manifest.toml (written by emu_top pass)
+    {
+        auto manifest_path = work / "loom_manifest.toml";
+        if (fs::exists(manifest_path)) {
+            // Compute SHA-256 of transformed.v
+            std::ifstream tf(transformed, std::ios::binary);
+            std::string tv_content((std::istreambuf_iterator<char>(tf)),
+                                    std::istreambuf_iterator<char>());
+            auto tv_hash = loom::sha256(tv_content);
+            auto tv_hex = loom::sha256_hex(tv_hash);
+
+            // Get current UTC timestamp
+            auto now = std::chrono::system_clock::now();
+            auto time_t_now = std::chrono::system_clock::to_time_t(now);
+            struct tm utc;
+            gmtime_r(&time_t_now, &utc);
+            char ts_buf[64];
+            std::strftime(ts_buf, sizeof(ts_buf), "%Y-%m-%dT%H:%M:%SZ", &utc);
+
+            loom::TomlData build_data;
+            build_data["build"]["transformed_sha256"] = tv_hex;
+            build_data["build"]["timestamp"] = std::string(ts_buf);
+
+            loom::toml_append(manifest_path.string(), build_data);
+            logger.info("  loom_manifest.toml (appended build metadata)");
+        }
+    }
+
     // Step 2: Compile dispatch table into shared object
     logger.info("Compiling dispatch shared object...");
     auto dispatch_so = work / "loom_dpi_dispatch.so";
@@ -328,6 +359,7 @@ int main(int argc, char **argv) {
     logger.info("  loom_dpi_dispatch.so");
     logger.info("  scan_map.pb");
     logger.info("  mem_map.pb");
+    logger.info("  loom_manifest.toml");
 
     return 0;
 }

@@ -12,7 +12,7 @@ All three funnel through one register and one signal.
 
 ## EMU_FINISH Register
 
-Located in `loom_emu_ctrl` at offset `0x38`:
+Located in `loom_emu_ctrl` at offset `0x34`:
 
 ```
 Bits     Field         Description
@@ -125,7 +125,7 @@ register, the host closes the XDMA transport normally.
 |-----------|------|
 | `loom_instrument` | Transforms `$__loom_finish` cells → `loom_finish_o` output port |
 | `emu_top` | Wires `loom_finish_o` → `emu_ctrl.dut_finish_req_i` |
-| `emu_ctrl` | `EMU_FINISH` register at `0x38`. Set by DUT or host. Drives `finish_o`. |
+| `emu_ctrl` | `EMU_FINISH` register at `0x34`. Set by DUT or host. Drives `finish_o`. |
 | BFM `finish_i` | When high: drain AXI, send SHUTDOWN, `$finish` |
 | `Context::finish()` | Writes `EMU_FINISH` register |
 | Socket SHUTDOWN | Message type 3, BFM → host. Transport returns cleanly. |

@@ -13,7 +13,7 @@
 #   0x60000–0xFFFFF  shell UNMAPPED  (no slave)
 
 # =====================================================================
-# Section 1: emu_ctrl — valid registers (0x00000 – 0x00048)
+# Section 1: emu_ctrl — valid registers (0x00000 – 0x00064)
 # =====================================================================
 read 0x00000     # EMU_STATUS
 read 0x00008     # EMU_CYCLE_LO
@@ -23,21 +23,28 @@ read 0x00018     # N_MEMORIES
 read 0x0001c     # N_SCAN_CHAINS
 read 0x00020     # TOTAL_SCAN_BITS
 read 0x00024     # MAX_ARGS
-read 0x00028     # DESIGN_ID
-read 0x0002c     # LOOM_VERSION
-read 0x00030     # IRQ_STATUS
-read 0x00034     # IRQ_ENABLE
-read 0x00038     # EMU_FINISH
-read 0x0003c     # EMU_TIME_LO
-read 0x00040     # EMU_TIME_HI
-read 0x00044     # EMU_TIME_CMP_LO
-read 0x00048     # EMU_TIME_CMP_HI
+read 0x00028     # SHELL_VERSION
+read 0x0002c     # IRQ_STATUS
+read 0x00030     # IRQ_ENABLE
+read 0x00034     # EMU_FINISH
+read 0x00038     # EMU_TIME_LO
+read 0x0003c     # EMU_TIME_HI
+read 0x00040     # EMU_TIME_CMP_LO
+read 0x00044     # EMU_TIME_CMP_HI
+read 0x00048     # DESIGN_HASH_0
+read 0x0004c     # DESIGN_HASH_1
+read 0x00050     # DESIGN_HASH_2
+read 0x00054     # DESIGN_HASH_3
+read 0x00058     # DESIGN_HASH_4
+read 0x0005c     # DESIGN_HASH_5
+read 0x00060     # DESIGN_HASH_6
+read 0x00064     # DESIGN_HASH_7
 
 # =====================================================================
 # Section 2: emu_ctrl — out-of-bound offsets (within emu_ctrl range)
 # =====================================================================
-read 0x0004c     # first unmapped emu_ctrl offset
-read 0x00050
+read 0x00068     # first unmapped emu_ctrl offset (after DESIGN_HASH_7)
+read 0x00070
 read 0x000fc     # last word in 256-byte emu_ctrl window
 
 # =====================================================================
@@ -45,9 +52,9 @@ read 0x000fc     # last word in 256-byte emu_ctrl window
 # =====================================================================
 write 0x00004 0x00   # EMU_CONTROL (no-op command 0x00)
 write 0x00010 0x00   # EMU_CLK_DIV
-write 0x00034 0x00   # IRQ_ENABLE
-write 0x00044 0xff   # EMU_TIME_CMP_LO
-write 0x00048 0x00   # EMU_TIME_CMP_HI
+write 0x00030 0x00   # IRQ_ENABLE
+write 0x00040 0xff   # EMU_TIME_CMP_LO
+write 0x00044 0x00   # EMU_TIME_CMP_HI
 
 # =====================================================================
 # Section 4: dpi_regfile — valid addresses (0x10000)
