@@ -42,17 +42,25 @@ static inline uint64_t read_rtl(uint64_t address) {
 }
 
 void exit_rtl() {
-  uint32_t data[1];
+  int r;
+  uint64_t cmd[3];
+  uint64_t rsp[1];
   printf("exit\n");
-  // sending whatever to exit socket will quit the rtl
-  (void)multisim_client_push("exit", data, 32);
+  cmd[0] = 2; // exit
+  cmd[1] = 0;
+  cmd[2] = 0;
+  // Send exit as a regular rw_cmd — this ensures it's sequenced after
+  // all preceding transactions.  The sim will $finish after responding.
+  r = multisim_client_push("rw_cmd", (uint32_t *)cmd, 3*64);
+  assert(r > 0);
+  r = multisim_client_pull("rw_rsp", (uint32_t *)rsp, 64);
+  assert(r > 0);
 }
 
 int main() {
   int r;
   struct timeval stop, start;
 
-  multisim_client_start(".", "exit");
   multisim_client_start(".", "rw_cmd");
   multisim_client_start(".", "rw_rsp");
 

@@ -10,38 +10,25 @@ module top;
   bit [63:0] mem[1<<8];
 
   //-----------------------------------------------------------
-  // exit
-  //-----------------------------------------------------------
-  bit exit;
-
-  multisim_server_pull #(
-      .DATA_WIDTH(1),
-      .DPI_DELAY_CYCLES_INACTIVE(10000)
-  ) i_multisim_server_pull_exit (
-      .clk        (clk),
-      .server_name("exit"),
-      .data_rdy   (1'b1),
-      .data_vld   (exit),
-      .data       (  /*unused*/)
-  );
-
-  always @(posedge clk) begin
-    if (exit) begin
-      $display("exit");
-      $finish;
-    end
-  end
-
-  //-----------------------------------------------------------
-  // read/write
+  // read/write/exit — all commands go through a single channel.
+  //
+  // Previously exit used a separate multisim_server_pull channel.
+  // This caused intermittent failures: the exit poll could fire
+  // $finish while the rw channel had an in-flight DPI transaction,
+  // tearing down sockets before the client received its response.
+  // Merging exit into the rw command stream guarantees sequencing.
+  //
+  //   cmd[0] = 0: write  (address in cmd[1], data in cmd[2])
+  //   cmd[0] = 1: read   (address in cmd[1])
+  //   cmd[0] = 2: exit
   //-----------------------------------------------------------
   bit rw_cmd_rdy;
   bit rw_cmd_vld;
   bit [3*64-1:0] rw_cmd;
 
-  wire rw_cmd_rwb = rw_cmd[0];
+  wire [63:0] rw_cmd_op      = rw_cmd[0*64+:64];
   wire [63:0] rw_cmd_address = rw_cmd[1*64+:64];
-  wire [63:0] rw_cmd_wdata = rw_cmd[2*64+:64];
+  wire [63:0] rw_cmd_wdata   = rw_cmd[2*64+:64];
 
   bit rw_rsp_rdy;
   bit rw_rsp_vld;
@@ -64,6 +51,11 @@ module top;
       .push_data       (rw_rsp)
   );
 
+  // Deferred $finish: set by the rw handler when it receives an exit
+  // command (op==2).  Fires on the NEXT cycle so the push DPI has time
+  // to deliver the response to the client before the sim tears down.
+  bit do_exit = 0;
+
   always @(posedge clk) begin
     rw_cmd_rdy <= 1;
     @(posedge clk);
@@ -73,10 +65,15 @@ module top;
     rw_cmd_rdy <= 0;
 
     // process
-    if (rw_cmd_rwb) begin
+    if (rw_cmd_op == 0) begin
+      // write
+      mem[rw_cmd_address[7:0]] <= rw_cmd_wdata;
+      rw_rsp <= 0;
+    end else if (rw_cmd_op == 1) begin
+      // read
       rw_rsp <= mem[rw_cmd_address[7:0]];
     end else begin
-      mem[rw_cmd_address[7:0]] <= rw_cmd_wdata;
+      // exit (op == 2) — respond first, then finish
       rw_rsp <= 0;
     end
 
@@ -86,6 +83,17 @@ module top;
       @(posedge clk);
     end
     rw_rsp_vld <= 0;
+
+    if (rw_cmd_op == 2) begin
+      do_exit <= 1;
+    end
+  end
+
+  always @(posedge clk) begin
+    if (do_exit) begin
+      $display("exit");
+      $finish;
+    end
   end
 
 endmodule

@@ -47,6 +47,5 @@ jobs:
       - name: Test (Yosys pass tests)
         run: ctest --test-dir build -R "^yosys_" --output-on-failure
 
-      # Multisim is flaky, snitch is not yet available
       - name: Test (E2E tests)
-        run: ctest --test-dir build -R "^(yosys_|e2e_|fsm_extract_equiv|mem_shadow_)" -E "(e2e_multisim_read_write)" --output-on-failure
+        run: ctest --test-dir build -R "^(yosys_|e2e_|fsm_extract_equiv|mem_shadow_)" --output-on-failure

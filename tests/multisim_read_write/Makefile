@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Multisim read/write example — ported from Veloce to Loom
 TOP      := top
-DUT_SRC  := top.sv multisim_server_pull.sv multisim_server_pull_then_push.sv
+DUT_SRC  := top.sv multisim_server_pull_then_push.sv
 DPI_SRCS := multisim/multisim_server.cpp multisim/socket_server/server.cpp
 DPI_HDRS := multisim/multisim_server.h multisim/multisim_common.h \
             multisim/socket_server/server.h
@@ -47,7 +47,7 @@ test: $(_TEST_DEPS) $(BUILD)/sw_test
 # ==========================================================================
 REF_DIR := $(BUILD)/ref
 
-REF_SV  := top.sv multisim_server_pull.sv multisim_server_pull_then_push.sv
+REF_SV  := top.sv multisim_server_pull_then_push.sv
 REF_DPI := multisim/multisim_server.cpp multisim/socket_server/server.cpp
 
 $(REF_DIR)/obj_dir/Vtop: $(REF_SV) $(REF_DPI) $(DPI_HDRS) | $(REF_DIR)

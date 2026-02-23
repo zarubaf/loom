@@ -89,10 +89,16 @@ module multisim_server_pull_then_push #(
         while (!push_data_vld) begin
           @(posedge clk);
         end
+        // Retry push until accepted.  The first push can fail when the
+        // client hasn't connected to the push server yet (the pull
+        // server accepted the client first).  Without retry the
+        // response is silently lost and the client deadlocks.
         push_data_accepted =
             multisim_server_push_packed(push_server_name, push_data, PUSH_DATA_WIDTH);
-        if (!push_data_accepted[0]) begin
-          $display("WARNING: push_data wasn't accepted in %m");
+        while (!push_data_accepted[0]) begin
+          @(posedge clk);
+          push_data_accepted =
+              multisim_server_push_packed(push_server_name, push_data, PUSH_DATA_WIDTH);
         end
         push_data_rdy <= 0;
       end
