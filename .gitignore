@@ -25,6 +25,9 @@ compile_commands.json
 
 # Test outputs
 tests/**/*.v
+tests/**/loom_manifest.toml
+tests/**/loom_dpi_dispatch.c
+tests/**/*.hex
 tests/**/build/
 tests/**/obj_dir/
 
