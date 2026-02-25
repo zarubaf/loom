@@ -31,6 +31,7 @@ read_verilog -sv \
   $loom_src/rtl/loom_emu_ctrl.sv \
   $loom_src/rtl/loom_dpi_regfile.sv \
   $loom_src/rtl/loom_scan_ctrl.sv \
+  $loom_src/rtl/loom_axil_firewall.sv \
   $loom_src/rtl/loom_shell.sv
 
 # Transformed DUT (generated Verilog)
@@ -45,7 +46,7 @@ read_xdc $board_dir/u250_timing.xdc
 # ----------------------------------------------------------------
 # Synthesize
 # ----------------------------------------------------------------
-synth_design -top loom_shell -flatten_hierarchy rebuilt
+synth_design -top loom_shell -flatten_hierarchy rebuilt -verilog_define "XILINX=1"
 
 # ----------------------------------------------------------------
 # Write checkpoint

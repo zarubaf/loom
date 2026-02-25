@@ -235,8 +235,9 @@ module loom_shell (
         .usr_irq_ack      (),
         .msi_enable       (),
         .msi_vector_width (),
+`ifndef XILINX
         .loom_finish_i    (finish),
-
+`endif
         // Config management — unused
         .cfg_mgmt_addr           (19'd0),
         .cfg_mgmt_write          (1'b0),

@@ -323,6 +323,13 @@ module loom_axil_firewall #(
     logic rd_unsol_swallow;
     assign rd_unsol_swallow = rd_downstream_is_unsolicited && m_axi_rvalid;
 
+    // Management clear-counts decode (combinational, read by main seq block)
+    logic mgmt_clear_counts;
+    assign mgmt_clear_counts = mgmt_wr_addr_valid_q && mgmt_wr_data_valid_q
+                             && !mgmt_bvalid_q
+                             && (mgmt_wr_addr_q[5:2] == REG_CTRL)
+                             && mgmt_wr_data_q[CTRL_CLEAR_COUNTS];
+
     always_ff @(posedge clk_i or negedge rst_ni) begin
         if (!rst_ni) begin
             wr_outstanding_q   <= 4'd0;
@@ -466,6 +473,12 @@ module loom_axil_firewall #(
             // Adjust outstanding for simultaneous issue and timeout/complete
             // (handled by the individual +1/-1 above; no extra correction needed
             // because timeout removes from FIFO head while issue adds to tail)
+
+            // Management clear-counts (last-assignment wins over increments above)
+            if (mgmt_clear_counts) begin
+                timeout_count_q     <= 32'd0;
+                unsolicited_count_q <= 32'd0;
+            end
         end
     end
 
@@ -577,10 +590,8 @@ module loom_axil_firewall #(
                 case (mgmt_wr_addr_q[5:2])
                     REG_CTRL: begin
                         ctrl_lockdown_q <= mgmt_wr_data_q[CTRL_LOCKDOWN];
-                        if (mgmt_wr_data_q[CTRL_CLEAR_COUNTS]) begin
-                            timeout_count_q     <= 32'd0;
-                            unsolicited_count_q <= 32'd0;
-                        end
+                        // clear_counts is handled in the main seq block via
+                        // mgmt_clear_counts to avoid multi-driver on the counters
                         ctrl_decouple_q <= mgmt_wr_data_q[CTRL_DECOUPLE];
                     end
                     REG_TIMEOUT_CYCLES:    timeout_cycles_q   <= mgmt_wr_data_q;

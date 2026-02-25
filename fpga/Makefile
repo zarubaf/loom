@@ -61,9 +61,23 @@ $(IP_DIR)/xlnx_decoupler/.done:
 
 IP_DONE := $(IP_DIR)/xlnx_xdma/.done $(IP_DIR)/xlnx_clk_gen/.done $(IP_DIR)/xlnx_cdc/.done $(IP_DIR)/xlnx_decoupler/.done
 
+# Infrastructure RTL read by synth.tcl
+LOOM_RTL := \
+  $(LOOM_SRC)/rtl/loom_axi4_err_slv.sv \
+  $(LOOM_SRC)/rtl/loom_axil_demux.sv \
+  $(LOOM_SRC)/rtl/loom_emu_ctrl.sv \
+  $(LOOM_SRC)/rtl/loom_dpi_regfile.sv \
+  $(LOOM_SRC)/rtl/loom_scan_ctrl.sv \
+  $(LOOM_SRC)/rtl/loom_axil_firewall.sv \
+  $(LOOM_SRC)/rtl/loom_shell.sv
+
+# Constraints and scripts
+SYNTH_XDC := $(BOARD_DIR)/u250_pins.xdc $(BOARD_DIR)/u250_timing.xdc
+SYNTH_TCL := $(SCRIPTS_DIR)/synth.tcl $(BOARD_DIR)/settings.tcl
+
 synth: $(WORK_DIR)/results/synth.dcp
 
-$(WORK_DIR)/results/synth.dcp: $(TRANSFORMED_V) $(IP_DONE) | $(WORK_DIR)
+$(WORK_DIR)/results/synth.dcp: $(TRANSFORMED_V) $(LOOM_RTL) $(SYNTH_XDC) $(SYNTH_TCL) $(IP_DONE) | $(WORK_DIR)
 	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/synth.tcl
 
 $(WORK_DIR):
