@@ -1304,8 +1304,10 @@ int Shell::cmd_deposit_script(const std::vector<std::string>& args) {
 // ============================================================================
 
 int Shell::cmd_reset(const std::vector<std::string>& /*args*/) {
+    // Issue CMD_RESET to transition emu_ctrl to StIdle, which clears cycle
+    // counters, time counters, and the finish register.
+    ctx_.reset();
     // Scan-based reset: re-scan the initial image
-    ctx_.stop();
     ctx_.scan_write_data(initial_scan_image_);
     ctx_.scan_restore();
     initial_image_applied_ = true;

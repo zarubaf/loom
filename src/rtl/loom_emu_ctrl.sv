@@ -221,7 +221,7 @@ module loom_emu_ctrl #(
             end
 
             StRunning: begin
-                if (time_count_q >= time_cmp_q) begin
+                if (finish_reg_q[0] || time_count_q >= time_cmp_q) begin
                     state_d = StFrozen;
                 end else if (cmd_valid_q) begin
                     unique case (cmd_reg_q)
@@ -361,6 +361,12 @@ module loom_emu_ctrl #(
             time_count_d = 64'd0;
         end else if (loom_en_o) begin
             time_count_d = time_count_q + 64'd1;
+        end
+
+        // Clear finish register on reset (CMD_RESET → StIdle) so the design
+        // can be restarted cleanly after a $finish.
+        if (state_q == StIdle) begin
+            finish_reg_d = 16'd0;
         end
 
         // DUT-initiated finish (only honor while running — combinational

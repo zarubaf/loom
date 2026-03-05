@@ -549,8 +549,9 @@ struct EmuTopPass : public Pass {
         emu_ctrl->setPort(ID(dpi_ret_valid_i), dpi_ret_valid);
         emu_ctrl->setPort(ID(dpi_ret_ready_o), dpi_ret_ready);
         emu_ctrl->setPort(ID(dpi_ret_data_i), dpi_ret_data);
-        // Finish
-        emu_ctrl->setPort(ID(dut_finish_req_i), RTLIL::SigSpec(RTLIL::State::S0));
+        // Finish — connect DUT's loom_finish_o to emu_ctrl so the host can
+        // read the EMU_FINISH register and detect $finish on FPGA.
+        emu_ctrl->setPort(ID(dut_finish_req_i), RTLIL::SigSpec(dut_finish));
         emu_ctrl->setPort(ID(dut_finish_code_i), RTLIL::SigSpec(RTLIL::State::S0, 8));
         // Outputs
         emu_ctrl->setPort(ID(loom_en_o), loom_en_wire);
