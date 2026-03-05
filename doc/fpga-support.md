@@ -46,9 +46,9 @@ The PCIe BAR / simulation AXI-Lite space uses a 20-bit address with 3 masters:
 
 | Range | Target | Clock Domain |
 |-------|--------|-------------|
-| `0x0_0000 – 0x3_FFFF` | xlnx_decoupler → xlnx_cdc → loom_emu_top | emu_clk |
+| `0x0_0000 – 0x3_FFFF` | loom_axil_firewall → xlnx_decoupler → xlnx_cdc → loom_emu_top | emu_clk |
 | `0x4_0000 – 0x4_FFFF` | Clock generator DRP | aclk |
-| `0x5_0000 – 0x5_FFFF` | Shell control register | aclk |
+| `0x5_0000 – 0x5_FFFF` | loom_axil_firewall management registers | aclk |
 
 Within the emu_top range (same as before):
 

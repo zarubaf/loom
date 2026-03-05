@@ -78,12 +78,14 @@ The AXI-Lite demux (`loom_axil_demux`) routes host traffic to sub-modules
 based on address. When memories are present (via `mem_shadow` pass), a 4th
 slave is added:
 
-| Range               | Target           | Present when      |
-| ------------------- | ---------------- | ----------------- |
-| `0x0_0000–0x0_FFFF` | loom_emu_ctrl    | Always            |
-| `0x1_0000–0x1_FFFF` | loom_dpi_regfile | Always            |
-| `0x2_0000–0x2_FFFF` | loom_scan_ctrl   | Always            |
-| `0x3_0000–0x3_FFFF` | loom_mem_ctrl    | When memories exist|
+| Range               | Target              | Present when       | Clock Domain |
+| ------------------- | ------------------- | ------------------ | ------------ |
+| `0x0_0000–0x0_FFFF` | loom_emu_ctrl       | Always             | emu_clk      |
+| `0x1_0000–0x1_FFFF` | loom_dpi_regfile    | Always             | emu_clk      |
+| `0x2_0000–0x2_FFFF` | loom_scan_ctrl      | Always             | emu_clk      |
+| `0x3_0000–0x3_FFFF` | loom_mem_ctrl       | When memories exist| emu_clk      |
+| `0x4_0000–0x4_FFFF` | xlnx_clk_gen (DRP)  | FPGA only          | aclk         |
+| `0x5_0000–0x5_FFFF` | loom_axil_firewall  | Always             | aclk         |
 
 ## Infrastructure Modules
 
@@ -185,6 +187,26 @@ Controls scan chain capture/restore operations. With the free-running
 clock and FF enable override (`loom_en | loom_scan_enable`), the scan
 controller asserts `scan_enable` and shifts one bit per cycle.
 
+**Register Map (offset from base 0x2_0000):**
+
+| Offset | Name           | R/W | Description                                       |
+| ------ | -------------- | --- | ------------------------------------------------- |
+| 0x00   | SCAN_STATUS    | R   | `[0]=busy, [1]=done, [7:4]=error_code`            |
+| 0x04   | SCAN_CONTROL   | W   | Command: 1=capture, 2=restore                     |
+| 0x08   | SCAN_LENGTH    | R   | Chain length in bits (from parameter)              |
+| 0x0C   | (reserved)     | –   | –                                                 |
+| 0x10   | SCAN_DATA[0]   | RW  | First 32 bits of scan data (LSBs)                 |
+| 0x14   | SCAN_DATA[1]   | RW  | Next 32 bits                                      |
+| ...    | ...            | RW  | Up to N_DATA_WORDS = ceil(CHAIN_LENGTH / 32) words|
+
+Scan data is stored LSB-first: `DATA[0][0]` is the first bit shifted out/in.
+
+**Operations:**
+- **Capture:** Issue CMD_CAPTURE (0x01). Hardware shifts out all chain bits
+  into SCAN_DATA. Poll SCAN_STATUS until `done=1`, then read SCAN_DATA.
+- **Restore:** Write SCAN_DATA with desired state, issue CMD_RESTORE (0x02).
+  Hardware shifts data into the chain to initialize FFs.
+
 ### loom_mem_ctrl (conditional)
 
 **Location:** `src/rtl/loom_mem_ctrl.sv`
@@ -257,6 +279,29 @@ the host (pending && !done). This signal:
 - **On FPGA:** drives `usr_irq_req` on the XDMA IP, triggering an MSI
   interrupt. The host's `wait_irq()` unblocks via
   `/dev/xdma0_events_0`.
+
+### loom_axil_firewall
+
+**Location:** `src/rtl/loom_axil_firewall.sv`
+
+Sits between the host AXI-Lite master and the emulation domain CDC.
+Provides timeout detection (synthetic response after idle cycles),
+unsolicited response filtering, back-pressure limiting, lockdown mode,
+and decoupler control. Has a separate management AXI-Lite port (`s_mgmt`).
+
+**Management Register Map (offset from base 0x5_0000):**
+
+| Offset | Name              | R/W | Description                                                 |
+| ------ | ----------------- | --- | ----------------------------------------------------------- |
+| 0x00   | CTRL              | RW  | `[0]=lockdown, [1]=clear_counts (W1C), [2]=decouple`       |
+| 0x04   | STATUS            | R   | `[0]=locked, [1]=wr_outstanding, [2]=rd_outstanding, [3]=decouple_status` |
+| 0x08   | TIMEOUT_CYCLES    | RW  | Idle cycles before timeout (default 1000)                   |
+| 0x0C   | RESP_ON_TIMEOUT   | RW  | AXI RESP value on timeout `[1:0]` (default 0x2 = SLVERR)   |
+| 0x10   | RDATA_ON_TIMEOUT  | RW  | Read data returned on timeout (default 0xDEADBEEF)         |
+| 0x14   | TIMEOUT_COUNT     | R   | Number of timeouts since last clear                         |
+| 0x18   | UNSOLICITED_COUNT | R   | Number of unsolicited responses swallowed                   |
+| 0x1C   | MAX_OUTSTANDING   | RW  | Max outstanding transactions per channel (default 4)        |
+| 0x20   | IRQ_ENABLE        | RW  | `[0]=timeout_irq, [1]=unsolicited_irq`                     |
 
 ## Ports
 

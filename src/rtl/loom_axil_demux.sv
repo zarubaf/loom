@@ -161,14 +161,30 @@ module loom_axil_demux #(
     // =========================================================================
     // Write Path
     // =========================================================================
+    //
+    // AXI-Lite allows AW and W to arrive independently.  We track each
+    // phase separately so that accepting AW first does not block W (or
+    // vice-versa).  Once both phases have been accepted we wait for the
+    // B response before accepting a new write.
 
     logic [SEL_W-1:0] wr_slave_sel;
     logic [SEL_W-1:0] wr_slave_active_q;
-    logic              wr_in_progress_q;
+    logic              wr_aw_done_q;   // AW phase accepted
+    logic              wr_w_done_q;    // W  phase accepted
 
     always_comb begin
         wr_slave_sel = decode_slave(s_axil_awaddr_i);
     end
+
+    // The slave index to use for routing: before AW is accepted we use the
+    // live decode; after AW is latched we use the registered value.
+    logic [IDX_W-1:0] wr_route_idx;
+    assign wr_route_idx = wr_aw_done_q ? wr_slave_active_q[IDX_W-1:0]
+                                       : wr_slave_sel[IDX_W-1:0];
+
+    // Write is fully in-progress once both AW and W have been accepted
+    logic wr_both_done;
+    assign wr_both_done = wr_aw_done_q && wr_w_done_q;
 
     // Address routing — pass through (power-of-two aligned, no subtraction needed)
     always_comb begin
@@ -176,63 +192,83 @@ module loom_axil_demux #(
             m_axil_awaddr_o[i*ADDR_WIDTH +: ADDR_WIDTH] = s_axil_awaddr_i;
             m_axil_awvalid_o[i] = 1'b0;
         end
-        if (s_axil_awvalid_i && !wr_in_progress_q &&
+        if (s_axil_awvalid_i && !wr_aw_done_q &&
             wr_slave_sel < UNMAPPED) begin
             m_axil_awvalid_o[wr_slave_sel[IDX_W-1:0]] = 1'b1;
         end
     end
 
-    // Data routing
+    // Data routing — use wr_route_idx so that W goes to the correct slave
+    // even when AW was already accepted on a prior cycle.
+    // W can only be routed once we know the target slave (AW accepted or
+    // AW presented on the same cycle).
+    logic wr_slave_known;
+    assign wr_slave_known = wr_aw_done_q || s_axil_awvalid_i;
+
     always_comb begin
         for (int i = 0; i < int'(N_MASTERS); i++) begin
             m_axil_wdata_o[i*32 +: 32] = s_axil_wdata_i;
             m_axil_wstrb_o[i*4 +: 4]   = s_axil_wstrb_i;
             m_axil_wvalid_o[i] = 1'b0;
         end
-        if (s_axil_wvalid_i && !wr_in_progress_q &&
-            wr_slave_sel < UNMAPPED) begin
-            m_axil_wvalid_o[wr_slave_sel[IDX_W-1:0]] = 1'b1;
+        if (s_axil_wvalid_i && !wr_w_done_q && wr_slave_known &&
+            (wr_aw_done_q ? (wr_slave_active_q < UNMAPPED)
+                          : (wr_slave_sel < UNMAPPED))) begin
+            m_axil_wvalid_o[wr_route_idx] = 1'b1;
         end
     end
 
     // Ready mux — unmapped addresses accepted immediately (SLVERR response
     // generated on the next cycle via wr_slave_active_q == UNMAPPED).
     always_comb begin
-        if (!wr_in_progress_q) begin
-            if (wr_slave_sel < UNMAPPED) begin
+        // AW ready: accept when AW phase not yet done
+        if (!wr_aw_done_q) begin
+            if (wr_slave_sel < UNMAPPED)
                 s_axil_awready_o = m_axil_awready_i[wr_slave_sel[IDX_W-1:0]];
-                s_axil_wready_o  = m_axil_wready_i[wr_slave_sel[IDX_W-1:0]];
-            end else begin
+            else
                 s_axil_awready_o = 1'b1;    // accept unmapped immediately
-                s_axil_wready_o  = 1'b1;
-            end
         end else begin
             s_axil_awready_o = 1'b0;
-            s_axil_wready_o  = 1'b0;
+        end
+
+        // W ready: accept when W phase not yet done and target slave is known
+        if (!wr_w_done_q && wr_slave_known) begin
+            if (wr_aw_done_q ? (wr_slave_active_q < UNMAPPED)
+                             : (wr_slave_sel < UNMAPPED))
+                s_axil_wready_o = m_axil_wready_i[wr_route_idx];
+            else
+                s_axil_wready_o = 1'b1;
+        end else begin
+            s_axil_wready_o = 1'b0;
         end
     end
 
-    // Track active write slave
+    // Track active write slave — AW and W phases independently
     always_ff @(posedge clk_i or negedge rst_ni) begin
         if (!rst_ni) begin
-            wr_in_progress_q  <= 1'b0;
+            wr_aw_done_q      <= 1'b0;
+            wr_w_done_q       <= 1'b0;
             wr_slave_active_q <= '0;
         end else begin
             if (s_axil_awvalid_i && s_axil_awready_o) begin
-                wr_in_progress_q  <= 1'b1;
+                wr_aw_done_q      <= 1'b1;
                 wr_slave_active_q <= wr_slave_sel;
             end
+            if (s_axil_wvalid_i && s_axil_wready_o) begin
+                wr_w_done_q <= 1'b1;
+            end
             if (s_axil_bvalid_o && s_axil_bready_i) begin
-                wr_in_progress_q <= 1'b0;
+                wr_aw_done_q <= 1'b0;
+                wr_w_done_q  <= 1'b0;
             end
         end
     end
 
     // Response mux — when wr_slave_active_q == UNMAPPED the defaults
-    // (SLVERR / bvalid from wr_in_progress_q) apply.
+    // (SLVERR / bvalid from wr_both_done) apply.
     always_comb begin
         s_axil_bresp_o  = 2'b10; // SLVERR
-        s_axil_bvalid_o = wr_in_progress_q && (wr_slave_active_q == UNMAPPED);
+        s_axil_bvalid_o = wr_both_done && (wr_slave_active_q == UNMAPPED);
         for (int i = 0; i < int'(N_MASTERS); i++) begin
             if (wr_slave_active_q == i[SEL_W-1:0]) begin
                 s_axil_bresp_o  = m_axil_bresp_i[i*2 +: 2];

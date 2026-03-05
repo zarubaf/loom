@@ -169,6 +169,7 @@ module loom_axil_firewall #(
 
     logic [3:0] wr_outstanding_q;
     logic [3:0] wr_phantom_q;
+    logic [3:0] wr_fwd_count_q;   // forwarded-but-unanswered write count
 
     // Timer FIFO for write channel (stores countdown per outstanding slot)
     logic [31:0] wr_timer_fifo [FIFO_DEPTH];
@@ -183,11 +184,27 @@ module loom_axil_firewall #(
     logic wr_aw_pending_q, wr_w_pending_q;
 
     // =====================================================================
+    // Write Address-Phase Skid Buffers (AW + W)
+    // =====================================================================
+
+    logic                    aw_buf_valid_q;
+    logic [ADDR_WIDTH-1:0]   aw_buf_addr_q;
+    logic [2:0]              aw_buf_prot_q;
+
+    logic                    w_buf_valid_q;
+    logic [DATA_WIDTH-1:0]   w_buf_data_q;
+    logic [(DATA_WIDTH/8)-1:0] w_buf_strb_q;
+
+    logic                    aw_fwd_done_q;  // downstream accepted AW
+    logic                    w_fwd_done_q;   // downstream accepted W
+
+    // =====================================================================
     // Read Channel Tracker
     // =====================================================================
 
     logic [3:0] rd_outstanding_q;
     logic [3:0] rd_phantom_q;
+    logic [3:0] rd_fwd_count_q;   // forwarded-but-unanswered read count
 
     // Timer FIFO for read channel
     logic [31:0] rd_timer_fifo [FIFO_DEPTH];
@@ -197,6 +214,15 @@ module loom_axil_firewall #(
 
     assign rd_fifo_empty = (rd_fifo_head_q == rd_fifo_tail_q);
     assign rd_fifo_full  = ((rd_fifo_tail_q + 4'd1) == rd_fifo_head_q);
+
+    // =====================================================================
+    // Read Address-Phase Skid Buffer (AR)
+    // =====================================================================
+
+    logic                    ar_buf_valid_q;
+    logic [ADDR_WIDTH-1:0]   ar_buf_addr_q;
+    logic [2:0]              ar_buf_prot_q;
+    logic                    ar_fwd_done_q;  // downstream accepted AR
 
     // =====================================================================
     // Upstream / Downstream Gating Logic
@@ -213,23 +239,26 @@ module loom_axil_firewall #(
                          && (rd_outstanding_q < max_outstanding_q[3:0])
                          && !rd_fifo_full;
 
-    // --- Write Address Channel ---
-    assign m_axi_awaddr  = s_axi_awaddr;
-    assign m_axi_awprot  = s_axi_awprot;
-    assign m_axi_awvalid = s_axi_awvalid && can_accept_wr && !wr_aw_pending_q;
-    assign s_axi_awready = m_axi_awready && can_accept_wr && !wr_aw_pending_q;
+    // --- Write Address Channel (from skid buffer) ---
+    assign m_axi_awaddr  = aw_buf_addr_q;
+    assign m_axi_awprot  = aw_buf_prot_q;
+    // Forward AW+W atomically: only present AW when both buffers are valid
+    assign m_axi_awvalid = aw_buf_valid_q && w_buf_valid_q && !aw_fwd_done_q;
+    // Upstream: accept into buffer when buffer empty and can accept
+    assign s_axi_awready = can_accept_wr && !aw_buf_valid_q && !wr_aw_pending_q;
 
-    // --- Write Data Channel ---
-    assign m_axi_wdata  = s_axi_wdata;
-    assign m_axi_wstrb  = s_axi_wstrb;
-    assign m_axi_wvalid = s_axi_wvalid && can_accept_wr && !wr_w_pending_q;
-    assign s_axi_wready = m_axi_wready && can_accept_wr && !wr_w_pending_q;
+    // --- Write Data Channel (from skid buffer) ---
+    assign m_axi_wdata  = w_buf_data_q;
+    assign m_axi_wstrb  = w_buf_strb_q;
+    assign m_axi_wvalid = aw_buf_valid_q && w_buf_valid_q && !w_fwd_done_q;
+    assign s_axi_wready = can_accept_wr && !w_buf_valid_q && !wr_w_pending_q;
 
-    // --- Read Address Channel ---
-    assign m_axi_araddr  = s_axi_araddr;
-    assign m_axi_arprot  = s_axi_arprot;
-    assign m_axi_arvalid = s_axi_arvalid && can_accept_rd;
-    assign s_axi_arready = m_axi_arready && can_accept_rd;
+    // --- Read Address Channel (from skid buffer) ---
+    assign m_axi_araddr  = ar_buf_addr_q;
+    assign m_axi_arprot  = ar_buf_prot_q;
+    assign m_axi_arvalid = ar_buf_valid_q && !ar_fwd_done_q;
+    // Upstream: accept into buffer when buffer empty and can accept
+    assign s_axi_arready = can_accept_rd && !ar_buf_valid_q;
 
     // =====================================================================
     // Write Response Channel (upstream B + downstream B)
@@ -290,17 +319,28 @@ module loom_axil_firewall #(
     // Main Sequential Logic
     // =====================================================================
 
-    // Write channel: track AW and W acceptance to know when both phases complete
+    // Write channel: track AW and W acceptance into skid buffers
     logic wr_aw_accepted, wr_w_accepted;
     assign wr_aw_accepted = s_axi_awvalid && s_axi_awready;
     assign wr_w_accepted  = s_axi_wvalid  && s_axi_wready;
 
-    // A write transaction is fully issued when both AW and W have been accepted
+    // A write transaction is "issued" when both AW and W buffers are filled
+    // (i.e. upstream has provided both phases — timer starts now)
     logic wr_issued;
     assign wr_issued = (wr_aw_accepted || wr_aw_pending_q) && (wr_w_accepted || wr_w_pending_q);
 
+    // Write buffers drained = downstream accepted both AW and W
+    logic wr_buf_drained;
+    assign wr_buf_drained = (aw_fwd_done_q || (m_axi_awvalid && m_axi_awready))
+                         && (w_fwd_done_q  || (m_axi_wvalid  && m_axi_wready));
+
+    // Read: issued = upstream AR accepted into buffer (timer starts)
     logic rd_issued;
     assign rd_issued = s_axi_arvalid && s_axi_arready;
+
+    // AR buffer drained = downstream accepted AR
+    logic ar_buf_drained;
+    assign ar_buf_drained = ar_buf_valid_q && !ar_fwd_done_q && m_axi_arready;
 
     // Write B channel completion (upstream side)
     logic wr_b_completed;
@@ -334,6 +374,7 @@ module loom_axil_firewall #(
         if (!rst_ni) begin
             wr_outstanding_q   <= 4'd0;
             wr_phantom_q       <= 4'd0;
+            wr_fwd_count_q     <= 4'd0;
             wr_fifo_head_q     <= 4'd0;
             wr_fifo_tail_q     <= 4'd0;
             wr_aw_pending_q    <= 1'b0;
@@ -341,13 +382,28 @@ module loom_axil_firewall #(
             wr_synth_bvalid_q  <= 1'b0;
             wr_synth_bresp_q   <= 2'b00;
 
+            aw_buf_valid_q     <= 1'b0;
+            aw_buf_addr_q      <= '0;
+            aw_buf_prot_q      <= 3'b000;
+            w_buf_valid_q      <= 1'b0;
+            w_buf_data_q       <= '0;
+            w_buf_strb_q       <= '0;
+            aw_fwd_done_q      <= 1'b0;
+            w_fwd_done_q       <= 1'b0;
+
             rd_outstanding_q   <= 4'd0;
             rd_phantom_q       <= 4'd0;
+            rd_fwd_count_q     <= 4'd0;
             rd_fifo_head_q     <= 4'd0;
             rd_fifo_tail_q     <= 4'd0;
             rd_synth_rvalid_q  <= 1'b0;
             rd_synth_rresp_q   <= 2'b00;
             rd_synth_rdata_q   <= '0;
+
+            ar_buf_valid_q     <= 1'b0;
+            ar_buf_addr_q      <= '0;
+            ar_buf_prot_q      <= 3'b000;
+            ar_fwd_done_q      <= 1'b0;
 
             timeout_count_q    <= 32'd0;
             unsolicited_count_q <= 32'd0;
@@ -359,7 +415,7 @@ module loom_axil_firewall #(
             evt_unsolicited_d <= 1'b0;
 
             // ---------------------------------------------------------
-            // Write AW/W pending tracking
+            // Write AW/W pending tracking (upstream acceptance)
             // ---------------------------------------------------------
             if (wr_issued) begin
                 wr_aw_pending_q <= 1'b0;
@@ -370,7 +426,47 @@ module loom_axil_firewall #(
             end
 
             // ---------------------------------------------------------
+            // Write AW skid buffer
+            // ---------------------------------------------------------
+            if (wr_aw_accepted) begin
+                aw_buf_valid_q <= 1'b1;
+                aw_buf_addr_q  <= s_axi_awaddr;
+                aw_buf_prot_q  <= s_axi_awprot;
+            end
+
+            // Track downstream AW acceptance
+            if (m_axi_awvalid && m_axi_awready) begin
+                aw_fwd_done_q <= 1'b1;
+            end
+
+            // ---------------------------------------------------------
+            // Write W skid buffer
+            // ---------------------------------------------------------
+            if (wr_w_accepted) begin
+                w_buf_valid_q <= 1'b1;
+                w_buf_data_q  <= s_axi_wdata;
+                w_buf_strb_q  <= s_axi_wstrb;
+            end
+
+            // Track downstream W acceptance
+            if (m_axi_wvalid && m_axi_wready) begin
+                w_fwd_done_q <= 1'b1;
+            end
+
+            // ---------------------------------------------------------
+            // Write buffer drain: both AW and W forwarded downstream
+            // ---------------------------------------------------------
+            if (wr_buf_drained) begin
+                aw_buf_valid_q <= 1'b0;
+                w_buf_valid_q  <= 1'b0;
+                aw_fwd_done_q  <= 1'b0;
+                w_fwd_done_q   <= 1'b0;
+                wr_fwd_count_q <= wr_fwd_count_q + 4'd1;
+            end
+
+            // ---------------------------------------------------------
             // Write outstanding counter & timer FIFO push
+            // (timer starts when upstream provides both AW+W)
             // ---------------------------------------------------------
             if (wr_issued) begin
                 wr_outstanding_q <= wr_outstanding_q + 4'd1;
@@ -387,12 +483,23 @@ module loom_axil_firewall #(
                     // Timeout!
                     wr_timeout_pulse <= 1'b1;
                     wr_fifo_head_q   <= wr_fifo_head_q + 4'd1;
-                    wr_phantom_q     <= wr_phantom_q + 4'd1;
                     // Generate synthetic B response
                     wr_synth_bvalid_q <= 1'b1;
                     wr_synth_bresp_q  <= resp_on_timeout_q;
                     timeout_count_q   <= timeout_count_q + 32'd1;
                     evt_timeout_d     <= 1'b1;
+                    // Phantom tracking depends on whether AW/W were forwarded
+                    if (wr_fwd_count_q > 4'd0) begin
+                        // Forwarded downstream — expect late B, track as phantom
+                        wr_phantom_q   <= wr_phantom_q + 4'd1;
+                        wr_fwd_count_q <= wr_fwd_count_q - 4'd1;
+                    end else begin
+                        // Still in skid buffer — withdraw (clear buffer, no phantom)
+                        aw_buf_valid_q <= 1'b0;
+                        w_buf_valid_q  <= 1'b0;
+                        aw_fwd_done_q  <= 1'b0;
+                        w_fwd_done_q   <= 1'b0;
+                    end
                 end else begin
                     wr_timer_fifo[wr_fifo_head_q] <= wr_timer_fifo[wr_fifo_head_q] - 32'd1;
                 end
@@ -404,10 +511,12 @@ module loom_axil_firewall #(
                 wr_outstanding_q  <= wr_outstanding_q - 4'd1;
             end
 
-            // Normal write B completion — decrement outstanding
+            // Normal write B completion — decrement outstanding & fwd count
             if (wr_b_completed) begin
                 wr_outstanding_q <= wr_outstanding_q - 4'd1;
                 wr_fifo_head_q   <= wr_fifo_head_q + 4'd1;
+                if (wr_fwd_count_q > 4'd0)
+                    wr_fwd_count_q <= wr_fwd_count_q - 4'd1;
             end
 
             // Unsolicited write B swallow — decrement phantom
@@ -420,7 +529,23 @@ module loom_axil_firewall #(
             end
 
             // ---------------------------------------------------------
+            // Read AR skid buffer
+            // ---------------------------------------------------------
+            if (rd_issued) begin
+                ar_buf_valid_q <= 1'b1;
+                ar_buf_addr_q  <= s_axi_araddr;
+                ar_buf_prot_q  <= s_axi_arprot;
+            end
+
+            // Track downstream AR acceptance
+            if (ar_buf_drained) begin
+                ar_fwd_done_q  <= 1'b1;
+                rd_fwd_count_q <= rd_fwd_count_q + 4'd1;
+            end
+
+            // ---------------------------------------------------------
             // Read outstanding counter & timer FIFO push
+            // (timer starts when upstream AR accepted into buffer)
             // ---------------------------------------------------------
             if (rd_issued) begin
                 rd_outstanding_q <= rd_outstanding_q + 4'd1;
@@ -437,13 +562,22 @@ module loom_axil_firewall #(
                     // Timeout!
                     rd_timeout_pulse <= 1'b1;
                     rd_fifo_head_q   <= rd_fifo_head_q + 4'd1;
-                    rd_phantom_q     <= rd_phantom_q + 4'd1;
                     // Generate synthetic R response
                     rd_synth_rvalid_q <= 1'b1;
                     rd_synth_rresp_q  <= resp_on_timeout_q;
                     rd_synth_rdata_q  <= rdata_on_timeout_q;
                     timeout_count_q   <= timeout_count_q + 32'd1;
                     evt_timeout_d     <= 1'b1;
+                    // Phantom tracking depends on whether AR was forwarded
+                    if (rd_fwd_count_q > 4'd0) begin
+                        // Forwarded downstream — expect late R, track as phantom
+                        rd_phantom_q   <= rd_phantom_q + 4'd1;
+                        rd_fwd_count_q <= rd_fwd_count_q - 4'd1;
+                    end else begin
+                        // Still in skid buffer — withdraw (clear buffer, no phantom)
+                        ar_buf_valid_q <= 1'b0;
+                        ar_fwd_done_q  <= 1'b0;
+                    end
                 end else begin
                     rd_timer_fifo[rd_fifo_head_q] <= rd_timer_fifo[rd_fifo_head_q] - 32'd1;
                 end
@@ -455,10 +589,14 @@ module loom_axil_firewall #(
                 rd_outstanding_q  <= rd_outstanding_q - 4'd1;
             end
 
-            // Normal read R completion — decrement outstanding
+            // Normal read R completion — decrement outstanding, clear AR buffer
             if (rd_r_completed) begin
                 rd_outstanding_q <= rd_outstanding_q - 4'd1;
                 rd_fifo_head_q   <= rd_fifo_head_q + 4'd1;
+                ar_buf_valid_q   <= 1'b0;
+                ar_fwd_done_q    <= 1'b0;
+                if (rd_fwd_count_q > 4'd0)
+                    rd_fwd_count_q <= rd_fwd_count_q - 4'd1;
             end
 
             // Unsolicited read R swallow — decrement phantom
@@ -470,9 +608,19 @@ module loom_axil_firewall #(
                 evt_unsolicited_d   <= 1'b1;
             end
 
-            // Adjust outstanding for simultaneous issue and timeout/complete
-            // (handled by the individual +1/-1 above; no extra correction needed
-            // because timeout removes from FIFO head while issue adds to tail)
+            // Read: clear AR buffer on synthetic R completion too
+            if (rd_synth_r_completed) begin
+                ar_buf_valid_q <= 1'b0;
+                ar_fwd_done_q  <= 1'b0;
+            end
+
+            // Write: clear buffers on synthetic B completion too
+            if (wr_synth_b_completed) begin
+                aw_buf_valid_q <= 1'b0;
+                w_buf_valid_q  <= 1'b0;
+                aw_fwd_done_q  <= 1'b0;
+                w_fwd_done_q   <= 1'b0;
+            end
 
             // Management clear-counts (last-assignment wins over increments above)
             if (mgmt_clear_counts) begin
