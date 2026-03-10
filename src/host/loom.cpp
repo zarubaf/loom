@@ -20,7 +20,7 @@ Context::~Context() {
     disconnect();
 }
 
-Result<void> Context::connect(std::string_view target) {
+Result<void> Context::connect(std::string_view target, uint32_t freq_mhz) {
     if (!transport_) {
         return Error::InvalidArg;
     }
@@ -30,7 +30,39 @@ Result<void> Context::connect(std::string_view target) {
         return result.error();
     }
 
-    // Read design info
+    // Probe firewall mgmt first — this is on aclk (no CDC), so it always
+    // responds if the shell is alive.  Reading emu_ctrl registers goes
+    // through the CDC which blocks if emu_clk isn't running.
+    auto probe = read32(addr::Firewall + reg::FwTimeoutCycles);
+    if (!probe.ok()) {
+        logger.error("Cannot reach firewall management registers");
+        return probe.error();
+    }
+    if (probe.value() == 0xFFFFFFFF) {
+        logger.error("Shell not responding (firewall reads 0xFFFFFFFF). "
+                     "Check PCIe link and FPGA programming.");
+        return Error::Transport;
+    }
+
+    // Program emu_clk to target frequency before accessing emu_top.
+    // ClkGen is on aclk (no CDC) — safe to access before couple().
+    // On FPGA, emu_clk defaults to 50 MHz; must be reconfigured to the
+    // design's target frequency before CDC-crossed reads will work.
+    if (freq_mhz > 0) {
+        auto clk_rc = configure_clock(freq_mhz);
+        if (!clk_rc.ok()) {
+            logger.error("Clock configuration failed");
+            return clk_rc.error();
+        }
+    }
+
+    // Ensure emu_top is coupled (accessible through decoupler/firewall)
+    auto couple_rc = couple();
+    if (!couple_rc.ok()) {
+        logger.warning("Failed to couple decoupler (may not be present)");
+    }
+
+    // Now safe to read emu_ctrl registers (through firewall → CDC → emu_top)
     auto val = read32(addr::EmuCtrl + reg::NDpiFuncs);
     if (!val.ok()) return val.error();
     n_dpi_funcs_ = val.value();
@@ -64,12 +96,6 @@ Result<void> Context::connect(std::string_view target) {
              design_hash_hex().c_str(),
              n_dpi_funcs_, scan_chain_length_, n_memories_);
 
-    // Ensure emu_top is coupled (accessible through decoupler)
-    auto couple_rc = couple();
-    if (!couple_rc.ok()) {
-        logger.warning("Failed to couple decoupler (may not be present)");
-    }
-
     return {};
 }
 
@@ -99,6 +125,100 @@ std::string Context::design_hash_hex() const {
         }
     }
     return result;
+}
+
+// ============================================================================
+// Clock Configuration (Clocking Wizard DRP)
+// ============================================================================
+
+Result<bool> Context::is_clock_locked() {
+    auto val = read32(addr::ClkGen + reg::ClkWizStatus);
+    if (!val.ok()) return val.error();
+    return (val.value() & 0x1) != 0;
+}
+
+Result<void> Context::configure_clock(uint32_t freq_mhz) {
+    if (freq_mhz == 0 || freq_mhz > 800) {
+        logger.error("Invalid clock frequency: %u MHz", freq_mhz);
+        return Error::InvalidArg;
+    }
+
+    // Calculate MMCM parameters for 300 MHz input → freq_mhz output.
+    // VCO = 300 × MULT must be in 800–1600 MHz range.
+    // Output = VCO / DIVIDE = 300 × MULT / DIVIDE = freq_mhz.
+    //
+    // Search for MULT/DIVIDE pair that produces exact frequency.
+    // MULT range: 2–64, DIVIDE range: 1–128 (Xilinx 7-series/UltraScale).
+    uint32_t best_mult = 0, best_div = 0;
+    uint32_t best_err = UINT32_MAX;
+
+    for (uint32_t mult = 2; mult <= 64; mult++) {
+        uint32_t vco = 300 * mult;
+        if (vco < 800 || vco > 1600) continue;
+
+        // DIVIDE = VCO / freq_mhz (must be integer for exact match)
+        if (vco % freq_mhz == 0) {
+            uint32_t div = vco / freq_mhz;
+            if (div >= 1 && div <= 128) {
+                best_mult = mult;
+                best_div = div;
+                best_err = 0;
+                break;
+            }
+        }
+
+        // Nearest integer divide
+        uint32_t div = (vco + freq_mhz / 2) / freq_mhz;
+        if (div < 1) div = 1;
+        if (div > 128) continue;
+        uint32_t actual = vco / div;
+        uint32_t err = (actual > freq_mhz) ? actual - freq_mhz : freq_mhz - actual;
+        if (err < best_err) {
+            best_err = err;
+            best_mult = mult;
+            best_div = div;
+        }
+    }
+
+    if (best_mult == 0) {
+        logger.error("Cannot find MMCM parameters for %u MHz", freq_mhz);
+        return Error::InvalidArg;
+    }
+
+    uint32_t actual_freq = (300 * best_mult) / best_div;
+    if (best_err > 0) {
+        logger.warning("Requested %u MHz, closest achievable: %u MHz (MULT=%u, DIV=%u)",
+                       freq_mhz, actual_freq, best_mult, best_div);
+    } else {
+        logger.info("Clock: %u MHz (MULT=%u, DIV=%u)", actual_freq, best_mult, best_div);
+    }
+
+    // Write CLKFBOUT_MULT and DIVCLK_DIVIDE to ClkWizCfg0
+    // PG065 format: [15:8] = CLKFBOUT_MULT, [7:0] = DIVCLK_DIVIDE
+    uint32_t cfg0 = ((best_mult & 0xFF) << 8) | (1 & 0xFF);  // DIVCLK_DIVIDE=1
+    auto rc = write32(addr::ClkGen + reg::ClkWizCfg0, cfg0);
+    if (!rc.ok()) return rc;
+
+    // Write CLKOUT0_DIVIDE to ClkWizCfg2
+    rc = write32(addr::ClkGen + reg::ClkWizCfg2, best_div);
+    if (!rc.ok()) return rc;
+
+    // Trigger reconfiguration: write SEN bit (bit 1) + LOAD bit (bit 0) to Cfg23
+    rc = write32(addr::ClkGen + reg::ClkWizCfg23, 0x3);
+    if (!rc.ok()) return rc;
+
+    // Poll for lock with timeout (100ms)
+    for (int i = 0; i < 100; i++) {
+        auto locked = is_clock_locked();
+        if (locked.ok() && locked.value()) {
+            logger.info("Clock locked at %u MHz", actual_freq);
+            return {};
+        }
+        usleep(1000);  // 1ms
+    }
+
+    logger.error("Clock failed to lock after reconfiguration");
+    return Error::Timeout;
 }
 
 // ============================================================================

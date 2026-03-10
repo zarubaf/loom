@@ -38,6 +38,7 @@ struct Options {
     fs::path work_dir = "work";
     std::string clk;          // empty = auto-detect from tbx clkgen, fallback clk_i
     std::string rst = "rst_ni";
+    uint32_t freq_mhz = 50;   // target emulation clock frequency
     std::vector<fs::path> sources;
     std::vector<fs::path> filelists;
     std::vector<std::string> defines;
@@ -54,6 +55,7 @@ void print_usage(const char *prog) {
         "  -f FILELIST    Read source files from filelist\n"
         "  -clk SIGNAL    Clock signal name (default: clk_i)\n"
         "  -rst SIGNAL    Reset signal name (default: rst_ni)\n"
+        "  -freq MHZ      Target emulation clock frequency (default: 50)\n"
         "  -D DEFINE      Preprocessor define (passed to slang)\n"
         "  -v             Verbose output\n"
         "  -h             Show this help\n",
@@ -75,6 +77,8 @@ Options parse_args(int argc, char **argv) {
             opts.clk = argv[++i];
         } else if (arg == "-rst" && i + 1 < argc) {
             opts.rst = argv[++i];
+        } else if (arg == "-freq" && i + 1 < argc) {
+            opts.freq_mhz = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
         } else if (arg == "-D" && i + 1 < argc) {
             opts.defines.emplace_back(argv[++i]);
         } else if (arg == "-v") {
@@ -315,6 +319,7 @@ int main(int argc, char **argv) {
             loom::TomlData build_data;
             build_data["build"]["transformed_sha256"] = tv_hex;
             build_data["build"]["timestamp"] = std::string(ts_buf);
+            build_data["clock"]["freq_mhz"] = std::to_string(opts.freq_mhz);
 
             loom::toml_append(manifest_path.string(), build_data);
             logger.info("  loom_manifest.toml (appended build metadata)");

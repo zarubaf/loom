@@ -163,6 +163,13 @@ namespace reg {
     constexpr uint32_t FwMaxOutstanding  = 0x1C;
     constexpr uint32_t FwIrqEnable       = 0x20;
 
+    // Clocking Wizard DRP register offsets (PG065)
+    constexpr uint32_t ClkWizSR       = 0x04;   // Software Reset / Status (locked bit)
+    constexpr uint32_t ClkWizStatus   = 0x04;   // Status: bit 0 = locked
+    constexpr uint32_t ClkWizCfg0     = 0x200;  // CLKFBOUT_MULT, DIVCLK_DIVIDE
+    constexpr uint32_t ClkWizCfg2     = 0x208;  // CLKOUT0_DIVIDE
+    constexpr uint32_t ClkWizCfg23    = 0x25C;  // Load/SEN trigger
+
     // scan_ctrl register offsets
     constexpr uint32_t ScanStatus = 0x00;
     constexpr uint32_t ScanControl = 0x04;
@@ -283,9 +290,15 @@ public:
     Context& operator=(Context&&) = default;
 
     // Connection
-    Result<void> connect(std::string_view target);
+    // freq_mhz: target emulation clock frequency for Clocking Wizard DRP.
+    //           0 = skip clock configuration (e.g. socket/sim transport).
+    Result<void> connect(std::string_view target, uint32_t freq_mhz = 0);
     void disconnect();
     bool is_connected() const;
+
+    // Clock configuration (Clocking Wizard DRP)
+    Result<void> configure_clock(uint32_t freq_mhz);
+    Result<bool> is_clock_locked();
 
     // Design info accessors
     uint32_t n_dpi_funcs() const { return n_dpi_funcs_; }

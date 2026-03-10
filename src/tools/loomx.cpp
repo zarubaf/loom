@@ -325,8 +325,32 @@ int main(int argc, char **argv) {
 
     loom::Context ctx(std::move(transport));
 
+    // Read manifest before connect — we need freq_mhz for clock programming
+    uint32_t freq_mhz = 0;
+    auto manifest_path = work / "loom_manifest.toml";
+    loom::TomlData manifest;
+    bool have_manifest = false;
+    if (fs::exists(manifest_path)) {
+        manifest = loom::toml_read(manifest_path.string());
+        have_manifest = true;
+
+        // Extract clock frequency
+        auto it_clock = manifest.find("clock");
+        if (it_clock != manifest.end()) {
+            auto it_freq = it_clock->second.find("freq_mhz");
+            if (it_freq != it_clock->second.end()) {
+                freq_mhz = static_cast<uint32_t>(
+                    std::strtoul(it_freq->second.c_str(), nullptr, 10));
+                logger.info("Target clock: %u MHz (from manifest)", freq_mhz);
+            }
+        }
+    }
+
+    // Only program clock for XDMA transport (BFM handles it in sim)
+    uint32_t connect_freq = use_xdma ? freq_mhz : 0;
+
     logger.info("Connecting to %s...", connect_target.c_str());
-    auto rc = ctx.connect(connect_target);
+    auto rc = ctx.connect(connect_target, connect_freq);
     if (!rc.ok()) {
         logger.error("Failed to connect to %s", connect_target.c_str());
         if (sim_pid > 0) {
@@ -336,11 +360,9 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Read manifest and verify design hash + shell version
+    // Verify design hash + shell version from manifest
     {
-        auto manifest_path = work / "loom_manifest.toml";
-        if (fs::exists(manifest_path)) {
-            auto manifest = loom::toml_read(manifest_path.string());
+        if (have_manifest) {
 
             // Compare design hash
             auto it_design = manifest.find("design");
@@ -384,7 +406,7 @@ int main(int argc, char **argv) {
                 }
             }
         } else {
-            logger.debug("No loom_manifest.toml found in work directory");
+            logger.debug("No loom_manifest.toml found");
         }
     }
 
