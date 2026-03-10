@@ -5,8 +5,9 @@ A running Loom emulation (sim or FPGA) needs a clean way to stop. Three
 sources can trigger shutdown:
 
 1. **DUT-initiated** — the design hits `$finish` or `$fatal`
-2. **Host-initiated** — the host writes the `EMU_FINISH` register
-3. **Timeout** — handled externally (CTest, shell script, `loomx -timeout`)
+2. **Assertion failure** — a synthesized `assert` fires (see [assertions.md](assertions.md))
+3. **Host-initiated** — the host writes the `EMU_FINISH` register
+4. **Timeout** — handled externally (CTest, shell script, `loomx -timeout`)
 
 All three funnel through one register and one signal.
 
@@ -29,10 +30,11 @@ same register.
 ## Signal Flow
 
 ```
-DUT $finish cells (loom_finish_o) ──┐
-                                     ├──► emu_ctrl.finish_reg ──► BFM finish_i ──► $finish
-Host writes EMU_FINISH ──────────────┘         │
-                                               └──► finish_o
+DUT $finish cells ─────────────────┐
+                                    ├─► loom_finish_o ──► emu_ctrl.finish_reg ──► BFM ──► $finish
+Assertion failures ($assert) ──────┘         │
+                                              └──► finish_o
+Host writes EMU_FINISH ──────────────────────────┘
 ```
 
 ## DUT Side: `$finish` → `loom_finish_o`
@@ -123,7 +125,7 @@ register, the host closes the XDMA transport normally.
 
 | Component | Role |
 |-----------|------|
-| `loom_instrument` | Transforms `$__loom_finish` cells → `loom_finish_o` output port |
+| `loom_instrument` | Transforms `$__loom_finish` cells + `$assert` failures → `loom_finish_o` |
 | `emu_top` | Wires `loom_finish_o` → `emu_ctrl.dut_finish_req_i` |
 | `emu_ctrl` | `EMU_FINISH` register at `0x34`. Set by DUT or host. Drives `finish_o`. |
 | BFM `finish_i` | When high: drain AXI, send SHUTDOWN, `$finish` |

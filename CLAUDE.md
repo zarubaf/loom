@@ -32,9 +32,10 @@ Source SV → yosys-slang (--loom, FSM extraction) → Loom passes → Vivado/Ve
 **Transformation passes (required order):**
 1. `mem_shadow` — Shadow read/write ports for memory access (before flatten, no-op without memories)
 2. `reset_extract` — Strip async resets, record initial values as wire attributes
-3. `loom_instrument` — DPI bridge, FF enable (`loom_en`), `$finish` → `loom_finish_o`
-4. `scan_insert` — Scan chain insertion, protobuf state map with reset values
-5. `emu_top` — Emulation wrapper with AXI-Lite interface, IRQ, DPI regfile
+3. `async2sync` + `chformal -lower` — Lower assertions (`$check` → `$assert` + `$print`)
+4. `loom_instrument` — DPI bridge, FF enable (`loom_en`), assertions, `$finish` → `loom_finish_o`
+5. `scan_insert` — Scan chain insertion, protobuf state map with reset values
+6. `emu_top` — Emulation wrapper with AXI-Lite interface, IRQ, DPI regfile
 
 **Frontend (yosys-slang `--loom`):**
 - FSM extraction: multi-cycle `always` blocks with inner `@(posedge clk)`, `while-wait`, `repeat` → state machines
@@ -59,6 +60,7 @@ Design documentation lives in `doc/`:
 - `doc/e2e-test.md` - End-to-end test guide
 - `doc/fpga-support.md` - FPGA build flow and architecture
 - `doc/shutdown-spec.md` - Clean shutdown mechanism ($finish, host finish)
+- `doc/assertions.md` - Synthesizable assertions (assert, assert property, else clauses)
 
 **Keep documentation up-to-date.** When making significant changes to a component, update the corresponding documentation in `doc/`.
 

@@ -19,8 +19,11 @@ Source SV ─── read_slang ───► Elaborate, detect DPI, extract FSMs
                           │ reset_extract │  Strip async resets, record initial values
                           └───────┬───────┘
                                   ▼
+                          async2sync / chformal -lower
+                          (lower $check cells → $assert + $print)
+                                  ▼
                           ┌───────────────────┐
-                          │ loom_instrument   │  DPI bridge, FF enable, $finish transform
+                          │ loom_instrument   │  DPI bridge, FF enable, assertions, $finish
                           └───────┬───────────┘
                                   ▼
                           ┌───────────────┐
@@ -50,15 +53,19 @@ memory_collect
 memory_dff
 mem_shadow -clk clk_i -map mem_map.pb
 flatten
-opt
 reset_extract -rst rst_ni
-opt
+async2sync                                    # lower edge-triggered $check/$print
+chformal -lower                               # $check → $assert + $print
 loom_instrument -header_out loom_dpi_dispatch.c
+opt_expr; opt_merge; opt_clean
 scan_insert -map scan_map.pb
 emu_top -top <module> -rst rst_ni
-opt_clean
+opt; bwmuxmap
 write_verilog -noattr transformed.v
 ```
+
+The `async2sync` and `chformal -lower` steps handle synthesizable
+assertions; see [assertions.md](assertions.md) for details.
 
 ---
 

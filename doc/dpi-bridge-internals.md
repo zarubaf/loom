@@ -12,7 +12,11 @@ yosys-slang frontend          loom_instrument pass
 DPI import + call site    →    $__loom_dpi_call cell
 $display / $write         →    $print cell → $__loom_dpi_call (builtin)
 $finish / $stop           →    $__loom_finish cell → loom_finish_o port
+assert / assert property  →    $check → $assert → DPI display + loom_finish_o
+assert ... else $error    →    $check + $print → DPI display + loom_finish_o
 ```
+
+See [assertions.md](assertions.md) for the full assertion pipeline.
 
 ## `$__loom_dpi_call` Cell Attributes
 
