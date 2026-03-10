@@ -804,24 +804,34 @@ struct LoomInstrumentPass : public Pass {
         }
     }
 
-    // Process $assert cells that were not consumed by synthprop (fallback).
-    // For each $assert, generate a DPI display call with a default failure
-    // message and collect the failure signal for loom_finish_o.
+    // Process formal cells ($assert, $assume, $cover) from chformal -lower.
+    // For $assert: generate a DPI display call with failure message and
+    // collect failure signals for loom_finish_o.
+    // For $assume/$cover: silently remove (no emulation meaning).
     void process_assert_cells(RTLIL::Module *module,
                               std::vector<RTLIL::SigBit> &fail_sigs) {
         static int assert_counter = 0;
         std::vector<RTLIL::Cell*> assert_cells;
+        std::vector<RTLIL::Cell*> remove_cells;
 
         for (auto cell : module->cells()) {
             if (cell->type == ID($assert)) {
                 assert_cells.push_back(cell);
+            } else if (cell->type.in(ID($assume), ID($cover), ID($live), ID($fair))) {
+                remove_cells.push_back(cell);
             }
+        }
+
+        for (auto cell : remove_cells) {
+            log("  Removing %s cell %s (no emulation meaning)\n",
+                log_id(cell->type), log_id(cell));
+            module->remove(cell);
         }
 
         if (assert_cells.empty())
             return;
 
-        log("  Found %zu remaining $assert cell(s)\n", assert_cells.size());
+        log("  Found %zu $assert cell(s)\n", assert_cells.size());
 
         for (auto cell : assert_cells) {
             RTLIL::SigSpec sig_a = cell->getPort(ID::A);

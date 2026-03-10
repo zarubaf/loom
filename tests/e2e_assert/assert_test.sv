@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // assert_test — Synthesizable assertion e2e test
 //
-// A counter-based DUT with immediate assertions.  After ~21 cycles the
-// state machine deliberately enters an illegal state, triggering assertion
-// failures that should print a message and halt emulation via loom_finish_o.
+// A counter-based DUT with both immediate and concurrent (SVA) assertions.
+// After ~21 cycles the state machine deliberately enters an illegal state,
+// triggering assertion failures that should print a message and halt
+// emulation via loom_finish_o.
 
 module assert_test (
     input  logic        clk_i,
@@ -62,6 +63,40 @@ module assert_test (
         if (!rst_ni) cnt_prev_q <= 8'd0;
         else         cnt_prev_q <= cnt_q;
     end
+
+    // ================================================================
+    // Concurrent assertions (SVA — assert property)
+    // ================================================================
+
+    // C1: State must never be StError — FIRES at cycle ~21
+    c1_no_error: assert property (
+        @(posedge clk_i) disable iff (!rst_ni)
+        state_q != StError
+    );
+
+    // C2: Counter monotonicity (always passes)
+    c2_cnt_mono: assert property (
+        @(posedge clk_i) disable iff (!rst_ni)
+        cnt_q == 8'd0 || cnt_q == cnt_prev_q + 8'd1
+    );
+
+    // C3: FIFO pointer stays below 12 during active (always passes)
+    c3_wptr_bound: assert property (
+        @(posedge clk_i) disable iff (!rst_ni)
+        !(state_q == StActive) || wptr_q < 4'd12
+    );
+
+    // C4: When Done, counter >= 15 (always passes)
+    c4_done_cnt: assert property (
+        @(posedge clk_i) disable iff (!rst_ni)
+        !(state_q == StDone) || cnt_q >= 8'd15
+    );
+
+    // C5: Assume — should be silently lowered (no emulation effect)
+    c5_rst_clean: assume property (
+        @(posedge clk_i)
+        rst_ni !== 1'bx
+    );
 
     // ================================================================
     // Immediate assertions

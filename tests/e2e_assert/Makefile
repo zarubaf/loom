@@ -13,4 +13,4 @@ test: $(_TEST_DEPS)
 		{ echo "FAIL: no assertion failure detected"; exit 1; }
 	@grep -q '\[assert_test\] started' $(BUILD)/test.log || \
 		{ echo "FAIL: display output missing"; exit 1; }
-	@echo "PASS: assertion correctly triggered finish with message"
+	@echo "PASS: assertions (immediate + concurrent) triggered finish with messages"
