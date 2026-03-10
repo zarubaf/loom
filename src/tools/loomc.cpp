@@ -193,6 +193,16 @@ std::string build_yosys_script(const Options &opts,
     // Extract reset values, strip async resets, remove reset port
     ys << "reset_extract -rst " << opts.rst << "\n";
 
+    // Lower formal $check cells into $assert + $print cells.
+    // async2sync converts edge-triggered $check/$print cells to
+    // level-triggered (adds sampling FFs).  No $adff cells remain
+    // after reset_extract, so async2sync only affects formal cells.
+    // chformal -lower splits $check → $assert + $print.
+    // The resulting $assert cells are handled by loom_instrument
+    // (per-assertion failure messages + finish signal).
+    ys << "async2sync\n";
+    ys << "chformal -lower\n";
+
     // DPI instrument (creates loom_en, DPI/finish output ports).
     // From here on, DPI args/result and finish are module outputs —
     // opt_clean preserves FFs in their fan-in, removes dead ones.

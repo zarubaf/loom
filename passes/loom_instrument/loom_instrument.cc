@@ -157,8 +157,13 @@ struct LoomInstrumentPass : public Pass {
         for (auto module : design->selected_modules()) {
             log("Processing module %s\n", log_id(module));
 
-            // Transform $print cells into $__loom_dpi_call cells first
+            // Transform $print cells into $__loom_dpi_call cells
             process_print_cells(module);
+
+            // Transform $assert cells into DPI display calls + failure signals
+            // (must run before DPI bridge processing collects $__loom_dpi_call cells)
+            std::vector<RTLIL::SigBit> assert_fail_sigs;
+            process_assert_cells(module, assert_fail_sigs);
 
             std::vector<RTLIL::Cell*> cells_to_process;
             std::vector<DpiFunction> module_functions;
@@ -347,7 +352,8 @@ struct LoomInstrumentPass : public Pass {
             }
 
             // Process $__loom_finish cells - transform to hardware output
-            process_finish_cells(module);
+            // (includes assertion failure signals from process_assert_cells)
+            process_finish_cells(module, assert_fail_sigs);
 
             // Add flop enable logic (must run after DPI bridge and finish processing)
             run_flop_enable(module);
@@ -798,7 +804,74 @@ struct LoomInstrumentPass : public Pass {
         }
     }
 
-    void process_finish_cells(RTLIL::Module *module) {
+    // Process $assert cells that were not consumed by synthprop (fallback).
+    // For each $assert, generate a DPI display call with a default failure
+    // message and collect the failure signal for loom_finish_o.
+    void process_assert_cells(RTLIL::Module *module,
+                              std::vector<RTLIL::SigBit> &fail_sigs) {
+        static int assert_counter = 0;
+        std::vector<RTLIL::Cell*> assert_cells;
+
+        for (auto cell : module->cells()) {
+            if (cell->type == ID($assert)) {
+                assert_cells.push_back(cell);
+            }
+        }
+
+        if (assert_cells.empty())
+            return;
+
+        log("  Found %zu remaining $assert cell(s)\n", assert_cells.size());
+
+        for (auto cell : assert_cells) {
+            RTLIL::SigSpec sig_a = cell->getPort(ID::A);
+            RTLIL::SigSpec sig_en = cell->getPort(ID::EN);
+
+            // Failure = EN & !A
+            RTLIL::Wire *not_a = module->addWire(NEW_ID, 1);
+            module->addNot(NEW_ID, sig_a, not_a);
+            RTLIL::Wire *fail = module->addWire(NEW_ID, 1);
+            module->addAnd(NEW_ID, sig_en, not_a, fail);
+
+            fail_sigs.push_back(RTLIL::SigBit(fail));
+
+            // Build a default failure message from cell name + src attribute
+            std::string cell_name = log_id(cell->name);
+            std::string src = cell->get_string_attribute(ID::src);
+            std::string msg = "Assertion failed: " + cell_name;
+            if (!src.empty())
+                msg += " [" + src + "]";
+            msg += "\\n";
+
+            // Create a DPI display call for the failure message
+            std::string dpi_name = "__loom_assert_" + std::to_string(assert_counter++);
+            RTLIL::Cell *dpi_cell = module->addCell(NEW_ID, ID($__loom_dpi_call));
+            dpi_cell->set_string_attribute(ID(loom_dpi_func), dpi_name);
+            dpi_cell->set_bool_attribute(ID::blackbox, true);
+            dpi_cell->setPort(ID(ARGS), RTLIL::SigSpec());
+            dpi_cell->setParam(ID(ARG_WIDTH), 0);
+            dpi_cell->setParam(ID(RET_WIDTH), 0);
+            dpi_cell->setParam(ID(NUM_ARGS), 1); // format string only
+            dpi_cell->setPort(ID(RESULT), RTLIL::SigSpec());
+            dpi_cell->set_string_attribute(ID(loom_dpi_arg_names), "fmt");
+            dpi_cell->set_string_attribute(ID(loom_dpi_arg_types), "string");
+            dpi_cell->set_string_attribute(ID(loom_dpi_arg_widths), "0");
+            dpi_cell->set_string_attribute(ID(loom_dpi_arg_dirs), "input");
+            dpi_cell->set_string_attribute(ID(loom_dpi_ret_type), "void");
+            dpi_cell->set_string_attribute(
+                RTLIL::IdString("\\loom_dpi_string_arg_0"), msg);
+            dpi_cell->set_bool_attribute(RTLIL::IdString("\\loom_dpi_builtin"), true);
+            dpi_cell->setPort(ID::EN, RTLIL::SigSpec(fail));
+
+            log("    $assert %s → %s (msg=\"%s\")\n",
+                cell_name.c_str(), dpi_name.c_str(), msg.c_str());
+
+            module->remove(cell);
+        }
+    }
+
+    void process_finish_cells(RTLIL::Module *module,
+                              const std::vector<RTLIL::SigBit> &assert_fail_sigs) {
         std::vector<RTLIL::Cell*> finish_cells;
 
         for (auto cell : module->cells()) {
@@ -807,17 +880,19 @@ struct LoomInstrumentPass : public Pass {
             }
         }
 
-        if (finish_cells.empty()) {
+        if (finish_cells.empty() && assert_fail_sigs.empty()) {
             return;
         }
 
         log("  Found %zu $finish cell(s)\n", finish_cells.size());
+        if (!assert_fail_sigs.empty())
+            log("  Found %zu $assert failure signal(s)\n", assert_fail_sigs.size());
 
         // Create the finish output port
         RTLIL::Wire *finish_out = module->addWire(ID(loom_finish_o), 1);
         finish_out->port_output = true;
 
-        // If multiple $finish cells, OR their enable signals together
+        // Collect all enable signals to OR together
         RTLIL::SigSpec combined_en;
 
         for (auto cell : finish_cells) {
@@ -843,8 +918,15 @@ struct LoomInstrumentPass : public Pass {
             module->remove(cell);
         }
 
+        // Include $assert failure signals
+        for (auto &sig : assert_fail_sigs) {
+            combined_en.append(sig);
+        }
+
         // Connect to output port
-        if (GetSize(combined_en) == 1) {
+        if (GetSize(combined_en) == 0) {
+            module->connect(finish_out, RTLIL::State::S0);
+        } else if (GetSize(combined_en) == 1) {
             module->connect(finish_out, combined_en);
         } else {
             RTLIL::SigSpec or_result = combined_en[0];
