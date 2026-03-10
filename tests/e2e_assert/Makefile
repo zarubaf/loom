@@ -13,4 +13,6 @@ test: $(_TEST_DEPS)
 		{ echo "FAIL: no assertion failure detected"; exit 1; }
 	@grep -q '\[assert_test\] started' $(BUILD)/test.log || \
 		{ echo "FAIL: display output missing"; exit 1; }
-	@echo "PASS: assertions (immediate + concurrent) triggered finish with messages"
+	@grep -q '__loom_display_2' $(BUILD)/test.log || \
+		{ echo "FAIL: else clause DPI function not registered"; exit 1; }
+	@echo "PASS: assertions (immediate + concurrent + else clause) work"

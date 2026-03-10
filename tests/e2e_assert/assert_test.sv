@@ -103,8 +103,10 @@ module assert_test (
     // ================================================================
 
     // I1: Combinational — state must never be StError.  FIRES at cycle ~21.
+    //     Has an else clause with $error message.
     always_comb begin
-        i1_no_error: assert (state_q != StError);
+        i1_no_error: assert (state_q != StError)
+            else $error("I1: illegal state StError reached!");
     end
 
     // I2: Clocked — counter monotonicity (always passes)
