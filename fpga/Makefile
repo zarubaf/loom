@@ -116,8 +116,12 @@ $(DFX_STATIC_DONE): $(WORK_DIR)/results/static_synth.dcp $(WORK_DIR)/results/$(R
 # ----------------------------------------------------------------
 # DFX — Fast RM swap (reuses locked static_routed.dcp)
 # ----------------------------------------------------------------
+# static_routed.dcp must already exist (copy from the machine that ran
+# dfx-static, or run dfx-static here first). dfx-rm never rebuilds it.
 
-dfx-rm: $(WORK_DIR)/results/$(RM_NAME)_synth.dcp $(DFX_STATIC_DONE)
+dfx-rm: $(WORK_DIR)/results/$(RM_NAME)_synth.dcp
+	@test -f $(DFX_STATIC_DONE) || \
+	  (echo "ERROR: $(DFX_STATIC_DONE) not found. Run 'make dfx-static' first, or copy static_routed.dcp here."; exit 1)
 	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/dfx_rm.tcl
 
 # ----------------------------------------------------------------
