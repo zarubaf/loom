@@ -21,19 +21,19 @@ if {$mode eq "flash"} {
     write_cfgmem \
         -format mcs \
         -interface SPIx4 \
-        -size 256 \
-        -loadbit "up 0x00000000 $bit_file" \
+        -size 128 \
+        -loadbit "up 0x01002000 $bit_file" \
         -force \
         $mcs_file
 }
 
 open_hw_manager
-connect_hw_server
+connect_hw_server -allow_non_jtag
 open_hw_target
 
-set device [lindex [get_hw_devices] 0]
+set device [lindex [get_hw_devices xcu250_0] 0]
 current_hw_device $device
-refresh_hw_device $device
+refresh_hw_device -update_hw_probes false $device
 puts "Device: $device  Mode: $mode  File: $bit_file"
 
 if {$mode eq "jtag"} {
@@ -48,21 +48,38 @@ if {$mode eq "jtag"} {
 
 } elseif {$mode eq "flash"} {
     set mcs_file [file rootname $bit_file].mcs
-    create_hw_cfgmem \
-        -hw_device $device \
-        [lindex [get_cfgmem_parts {mt25qu01g-spi-x1_x2_x4}] 0]
-    set cfgmem [get_hw_cfgmem -of_objects $device]
-    set_property PROGRAM.ADDRESS_RANGE          {use_file} $cfgmem
-    set_property PROGRAM.FILES                  [list $mcs_file] $cfgmem
-    set_property PROGRAM.PRM_FILE               {} $cfgmem
-    set_property PROGRAM.UNUSED_PIN_TERMINATION {pull-none} $cfgmem
-    set_property PROGRAM.BLANK_CHECK            0 $cfgmem
-    set_property PROGRAM.ERASE                  1 $cfgmem
-    set_property PROGRAM.CFG_PROGRAM            1 $cfgmem
-    set_property PROGRAM.VERIFY                 1 $cfgmem
-    program_hw_cfgmem $cfgmem
+    set part [lindex [get_cfgmem_parts {mt25qu01g-spi-x1_x2_x4}] 0]
+    if {$part eq ""} {
+        puts "ERROR: cfgmem part mt25qu01g-spi-x1_x2_x4 not found in this Vivado install."
+        puts "Run: get_cfgmem_parts *mt25qu01g* to find the correct part name."
+        exit 1
+    }
+    create_hw_cfgmem -hw_device $device $part
+    set_property PROGRAM.BLANK_CHECK 0 [get_property PROGRAM.HW_CFGMEM $device]
+    set_property PROGRAM.ERASE       1 [get_property PROGRAM.HW_CFGMEM $device]
+    set_property PROGRAM.CFG_PROGRAM 1 [get_property PROGRAM.HW_CFGMEM $device]
+    set_property PROGRAM.VERIFY      1 [get_property PROGRAM.HW_CFGMEM $device]
+    set_property PROGRAM.CHECKSUM    0 [get_property PROGRAM.HW_CFGMEM $device]
+    refresh_hw_device $device
+    set_property PROGRAM.ADDRESS_RANGE          {use_file}       [get_property PROGRAM.HW_CFGMEM $device]
+    set_property PROGRAM.FILES                  [list $mcs_file] [get_property PROGRAM.HW_CFGMEM $device]
+    set_property PROGRAM.PRM_FILE               {}               [get_property PROGRAM.HW_CFGMEM $device]
+    set_property PROGRAM.UNUSED_PIN_TERMINATION {pull-none}      [get_property PROGRAM.HW_CFGMEM $device]
+    set_property PROGRAM.BLANK_CHECK            0                [get_property PROGRAM.HW_CFGMEM $device]
+    set_property PROGRAM.ERASE                  1                [get_property PROGRAM.HW_CFGMEM $device]
+    set_property PROGRAM.CFG_PROGRAM            1                [get_property PROGRAM.HW_CFGMEM $device]
+    set_property PROGRAM.VERIFY                 1                [get_property PROGRAM.HW_CFGMEM $device]
+    set_property PROGRAM.CHECKSUM               0                [get_property PROGRAM.HW_CFGMEM $device]
+    # Load the Vivado-generated SPI programming core onto the FPGA before accessing flash
+    puts "[clock format [clock seconds] -format {%H:%M:%S}] Loading SPI programming core..."
+    create_hw_bitstream -hw_device $device [get_property PROGRAM.HW_CFGMEM_BITFILE $device]
+    program_hw_devices $device
+    refresh_hw_device $device
+    puts "[clock format [clock seconds] -format {%H:%M:%S}] Programming flash (erase + program + verify — ~10 min)..."
+    program_hw_cfgmem -verbose -hw_cfgmem [get_property PROGRAM.HW_CFGMEM $device]
+    puts "[clock format [clock seconds] -format {%H:%M:%S}] Flash done. Rebooting FPGA from flash..."
     boot_hw_device $device
-    puts "Flash programmed. FPGA reloading from flash..."
+    puts "[clock format [clock seconds] -format {%H:%M:%S}] Flash programmed. FPGA reloading from flash..."
 
 } else {
     puts "ERROR: unknown MODE '$mode'. Use: jtag / jtag-partial / flash"
