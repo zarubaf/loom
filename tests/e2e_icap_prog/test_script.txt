@@ -1,0 +1,21 @@
+# ICAP programming e2e test script.
+#
+# Exercises the full path: host reconfigure() → AXI-Lite → loom_icap_ctrl
+# FSM → behavioral ICAPE3 stub → PRDONE sticky bit → host poll → success.
+#
+# The test bitstream (build/test.bit) contains a dummy header, the ICAP sync
+# word (0xAA995566), and 24 Type-1 NOP words.  The behavioral ICAPE3 stub
+# fires PRDONE 16 clock cycles after the last write.
+
+# Verify the shell is alive
+read 0x28
+
+# Load the test bitstream:
+#   1. Decouple RP via firewall
+#   2. Assert/deassert ICAP sw_reset (clear sticky bits)
+#   3. Stream bitstream words to ICAP DATA register (backpressure via awready)
+#   4. Poll STATUS for PRDONE (bit 1) or PRERROR (bit 2)
+#   5. Re-couple RP
+reconfigure build/test.bit
+
+exit

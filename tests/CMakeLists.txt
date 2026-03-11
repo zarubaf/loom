@@ -255,6 +255,17 @@ set_tests_properties(e2e_shell_regaccess PROPERTIES
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
 
+# End-to-end ICAP programming test — exercises reconfigure() through behavioral ICAPE3 stub
+add_test(NAME e2e_icap_prog
+    COMMAND make test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/e2e_icap_prog
+)
+set_tests_properties(e2e_icap_prog PROPERTIES
+    DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
+    TIMEOUT 300
+    ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
+)
+
 # End-to-end DPI FIFO test using loomc/loomx
 add_test(NAME e2e_dpi_fifo
     COMMAND make test
