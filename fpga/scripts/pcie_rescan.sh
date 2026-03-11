@@ -87,10 +87,7 @@ echo "Found: $xlnx_dev"
 bdf=$(echo "$xlnx_dev" | cut -d' ' -f1)
 
 # Try loading XDMA driver
-if modinfo xdma &>/dev/null; then
-    echo "Loading xdma driver (system)..."
-    modprobe xdma
-elif [ -f "$XDMA_KO" ]; then
+if [ -f "$XDMA_KO" ]; then
     echo "Loading xdma driver (third_party)..."
     insmod "$XDMA_KO"
 else
