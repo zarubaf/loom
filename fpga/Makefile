@@ -10,7 +10,29 @@ SCRIPTS_DIR  := $(FPGA_DIR)/scripts
 WORK_DIR     := $(FPGA_DIR)/work-u250
 
 VIVADO       ?= /opt/eda/xilinx/Vivado/2024.1/bin/vivado
-VIVADO_FLAGS := -mode batch -nojournal -nolog
+
+# ----------------------------------------------------------------
+# Per-run structured logging
+# Usage: $(call vivado_run,<step>,<tcl>[,<extra KEY=VALUE env>])
+# Creates: $(WORK_DIR)/logs/<timestamp>_<step>_<rm>/
+#   vivado.log  vivado.jou  metadata.txt  *.rpt snapshot
+# ----------------------------------------------------------------
+define vivado_run
+{ \
+  _d="$(WORK_DIR)/logs/$$(date +%Y%m%d_%H%M%S)_$(1)_$(RM_NAME)"; \
+  mkdir -p "$$_d"; \
+  printf 'step=$(1)\nrm_name=$(RM_NAME)\ntimestamp=%s\n' "$$(date -Iseconds)" \
+    > "$$_d/metadata.txt"; \
+  env $(3) $(VIVADO) -mode batch \
+    -log     "$$_d/vivado.log" \
+    -journal "$$_d/vivado.jou" \
+    -source  "$(2)"; \
+  _e=$$?; \
+  printf 'exit_code=%d\n' "$$_e" >> "$$_d/metadata.txt"; \
+  cp "$(WORK_DIR)/results"/*.rpt "$$_d/" 2>/dev/null || true; \
+  exit $$_e; \
+}
+endef
 
 # Transformed DUT (user must supply or use tests/e2e to generate)
 TRANSFORMED_V ?= $(LOOM_ROOT)/tests/e2e/build/transformed.v
@@ -35,25 +57,25 @@ export RM_NAME ?= rm
 all: bitstream
 
 # ----------------------------------------------------------------
-# IP Generation
+# IP Generation (one-time; logs suppressed — not worth keeping)
 # ----------------------------------------------------------------
 
 ip: $(IP_DIR)/xlnx_xdma/.done $(IP_DIR)/xlnx_clk_gen/.done $(IP_DIR)/xlnx_cdc/.done $(IP_DIR)/xlnx_decoupler/.done
 
 $(IP_DIR)/xlnx_xdma/.done:
-	cd $(IP_DIR)/xlnx_xdma && $(VIVADO) $(VIVADO_FLAGS) -source tcl/run.tcl
+	cd $(IP_DIR)/xlnx_xdma && $(VIVADO) -mode batch -nojournal -nolog -source tcl/run.tcl
 	touch $@
 
 $(IP_DIR)/xlnx_clk_gen/.done:
-	cd $(IP_DIR)/xlnx_clk_gen && $(VIVADO) $(VIVADO_FLAGS) -source tcl/run.tcl
+	cd $(IP_DIR)/xlnx_clk_gen && $(VIVADO) -mode batch -nojournal -nolog -source tcl/run.tcl
 	touch $@
 
 $(IP_DIR)/xlnx_cdc/.done:
-	cd $(IP_DIR)/xlnx_cdc && $(VIVADO) $(VIVADO_FLAGS) -source tcl/run.tcl
+	cd $(IP_DIR)/xlnx_cdc && $(VIVADO) -mode batch -nojournal -nolog -source tcl/run.tcl
 	touch $@
 
 $(IP_DIR)/xlnx_decoupler/.done:
-	cd $(IP_DIR)/xlnx_decoupler && $(VIVADO) $(VIVADO_FLAGS) -source tcl/run.tcl
+	cd $(IP_DIR)/xlnx_decoupler && $(VIVADO) -mode batch -nojournal -nolog -source tcl/run.tcl
 	touch $@
 
 # ----------------------------------------------------------------
@@ -79,10 +101,10 @@ SYNTH_TCL := $(SCRIPTS_DIR)/synth.tcl $(BOARD_DIR)/settings.tcl
 synth: $(WORK_DIR)/results/synth.dcp
 
 $(WORK_DIR)/results/synth.dcp: $(TRANSFORMED_V) $(LOOM_RTL) $(SYNTH_XDC) $(SYNTH_TCL) $(IP_DONE) | $(WORK_DIR)
-	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/synth.tcl
+	@$(call vivado_run,synth,$(SCRIPTS_DIR)/synth.tcl)
 
 $(WORK_DIR):
-	mkdir -p $@/results
+	mkdir -p $@/results $@/logs
 
 # ----------------------------------------------------------------
 # Bitstream
@@ -91,7 +113,7 @@ $(WORK_DIR):
 bitstream: $(WORK_DIR)/results/loom_shell.bit
 
 $(WORK_DIR)/results/loom_shell.bit: $(WORK_DIR)/results/synth.dcp
-	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/impl.tcl
+	@$(call vivado_run,impl,$(SCRIPTS_DIR)/impl.tcl)
 
 # ----------------------------------------------------------------
 # DFX — Static build (run once to lock the shell)
@@ -103,15 +125,15 @@ dfx-static: $(DFX_STATIC_DONE)
 
 # Step 1: synthesize static (emu_top as black box)
 $(WORK_DIR)/results/static_synth.dcp: $(LOOM_RTL) $(SYNTH_XDC) $(SYNTH_TCL) $(IP_DONE) | $(WORK_DIR)
-	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/synth_static.tcl
+	@$(call vivado_run,synth_static,$(SCRIPTS_DIR)/synth_static.tcl)
 
 # Step 2: synthesize RM OOC
 $(WORK_DIR)/results/$(RM_NAME)_synth.dcp: $(TRANSFORMED_V) $(IP_DONE) | $(WORK_DIR)
-	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/synth_rm.tcl
+	@$(call vivado_run,synth_rm,$(SCRIPTS_DIR)/synth_rm.tcl)
 
 # Step 3: full DFX P&R — locks static, writes full.bit + rm_partial.bit
 $(DFX_STATIC_DONE): $(WORK_DIR)/results/static_synth.dcp $(WORK_DIR)/results/$(RM_NAME)_synth.dcp
-	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/dfx_impl.tcl
+	@$(call vivado_run,dfx_impl,$(SCRIPTS_DIR)/dfx_impl.tcl)
 
 # ----------------------------------------------------------------
 # DFX — Fast RM swap (reuses locked static_routed.dcp)
@@ -122,7 +144,7 @@ $(DFX_STATIC_DONE): $(WORK_DIR)/results/static_synth.dcp $(WORK_DIR)/results/$(R
 dfx-rm: $(WORK_DIR)/results/$(RM_NAME)_synth.dcp
 	@test -f $(DFX_STATIC_DONE) || \
 	  (echo "ERROR: $(DFX_STATIC_DONE) not found. Run 'make dfx-static' first, or copy static_routed.dcp here."; exit 1)
-	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/dfx_rm.tcl
+	@$(call vivado_run,dfx_rm,$(SCRIPTS_DIR)/dfx_rm.tcl)
 
 # ----------------------------------------------------------------
 # Programming (all modes use scripts/program.tcl)
@@ -130,24 +152,20 @@ dfx-rm: $(WORK_DIR)/results/$(RM_NAME)_synth.dcp
 
 # Non-DFX full JTAG load (legacy flat bitstream)
 program:
-	MODE=jtag BIT_FILE=$(WORK_DIR)/results/loom_shell.bit \
-	  $(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/program.tcl
+	@$(call vivado_run,program,$(SCRIPTS_DIR)/program.tcl,MODE=jtag BIT_FILE=$(WORK_DIR)/results/loom_shell.bit)
 
 # DFX: volatile full load for testing (flash unchanged, reverts on power cycle)
 dfx-program-full:
-	MODE=jtag BIT_FILE=$(WORK_DIR)/results/full.bit \
-	  $(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/program.tcl
+	@$(call vivado_run,program,$(SCRIPTS_DIR)/program.tcl,MODE=jtag BIT_FILE=$(WORK_DIR)/results/full.bit)
 
 # DFX: write full.bit to SPI flash (persistent across power cycles)
 dfx-program-flash:
-	MODE=flash BIT_FILE=$(WORK_DIR)/results/full.bit \
-	  $(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/program.tcl
+	@$(call vivado_run,program,$(SCRIPTS_DIR)/program.tcl,MODE=flash BIT_FILE=$(WORK_DIR)/results/full.bit)
 
 # DFX: swap RP via JTAG partial bitstream (static shell survives)
 dfx-program-rm:
 	@test -n "$(PARTIAL_BIT)" || (echo "ERROR: set PARTIAL_BIT=path/to/partial.bit"; exit 1)
-	MODE=jtag-partial BIT_FILE=$(PARTIAL_BIT) \
-	  $(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/program.tcl
+	@$(call vivado_run,program,$(SCRIPTS_DIR)/program.tcl,MODE=jtag-partial BIT_FILE=$(PARTIAL_BIT))
 
 rescan:
 	sudo $(SCRIPTS_DIR)/pcie_rescan.sh

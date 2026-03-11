@@ -41,12 +41,6 @@ report_timing_summary -file $work_dir/results/dfx_impl_timing.rpt
 report_drc          -file $work_dir/results/dfx_impl_drc.rpt
 
 # ----------------------------------------------------------------
-# Lock static region — bake the lock into the checkpoint so
-# dfx_rm.tcl never needs to call lock_design itself.
-# ----------------------------------------------------------------
-lock_design -level routing
-
-# ----------------------------------------------------------------
 # Outputs
 # ----------------------------------------------------------------
 # Locked static checkpoint — reused for every future RM build

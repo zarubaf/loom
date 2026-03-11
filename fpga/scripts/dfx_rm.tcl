@@ -15,8 +15,10 @@ set rm_name   [expr {[info exists ::env(RM_NAME)] ? $::env(RM_NAME) : "rm"}]
 open_checkpoint $work_dir/results/static_routed.dcp
 
 # Remove initial RM, exposing u_emu_top as a black box
-# (static_routed.dcp already has lock_design baked in from dfx_impl.tcl)
 update_design -cell u_emu_top -black_box
+
+# Lock static region — RM is gone so only static routing gets locked
+lock_design -level routing
 
 # Load new RM into the black box
 read_checkpoint -cell u_emu_top $work_dir/results/${rm_name}_synth.dcp
