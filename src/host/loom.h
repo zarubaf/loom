@@ -152,6 +152,13 @@ namespace reg {
     // Global DPI pending mask (func_idx=1023, one bit per function)
     constexpr uint32_t DpiPendingMask = 0xFFC0;
 
+    // DPI FIFO registers (func_idx=1022, offset 0xFF80)
+    constexpr uint32_t DpiFifoBase      = 0xFF80;
+    constexpr uint32_t DpiFifoStatus    = DpiFifoBase + 0x00;   // REG_STATUS: {level, 14'b0, full, empty}
+    constexpr uint32_t DpiFifoControl   = DpiFifoBase + 0x04;   // REG_CONTROL: {entry_words, threshold}
+    constexpr uint32_t DpiFifoThreshold = DpiFifoBase + 0x08;   // ARG0: threshold write
+    constexpr uint32_t DpiFifoData      = DpiFifoBase + 0x08;   // ARG0+: head entry data words
+
     // Firewall management register offsets (at addr::Firewall = 0x50000)
     constexpr uint32_t FwCtrl            = 0x00;  // bit0=lockdown, bit1=clear_counts, bit2=decouple
     constexpr uint32_t FwStatus          = 0x04;  // bit0=locked, bit1=wr_outstanding, bit2=rd_outstanding, bit3=decouple_status
@@ -337,6 +344,16 @@ public:
     Result<void> dpi_error(uint32_t func_id);
 
     // ========================================================================
+    // DPI FIFO (read-only DPI call buffering)
+    // ========================================================================
+
+    uint32_t fifo_entry_words() const { return fifo_entry_words_; }
+    Result<uint32_t> fifo_status();
+    Result<bool> fifo_is_empty();
+    Result<std::vector<uint32_t>> fifo_pop_entry();
+    Result<void> fifo_set_threshold(uint32_t level);
+
+    // ========================================================================
     // Memory Shadow Access
     // ========================================================================
 
@@ -390,6 +407,7 @@ private:
     uint32_t scan_chain_length_ = 0;
     uint32_t n_memories_ = 0;
     uint32_t shell_version_ = 0;
+    uint32_t fifo_entry_words_ = 0;
     std::array<uint32_t, 8> design_hash_ = {};
 };
 

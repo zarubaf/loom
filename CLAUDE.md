@@ -1,6 +1,10 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # CLAUDE.md — Loom: Open-Source FPGA Emulation Toolchain
 
+## Project Specific
+
+- If the loom shell changes, bump the version according to semantic versioning.
+
 ## Quick Start
 
 ```bash

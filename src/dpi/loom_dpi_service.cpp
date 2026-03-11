@@ -14,7 +14,7 @@ static Logger logger = make_logger("dpi");
 
 void DpiService::register_func(int func_id, std::string_view name, int n_args,
                                 int ret_width, int out_arg_words, bool call_at_init,
-                                DpiCallback callback) {
+                                bool read_only, DpiCallback callback) {
     funcs_.push_back({
         .func_id = func_id,
         .name = std::string(name),
@@ -22,10 +22,11 @@ void DpiService::register_func(int func_id, std::string_view name, int n_args,
         .ret_width = ret_width,
         .out_arg_words = out_arg_words,
         .call_at_init = call_at_init,
+        .read_only = read_only,
         .callback = std::move(callback)
     });
-    logger.debug("Registered function '%.*s' (id=%d, %d args, %d-bit return, %d out words, init=%d)",
-              static_cast<int>(name.size()), name.data(), func_id, n_args, ret_width, out_arg_words, call_at_init);
+    logger.debug("Registered function '%.*s' (id=%d, %d args, %d-bit return, %d out words, init=%d, ro=%d)",
+              static_cast<int>(name.size()), name.data(), func_id, n_args, ret_width, out_arg_words, call_at_init, read_only);
 }
 
 const DpiFunc* DpiService::find_func(int func_id) const {
@@ -41,9 +42,81 @@ const DpiFunc* DpiService::find_func_by_id(int func_id) const {
     return find_func(func_id);
 }
 
+int DpiService::drain_fifo(Context& ctx) {
+    if (ctx.fifo_entry_words() == 0)
+        return 0;  // No FIFO in this design
+
+    int drained = 0;
+    while (true) {
+        auto empty = ctx.fifo_is_empty();
+        if (!empty.ok()) {
+            if (empty.error() == Error::Shutdown)
+                return static_cast<int>(Error::Shutdown);
+            logger.error("FIFO status read failed");
+            return -1;
+        }
+        if (empty.value())
+            break;  // FIFO empty
+
+        // Pop entry: read data words, then write pop command
+        auto entry = ctx.fifo_pop_entry();
+        if (!entry.ok()) {
+            if (entry.error() == Error::Shutdown)
+                return static_cast<int>(Error::Shutdown);
+            logger.error("FIFO pop failed");
+            return -1;
+        }
+
+        const auto& words = entry.value();
+        if (words.empty()) break;
+
+        // Parse: func_id in word[0][7:0], args in word[1..N-1]
+        int func_id = words[0] & 0xFF;
+        const DpiFunc* func = find_func(func_id);
+        if (!func) {
+            logger.error("FIFO: unknown function ID %d", func_id);
+            error_count_++;
+            drained++;
+            continue;
+        }
+
+        if (!func->callback) {
+            logger.error("FIFO: no callback for '%s' (id=%d)", func->name.c_str(), func_id);
+            error_count_++;
+            drained++;
+            continue;
+        }
+
+        // Build args from FIFO words [1..N-1]
+        std::vector<uint32_t> args(ctx.max_dpi_args(), 0);
+        for (uint32_t w = 1; w < words.size() && (w - 1) < args.size(); w++) {
+            args[w - 1] = words[w];
+        }
+
+        std::span<const uint32_t> args_span(args.data(), args.size());
+        std::vector<uint32_t> out_args_buf;  // empty for read-only
+        std::span<uint32_t> out_args(out_args_buf);
+        func->callback(args_span, out_args);
+
+        if (drained < 20 || (drained % 10000 == 0)) {
+            logger.debug("FIFO[%d] '%s' drained#%d", func_id, func->name.c_str(), drained);
+        }
+
+        drained++;
+        call_count_++;
+    }
+
+    return drained;
+}
+
 int DpiService::service_once(Context& ctx) {
     // Set context so user DPI functions can call vpi_control etc.
     current_ctx_ = &ctx;
+
+    // Drain FIFO before servicing regfile calls (preserves ordering)
+    int fifo_rc = drain_fifo(ctx);
+    if (fifo_rc == static_cast<int>(Error::Shutdown))
+        return fifo_rc;
 
     // Poll for pending DPI calls
     auto poll_result = ctx.dpi_poll();
@@ -202,6 +275,8 @@ DpiExitCode DpiService::run(Context& ctx, int /*timeout_ms*/) {
             return DpiExitCode::EmuError;
         }
         if (state_result.value() == State::Frozen) {
+            // Final FIFO drain to flush any remaining entries
+            drain_fifo(ctx);
             logger.info("Emulation frozen, test complete");
             current_ctx_ = nullptr;
             return DpiExitCode::Complete;

@@ -56,7 +56,11 @@ module loom_emu_ctrl #(
     parameter logic [31:0] DESIGN_HASH_4  = 32'h0,
     parameter logic [31:0] DESIGN_HASH_5  = 32'h0,
     parameter logic [31:0] DESIGN_HASH_6  = 32'h0,
-    parameter logic [31:0] DESIGN_HASH_7  = 32'h0
+    parameter logic [31:0] DESIGN_HASH_7  = 32'h0,
+    // DPI FIFO parameters (read-only DPI call buffering)
+    parameter logic [255:0] RO_FUNC_MASK    = '0,
+    parameter int unsigned  FIFO_ENTRY_WORDS = 4,
+    parameter bit           HAS_DPI_FIFO     = 1'b0
 )(
     input  logic        clk_i,
     input  logic        rst_ni,
@@ -109,7 +113,13 @@ module loom_emu_ctrl #(
     output logic        finish_o,
 
     // IRQ output
-    output logic        irq_state_change_o
+    output logic        irq_state_change_o,
+
+    // DPI FIFO write interface (for read-only DPI calls)
+    output logic                              fifo_wr_valid_o,
+    input  logic                              fifo_wr_ready_i,
+    output logic [FIFO_ENTRY_WORDS*32-1:0]    fifo_wr_data_o,
+    input  logic                              fifo_empty_i
 );
 
     // =========================================================================
@@ -158,6 +168,9 @@ module loom_emu_ctrl #(
     dpi_state_e dpi_state_d, dpi_state_q;
     logic [7:0] dpi_func_id_d, dpi_func_id_q;
 
+    // DPI FIFO finish-drain latch: hold finish request until FIFO is empty
+    logic finish_req_latched_d, finish_req_latched_q;
+
     // Derived combinational signals
     logic emu_running;
     logic dpi_ack;
@@ -201,7 +214,24 @@ module loom_emu_ctrl #(
     assign emu_running = (state_q == StRunning) && (time_count_q < time_cmp_q);
 
     assign dpi_ack = (dpi_state_q == StDpiComplete);
-    assign loom_en_o = emu_running && (!dut_dpi_valid_i || dpi_ack);
+
+    // Read-only DPI classification: check RO_FUNC_MASK for current func_id
+    logic dpi_is_readonly;
+    assign dpi_is_readonly = HAS_DPI_FIFO && RO_FUNC_MASK[dut_dpi_func_id_i];
+
+    // Read-only: stall only when FIFO full
+    logic ro_stall;
+    assign ro_stall = dut_dpi_valid_i && dpi_is_readonly && !fifo_wr_ready_i;
+
+    // Read-write: stall via existing DPI state machine
+    logic rw_stall;
+    assign rw_stall = dut_dpi_valid_i && !dpi_is_readonly && !dpi_ack;
+
+    // When finish is latched but FIFO isn't drained, freeze DUT
+    logic finish_wait_fifo;
+    assign finish_wait_fifo = HAS_DPI_FIFO && finish_req_latched_q && !fifo_empty_i;
+
+    assign loom_en_o = emu_running && !ro_stall && !rw_stall && !finish_wait_fifo;
 
     // =========================================================================
     // Emulation State Machine (combinational)
@@ -267,7 +297,7 @@ module loom_emu_ctrl #(
 
         unique case (dpi_state_q)
             StDpiIdle: begin
-                if (dut_dpi_valid_i && emu_running) begin
+                if (dut_dpi_valid_i && emu_running && !dpi_is_readonly) begin
                     dpi_state_d   = StDpiForward;
                     dpi_func_id_d = dut_dpi_func_id_i;
                 end
@@ -334,6 +364,24 @@ module loom_emu_ctrl #(
     assign dut_dpi_ready_o  = dpi_ack;
 
     // =========================================================================
+    // DPI FIFO Write (read-only DPI calls — single-cycle push)
+    // =========================================================================
+
+    // Pack func_id into word[0][7:0], args into word[1..N-1]
+    assign fifo_wr_valid_o = emu_running && dut_dpi_valid_i
+                             && dpi_is_readonly && fifo_wr_ready_i;
+
+    always_comb begin
+        fifo_wr_data_o = '0;
+        // Word 0: func_id in [7:0]
+        fifo_wr_data_o[7:0] = dut_dpi_func_id_i;
+        // Words 1..N-1: args (pack from DUT args bus)
+        for (int w = 0; w < FIFO_ENTRY_WORDS - 1 && w < MAX_ARG_WIDTH / 32; w++) begin
+            fifo_wr_data_o[(w+1)*32 +: 32] = dut_dpi_args_i[w*32 +: 32];
+        end
+    end
+
+    // =========================================================================
     // Counters and Control Registers (combinational next-state)
     // =========================================================================
 
@@ -371,9 +419,25 @@ module loom_emu_ctrl #(
 
         // DUT-initiated finish (only honor while running — combinational
         // DUT outputs may be undefined before the scan chain initializes FFs)
+        // When DPI FIFO is present, latch the request and defer until FIFO is empty.
+        finish_req_latched_d = finish_req_latched_q;
+        if (state_q == StIdle) begin
+            finish_req_latched_d = 1'b0;
+        end
         if (dut_finish_req_i && !finish_reg_q[0] && state_q == StRunning) begin
+            // Check FIFO is truly idle: empty AND no write this cycle
+            if (!HAS_DPI_FIFO || (fifo_empty_i && !fifo_wr_valid_o)) begin
+                finish_reg_d[0]    = 1'b1;
+                finish_reg_d[15:8] = dut_finish_code_i;
+            end else begin
+                // Latch — will set finish_reg when FIFO drains
+                finish_req_latched_d = 1'b1;
+            end
+        end
+        // Deferred finish: FIFO now empty, release
+        if (finish_req_latched_q && fifo_empty_i && !finish_reg_q[0]) begin
             finish_reg_d[0]    = 1'b1;
-            finish_reg_d[15:8] = dut_finish_code_i;
+            finish_reg_d[15:8] = 8'd0;  // exit code not available after latch
         end
 
         // AXI write-side register updates
@@ -408,6 +472,7 @@ module loom_emu_ctrl #(
             finish_reg_q     <= 16'd0;
             dpi_state_q      <= StDpiIdle;
             dpi_func_id_q    <= 8'd0;
+            finish_req_latched_q <= 1'b0;
         end else begin
             state_q          <= state_d;
             cycle_count_q    <= cycle_count_d;
@@ -421,6 +486,7 @@ module loom_emu_ctrl #(
             finish_reg_q     <= finish_reg_d;
             dpi_state_q      <= dpi_state_d;
             dpi_func_id_q    <= dpi_func_id_d;
+            finish_req_latched_q <= finish_req_latched_d;
         end
     end
 
@@ -431,6 +497,10 @@ module loom_emu_ctrl #(
     assign cycle_count_o     = cycle_count_q;
     assign finish_o          = finish_reg_q[0];
     assign irq_state_change_o = state_changed_q && irq_enable_q[2];
+
+    // FIFO IRQ: assert when FIFO has entries pending drain (especially during finish)
+    // This wakes the host to drain the FIFO when a $finish is pending.
+    // The emu_top wires this to irq_o[2].
 
     // =========================================================================
     // AXI-Lite Read Channel (combinational)

@@ -349,6 +349,49 @@ struct LoomInstrumentPass : public Pass {
                 // Stamp DPI function count so emu_top can read it
                 module->set_string_attribute(ID(loom_n_dpi_funcs),
                     std::to_string(module_functions.size()));
+
+                // Classify read-only DPI functions for FIFO optimization
+                int n_ro_dpi_funcs = 0;
+                int max_ro_arg_width = 0;
+                uint64_t ro_func_mask_lo = 0;  // bits [63:0]
+                uint64_t ro_func_mask_hi = 0;  // bits [127:64] (future use)
+
+                for (const auto &func : module_functions) {
+                    if (is_read_only(func)) {
+                        n_ro_dpi_funcs++;
+                        max_ro_arg_width = std::max(max_ro_arg_width, input_arg_width(func));
+                        if (func.func_id < 64)
+                            ro_func_mask_lo |= (1ULL << func.func_id);
+                        else if (func.func_id < 128)
+                            ro_func_mask_hi |= (1ULL << (func.func_id - 64));
+                        log("  Function '%s' (ID %d): read-only (FIFO)\n",
+                            func.name.c_str(), func.func_id);
+                    } else {
+                        log("  Function '%s' (ID %d): read-write (regfile)\n",
+                            func.name.c_str(), func.func_id);
+                    }
+                }
+
+                if (n_ro_dpi_funcs > 0) {
+                    int fifo_entry_words = 1 + (max_ro_arg_width + 31) / 32;
+                    module->set_string_attribute(ID(loom_n_ro_dpi_funcs),
+                        std::to_string(n_ro_dpi_funcs));
+                    module->set_string_attribute(ID(loom_fifo_entry_words),
+                        std::to_string(fifo_entry_words));
+                    module->set_string_attribute(ID(loom_max_ro_arg_width),
+                        std::to_string(max_ro_arg_width));
+
+                    // Store mask as hex strings for emu_top to parse
+                    char mask_buf[40];
+                    std::snprintf(mask_buf, sizeof(mask_buf), "0x%016llx%016llx",
+                        (unsigned long long)ro_func_mask_hi,
+                        (unsigned long long)ro_func_mask_lo);
+                    module->set_string_attribute(ID(loom_ro_func_mask), mask_buf);
+
+                    log("  Read-only DPI: %d functions, max_arg_width=%d, entry_words=%d\n",
+                        n_ro_dpi_funcs, max_ro_arg_width, fifo_entry_words);
+                    log("  RO func mask: %s\n", mask_buf);
+                }
             }
 
             // Process $__loom_finish cells - transform to hardware output
@@ -952,6 +995,17 @@ struct LoomInstrumentPass : public Pass {
         log("  Created loom_finish_o output port\n");
     }
 
+    // Check if a DPI function is read-only (void return, all-input args, not call_at_init).
+    // Read-only functions can use the DPI FIFO path instead of stalling the DUT.
+    bool is_read_only(const DpiFunction &func) {
+        if (func.ret_width != 0) return false;
+        if (func.call_at_init) return false;
+        for (const auto &arg : func.args) {
+            if (arg.direction != "input") return false;
+        }
+        return true;
+    }
+
     // Compute input-only arg width (excluding output arrays).
     int input_arg_width(const DpiFunction &func) {
         int w = 0;
@@ -1399,6 +1453,7 @@ struct LoomInstrumentPass : public Pass {
                 << func.args.size() << ", " << func.ret_width << ", "
                 << out_arg_words(func) << ", "
                 << (func.call_at_init ? 1 : 0) << ", "
+                << (is_read_only(func) ? 1 : 0) << ", "
                 << "_loom_wrap_" << func.name << "_" << func.func_id << " }";
             if (i + 1 < functions.size()) ofs << ",";
             ofs << "\n";

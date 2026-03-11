@@ -277,6 +277,63 @@ Stored in `ScanMap.initial_dpi_calls`:
 | `scan_width`   | uint32            | Width of return value in scan chain      |
 | `string_args`  | map<uint32,string>| Index → compile-time string value        |
 
+## Read-Only DPI FIFO Optimization
+
+Read-only DPI functions (void return, all-input args, not `call_at_init`) can
+use a BRAM-based FIFO instead of stalling the DUT clock for each call. This
+dramatically improves emulation throughput for `$display`-heavy designs.
+
+### Classification
+
+A DPI function is **read-only** iff:
+- `ret_width == 0` (void return)
+- All args have `direction == "input"` (no output arrays)
+- `call_at_init == false`
+
+`loom_instrument` classifies functions and sets module attributes:
+- `loom_n_ro_dpi_funcs` — count of read-only functions
+- `loom_ro_func_mask` — hex bitmask (bit N = func_id N is read-only)
+- `loom_fifo_entry_words` — words per FIFO entry (1 + ceil(max_ro_arg_width/32))
+
+### Hardware: FIFO in `loom_dpi_regfile`
+
+When `HAS_DPI_FIFO=1`, the regfile includes a BRAM-based FIFO (default 1024
+entries). The DUT pushes entries via `emu_ctrl`, which packs `{args, func_id}`
+into a single-cycle write. The DUT only stalls when the FIFO is full.
+
+FIFO registers are at `func_idx=1022` (offset `0xFF80` in the DPI address space):
+
+| Reg       | Offset | R/W | Description                           |
+| --------- | ------ | --- | ------------------------------------- |
+| STATUS    | 0x00   | R   | `{level[15:0], 14'b0, full, empty}`  |
+| CONTROL   | 0x04   | R/W | Read: `{entry_words, threshold}`, Write: `bit0=pop` |
+| DATA[0]   | 0x08   | R   | Head entry word 0 (func_id in [7:0]) |
+| DATA[k]   | 0x08+4k | R  | Head entry word k                    |
+
+### Modified `loom_en_o` in `emu_ctrl`
+
+```
+dpi_is_readonly = HAS_DPI_FIFO && RO_FUNC_MASK[func_id]
+
+ro_stall  = dpi_valid && readonly && !fifo_ready
+rw_stall  = dpi_valid && !readonly && !dpi_ack
+
+loom_en = emu_running && !ro_stall && !rw_stall
+```
+
+### Host-side ordering guarantee
+
+Before servicing any read-write DPI call, `DpiService::service_once()` drains
+the entire FIFO via `drain_fifo()`. This ensures temporal ordering:
+`log(1) < log(2) < add(3,4) < log(5) < ...`
+
+A final `drain_fifo()` also runs when the emulation freezes.
+
+### IRQ
+
+`irq_o[2]` is wired to the FIFO threshold signal. The host can set the
+high-water mark to trigger an interrupt when the FIFO is getting full.
+
 ## `$print` → DPI Transformation
 
 `$display`/`$write` cells are converted to builtin DPI calls:

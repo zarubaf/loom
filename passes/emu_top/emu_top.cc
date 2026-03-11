@@ -149,6 +149,31 @@ struct EmuTopPass : public Pass {
         }
         bool has_memories = (n_memories > 0);
 
+        // Auto-detect DPI FIFO attributes
+        int n_ro_dpi_funcs = 0;
+        int fifo_entry_words = 4;
+        uint64_t ro_func_mask_lo = 0, ro_func_mask_hi = 0;
+        std::string n_ro_str = dut->get_string_attribute(ID(loom_n_ro_dpi_funcs));
+        if (!n_ro_str.empty()) {
+            n_ro_dpi_funcs = atoi(n_ro_str.c_str());
+            std::string s;
+            s = dut->get_string_attribute(ID(loom_fifo_entry_words));
+            if (!s.empty()) fifo_entry_words = atoi(s.c_str());
+
+            // Parse hex mask "0xHHHHHHHHHHHHHHHHLLLLLLLLLLLLLLLL"
+            s = dut->get_string_attribute(ID(loom_ro_func_mask));
+            if (!s.empty() && s.size() > 2) {
+                std::string hex = s.substr(2);  // strip "0x"
+                if (hex.size() >= 32) {
+                    ro_func_mask_hi = std::strtoull(hex.substr(0, 16).c_str(), nullptr, 16);
+                    ro_func_mask_lo = std::strtoull(hex.substr(16, 16).c_str(), nullptr, 16);
+                } else {
+                    ro_func_mask_lo = std::strtoull(hex.c_str(), nullptr, 16);
+                }
+            }
+        }
+        bool has_dpi_fifo = (n_ro_dpi_funcs > 0);
+
         // Auto-detect clock name from tbx clkgen detection
         std::string tbx_clk = dut->get_string_attribute(RTLIL::IdString("\\loom_tbx_clk"));
         if (!tbx_clk.empty()) {
@@ -419,6 +444,22 @@ struct EmuTopPass : public Pass {
         RTLIL::Wire *dpi_ret_data = wrapper->addWire(ID(dpi_ret_data), n_dpi * ret_data_per_func);
         RTLIL::Wire *dpi_stall = wrapper->addWire(ID(dpi_stall), n_dpi);
 
+        // DPI FIFO wires (between emu_ctrl and dpi_regfile)
+        RTLIL::Wire *fifo_wr_valid_w = nullptr;
+        RTLIL::Wire *fifo_wr_ready_w = nullptr;
+        RTLIL::Wire *fifo_wr_data_w  = nullptr;
+        RTLIL::Wire *fifo_full_w     = nullptr;
+        RTLIL::Wire *fifo_empty_w    = nullptr;
+        RTLIL::Wire *fifo_threshold_w = nullptr;
+        if (has_dpi_fifo) {
+            fifo_wr_valid_w  = wrapper->addWire(ID(fifo_wr_valid), 1);
+            fifo_wr_ready_w  = wrapper->addWire(ID(fifo_wr_ready), 1);
+            fifo_wr_data_w   = wrapper->addWire(ID(fifo_wr_data), fifo_entry_words * 32);
+            fifo_full_w      = wrapper->addWire(ID(fifo_full), 1);
+            fifo_empty_w     = wrapper->addWire(ID(fifo_empty), 1);
+            fifo_threshold_w = wrapper->addWire(ID(fifo_threshold), 1);
+        }
+
         // DUT DPI interface wires (connected through emu_ctrl)
         RTLIL::Wire *dut_dpi_valid_w = wrapper->addWire(ID(dut_dpi_valid), 1);
         RTLIL::Wire *dut_dpi_ack = wrapper->addWire(ID(dut_dpi_ack), 1);
@@ -517,6 +558,22 @@ struct EmuTopPass : public Pass {
             std::snprintf(pname, sizeof(pname), "DESIGN_HASH_%d", i);
             emu_ctrl->setParam(RTLIL::escape_id(pname), (int)hash_words[i]);
         }
+        // FIFO parameters
+        if (has_dpi_fifo) {
+            // Build RO_FUNC_MASK as a 256-bit parameter
+            RTLIL::Const ro_mask(0, 256);
+            for (int b = 0; b < 64; b++) {
+                if (ro_func_mask_lo & (1ULL << b))
+                    ro_mask.bits()[b] = RTLIL::State::S1;
+            }
+            for (int b = 0; b < 64; b++) {
+                if (ro_func_mask_hi & (1ULL << b))
+                    ro_mask.bits()[64 + b] = RTLIL::State::S1;
+            }
+            emu_ctrl->setParam(ID(RO_FUNC_MASK), ro_mask);
+            emu_ctrl->setParam(ID(FIFO_ENTRY_WORDS), fifo_entry_words);
+            emu_ctrl->setParam(ID(HAS_DPI_FIFO), 1);
+        }
         emu_ctrl->setPort(ID(clk_i), clk_i);
         emu_ctrl->setPort(ID(rst_ni), rst_ni);
         // AXI-Lite (from demux master 0)
@@ -558,6 +615,21 @@ struct EmuTopPass : public Pass {
         emu_ctrl->setPort(ID(cycle_count_o), cycle_count);
         emu_ctrl->setPort(ID(finish_o), emu_finish);
         emu_ctrl->setPort(ID(irq_state_change_o), irq_state_change);
+        // FIFO ports
+        if (has_dpi_fifo) {
+            emu_ctrl->setPort(ID(fifo_wr_valid_o), fifo_wr_valid_w);
+            emu_ctrl->setPort(ID(fifo_wr_ready_i), fifo_wr_ready_w);
+            emu_ctrl->setPort(ID(fifo_wr_data_o), fifo_wr_data_w);
+            emu_ctrl->setPort(ID(fifo_empty_i), fifo_empty_w);
+        } else {
+            // When no FIFO, connect dummy wires / constants
+            RTLIL::Wire *dummy_fifo_valid = wrapper->addWire(NEW_ID, 1);
+            RTLIL::Wire *dummy_fifo_data = wrapper->addWire(NEW_ID, fifo_entry_words * 32);
+            emu_ctrl->setPort(ID(fifo_wr_valid_o), dummy_fifo_valid);
+            emu_ctrl->setPort(ID(fifo_wr_ready_i), RTLIL::SigSpec(RTLIL::State::S0));
+            emu_ctrl->setPort(ID(fifo_wr_data_o), dummy_fifo_data);
+            emu_ctrl->setPort(ID(fifo_empty_i), RTLIL::SigSpec(RTLIL::State::S1));
+        }
 
         // =========================================================================
         // Instantiate DPI Register File
@@ -565,6 +637,11 @@ struct EmuTopPass : public Pass {
         RTLIL::Cell *dpi_regfile = wrapper->addCell(ID(u_dpi_regfile), ID(loom_dpi_regfile));
         dpi_regfile->setParam(ID(N_DPI_FUNCS), n_dpi_funcs > 0 ? n_dpi_funcs : 1);
         dpi_regfile->setParam(ID(MAX_ARGS), max_args);
+        if (has_dpi_fifo) {
+            dpi_regfile->setParam(ID(HAS_DPI_FIFO), 1);
+            dpi_regfile->setParam(ID(FIFO_ENTRY_WORDS), fifo_entry_words);
+            dpi_regfile->setParam(ID(FIFO_DEPTH_LOG2), 10);  // 1024 entries
+        }
         dpi_regfile->setPort(ID(clk_i), clk_i);
         dpi_regfile->setPort(ID(rst_ni), rst_ni);
         dpi_regfile->setPort(ID(axil_araddr_i), slice(demux_araddr, 1, addr_width));
@@ -590,6 +667,22 @@ struct EmuTopPass : public Pass {
         dpi_regfile->setPort(ID(dpi_ret_ready_i), dpi_ret_ready);
         dpi_regfile->setPort(ID(dpi_ret_data_o), dpi_ret_data);
         dpi_regfile->setPort(ID(dpi_stall_o), dpi_stall);
+        // FIFO ports on regfile
+        if (has_dpi_fifo) {
+            dpi_regfile->setPort(ID(fifo_wr_valid_i), fifo_wr_valid_w);
+            dpi_regfile->setPort(ID(fifo_wr_ready_o), fifo_wr_ready_w);
+            dpi_regfile->setPort(ID(fifo_wr_data_i), fifo_wr_data_w);
+            dpi_regfile->setPort(ID(fifo_full_o), fifo_full_w);
+            dpi_regfile->setPort(ID(fifo_empty_o), fifo_empty_w);
+            dpi_regfile->setPort(ID(fifo_threshold_o), fifo_threshold_w);
+        } else {
+            dpi_regfile->setPort(ID(fifo_wr_valid_i), RTLIL::SigSpec(RTLIL::State::S0));
+            dpi_regfile->setPort(ID(fifo_wr_ready_o), RTLIL::SigSpec());
+            dpi_regfile->setPort(ID(fifo_wr_data_i), RTLIL::SigSpec(RTLIL::State::S0, fifo_entry_words * 32));
+            dpi_regfile->setPort(ID(fifo_full_o), RTLIL::SigSpec());
+            dpi_regfile->setPort(ID(fifo_empty_o), RTLIL::SigSpec());
+            dpi_regfile->setPort(ID(fifo_threshold_o), RTLIL::SigSpec());
+        }
 
         // =========================================================================
         // Instantiate Scan Controller
@@ -816,7 +909,12 @@ struct EmuTopPass : public Pass {
         RTLIL::SigSpec irq_sig;
         irq_sig.append(RTLIL::SigSpec(irq_dpi));           // IRQ[0]
         irq_sig.append(RTLIL::SigSpec(irq_state_change));  // IRQ[1]
-        irq_sig.append(RTLIL::SigSpec(RTLIL::State::S0, n_irq - 2));  // IRQ[15:2]
+        if (has_dpi_fifo) {
+            irq_sig.append(RTLIL::SigSpec(fifo_threshold_w));  // IRQ[2] = FIFO threshold
+            irq_sig.append(RTLIL::SigSpec(RTLIL::State::S0, n_irq - 3));  // IRQ[15:3]
+        } else {
+            irq_sig.append(RTLIL::SigSpec(RTLIL::State::S0, n_irq - 2));  // IRQ[15:2]
+        }
         wrapper->connect(RTLIL::SigSpec(irq_o), irq_sig);
 
         // =========================================================================
@@ -830,8 +928,18 @@ struct EmuTopPass : public Pass {
         wrapper->addNot(NEW_ID, RTLIL::SigSpec(scan_busy), RTLIL::SigSpec(not_scan_busy));
         wrapper->addAnd(NEW_ID, RTLIL::SigSpec(dut_finish), RTLIL::SigSpec(loom_en_wire), RTLIL::SigSpec(dut_finish_gated));
         wrapper->addAnd(NEW_ID, RTLIL::SigSpec(dut_finish_gated), RTLIL::SigSpec(not_scan_busy), RTLIL::SigSpec(dut_finish_masked));
+
+        // When DPI FIFO is present, the DUT finish is deferred by emu_ctrl until
+        // the FIFO is drained. Use only emu_finish (from emu_ctrl's finish_reg)
+        // as the finish source; dut_finish_masked is only sent to emu_ctrl for
+        // latching, not directly to the shell.
         RTLIL::Wire *combined_finish = wrapper->addWire(NEW_ID, 1);
-        wrapper->addOr(NEW_ID, RTLIL::SigSpec(emu_finish), RTLIL::SigSpec(dut_finish_masked), RTLIL::SigSpec(combined_finish));
+        if (has_dpi_fifo) {
+            // emu_ctrl handles finish delay — only use its output
+            wrapper->connect(RTLIL::SigSpec(combined_finish), RTLIL::SigSpec(emu_finish));
+        } else {
+            wrapper->addOr(NEW_ID, RTLIL::SigSpec(emu_finish), RTLIL::SigSpec(dut_finish_masked), RTLIL::SigSpec(combined_finish));
+        }
         wrapper->connect(RTLIL::SigSpec(finish_o), RTLIL::SigSpec(combined_finish));
 
         wrapper->fixup_ports();
@@ -844,6 +952,9 @@ struct EmuTopPass : public Pass {
         if (has_memories)
             log("  Instantiated: loom_mem_ctrl (u_mem_ctrl) - %d memories, %u bytes\n",
                 n_memories, shadow_total_bytes);
+        if (has_dpi_fifo)
+            log("  DPI FIFO: %d read-only functions, entry_words=%d\n",
+                n_ro_dpi_funcs, fifo_entry_words);
         log("  Instantiated: %s (u_dut) - clock free-running, loom_en for FF enable\n", top_name.c_str());
     }
 };

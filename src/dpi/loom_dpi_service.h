@@ -31,6 +31,7 @@ typedef struct {
     int ret_width;                  // Return value width in bits (0 for void)
     int out_arg_words;              // Number of 32-bit output open array words (0 if none)
     int call_at_init;               // Execute before emulation starts (initial/reset DPI)
+    int read_only;                  // 1 = uses DPI FIFO path (void return, all-input args)
     loom_dpi_callback_t callback;   // User-provided callback
 } loom_dpi_func_t;
 
@@ -69,6 +70,7 @@ struct DpiFunc {
     int ret_width;              // Return value width in bits (0 for void)
     int out_arg_words = 0;      // Number of 32-bit output open array words
     bool call_at_init = false;  // Execute before emulation starts (initial/reset DPI)
+    bool read_only = false;     // Uses DPI FIFO path (void return, all-input args)
     DpiCallback callback;       // User-provided callback
 };
 
@@ -103,7 +105,7 @@ public:
     // Register a DPI function
     void register_func(int func_id, std::string_view name, int n_args,
                        int ret_width, int out_arg_words, bool call_at_init,
-                       DpiCallback callback);
+                       bool read_only, DpiCallback callback);
 
     // Register functions from a C-style array (for compatibility with generated code)
     template<typename T>
@@ -111,7 +113,7 @@ public:
         for (int i = 0; i < n_funcs; i++) {
             register_func(funcs[i].func_id, funcs[i].name, funcs[i].n_args,
                           funcs[i].ret_width, funcs[i].out_arg_words,
-                          funcs[i].call_at_init,
+                          funcs[i].call_at_init, funcs[i].read_only,
                           [cb = funcs[i].callback](std::span<const uint32_t> args,
                                                     std::span<uint32_t> out_args) {
                               return cb(args.data(), out_args.data());
@@ -124,6 +126,10 @@ public:
     // timeout_ms: Maximum time to wait for DPI calls (0 = infinite)
     // Returns: Exit code indicating why the loop terminated
     DpiExitCode run(Context& ctx, int timeout_ms = 0);
+
+    // Drain all entries from the DPI FIFO (read-only DPI calls).
+    // Returns number of entries drained, or negative on error.
+    int drain_fifo(Context& ctx);
 
     // Service a single round of DPI calls (non-blocking)
     // Returns number of calls serviced, or negative on error

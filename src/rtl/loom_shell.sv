@@ -154,8 +154,9 @@ module loom_shell (
     wire [N_IRQ-1:0] irq    = irq_sync_q2;
     wire              finish = finish_sync_q2;
 
-    // XDMA user IRQ: DPI stall (irq[0]) OR state change (irq[1])
-    wire              usr_irq = irq[0] | irq[1];
+    // XDMA user IRQ: OR all sources (DPI stall, state change, FIFO threshold, etc.)
+    // Pass full IRQ vector for BFM via loom_irq_i port.
+    wire              usr_irq = |irq;  // FPGA: single-bit OR for XDMA MSI
 
     xlnx_xdma u_xdma (
         .sys_clk    (pcie_refclk),
@@ -237,6 +238,7 @@ module loom_shell (
         .msi_vector_width (),
 `ifndef XILINX
         .loom_finish_i    (finish),
+        .loom_irq_i       (irq),
 `endif
         // Config management — unused
         .cfg_mgmt_addr           (19'd0),

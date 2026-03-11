@@ -86,6 +86,9 @@ module xlnx_xdma (
     output wire [2:0]  msi_vector_width,
     input  wire        loom_finish_i,
 
+    // Full IRQ vector from shell synchronizer (for BFM interrupt delivery)
+    input  wire [N_IRQ-1:0] loom_irq_i,
+
     // Config management
     input  wire [18:0] cfg_mgmt_addr,
     input  wire        cfg_mgmt_write,
@@ -205,9 +208,11 @@ module xlnx_xdma (
 
     wire                  bfm_shutdown;
 
+    // IRQ vector for the BFM. Use the full synchronized IRQ from the shell
+    // (passed via loom_irq_i port) rather than the single-bit usr_irq_req.
     wire [15:0] loom_irq;
 
-    assign loom_irq = {15'd0, usr_irq_req[0]};
+    assign loom_irq = loom_irq_i;
 
     loom_axil_socket_bfm #(
         .ADDR_WIDTH (ADDR_WIDTH),

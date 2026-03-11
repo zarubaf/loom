@@ -17,8 +17,11 @@
 //   addr[5:0]  = register within function
 
 module loom_dpi_regfile #(
-    parameter int unsigned N_DPI_FUNCS = 1,
-    parameter int unsigned MAX_ARGS    = 8
+    parameter int unsigned N_DPI_FUNCS      = 1,
+    parameter int unsigned MAX_ARGS         = 8,
+    parameter bit          HAS_DPI_FIFO     = 1'b0,
+    parameter int unsigned FIFO_ENTRY_WORDS = 4,
+    parameter int unsigned FIFO_DEPTH_LOG2  = 10
 )(
     input  logic        clk_i,
     input  logic        rst_ni,
@@ -56,7 +59,15 @@ module loom_dpi_regfile #(
     output logic [N_DPI_FUNCS-1:0][64+MAX_ARGS*32-1:0] dpi_ret_data_o,
 
     // Stall output (active high = at least one DPI call pending)
-    output logic [N_DPI_FUNCS-1:0]         dpi_stall_o
+    output logic [N_DPI_FUNCS-1:0]         dpi_stall_o,
+
+    // DPI FIFO write interface (from emu_ctrl, read-only DPI calls)
+    input  logic                              fifo_wr_valid_i,
+    output logic                              fifo_wr_ready_o,
+    input  logic [FIFO_ENTRY_WORDS*32-1:0]    fifo_wr_data_i,
+    output logic                              fifo_full_o,
+    output logic                              fifo_empty_o,
+    output logic                              fifo_threshold_o
 );
 
     // =========================================================================
@@ -128,6 +139,11 @@ module loom_dpi_regfile #(
     assign wr_pending = wr_addr_valid_q && wr_data_valid_q && !axil_bvalid_o
                         && (wr_func_idx < N_DPI_FUNCS);
 
+    // FIFO write decode (func_idx == 1022)
+    logic wr_fifo_pending;
+    assign wr_fifo_pending = wr_addr_valid_q && wr_data_valid_q && !axil_bvalid_o
+                             && (wr_func_idx == 10'd1022);
+
     // Combinational next-state (merges DPI call events + host AXI writes)
     always_comb begin
         for (int i = 0; i < N_DPI_FUNCS; i++) begin
@@ -184,6 +200,89 @@ module loom_dpi_regfile #(
     end
 
     // =========================================================================
+    // DPI FIFO (read-only DPI call buffering)
+    // =========================================================================
+
+    // Signals exported from FIFO generate block for use in AXI read decode
+    logic [15:0] fifo_rd_level;
+    logic [15:0] fifo_rd_threshold;
+    logic [31:0] fifo_rd_head_word;
+
+    generate if (HAS_DPI_FIFO) begin : gen_fifo
+        localparam int DEPTH = 2**FIFO_DEPTH_LOG2;
+
+        logic [FIFO_ENTRY_WORDS*32-1:0] fifo_mem [0:DEPTH-1];
+        logic [FIFO_DEPTH_LOG2:0] wr_ptr_q, rd_ptr_q;
+        logic [FIFO_DEPTH_LOG2:0] level;
+        logic [FIFO_DEPTH_LOG2:0] threshold_q;
+
+        assign level = wr_ptr_q - rd_ptr_q;
+        assign fifo_full_o = (level == DEPTH[FIFO_DEPTH_LOG2:0]);
+        assign fifo_empty_o = (level == '0);
+        assign fifo_wr_ready_o = !fifo_full_o;
+        assign fifo_threshold_o = (level >= threshold_q);
+
+        // Export signals for AXI read decode (avoid hierarchical refs)
+        assign fifo_rd_level = level[15:0];
+        assign fifo_rd_threshold = threshold_q[15:0];
+
+        // Head entry word read (selected by rd_reg_idx in AXI decode)
+        // Unpack head entry into an array of 32-bit words for indexed read
+        logic [31:0] head_words [0:FIFO_ENTRY_WORDS-1];
+        for (genvar w = 0; w < FIFO_ENTRY_WORDS; w++) begin : gen_head_words
+            assign head_words[w] = fifo_mem[rd_ptr_q[FIFO_DEPTH_LOG2-1:0]][w*32 +: 32];
+        end
+        always_comb begin
+            fifo_rd_head_word = 32'h0;
+            if (!fifo_empty_o && (rd_reg_idx >= REG_ARG0) &&
+                (rd_reg_idx < REG_ARG0 + FIFO_ENTRY_WORDS[5:0])) begin
+                fifo_rd_head_word = head_words[rd_reg_idx - REG_ARG0];
+            end
+        end
+
+        // Write side (from emu_ctrl)
+        always_ff @(posedge clk_i or negedge rst_ni) begin
+            if (!rst_ni) begin
+                wr_ptr_q <= '0;
+            end else if (fifo_wr_valid_i && fifo_wr_ready_o) begin
+                fifo_mem[wr_ptr_q[FIFO_DEPTH_LOG2-1:0]] <= fifo_wr_data_i;
+                wr_ptr_q <= wr_ptr_q + 1;
+            end
+        end
+
+        // Read side (host pop via AXI write to func_idx=1022, CONTROL, bit0)
+        always_ff @(posedge clk_i or negedge rst_ni) begin
+            if (!rst_ni) begin
+                rd_ptr_q    <= '0;
+                threshold_q <= {{FIFO_DEPTH_LOG2{1'b0}}, 1'b1};  // default: 1 (trigger on any entry)
+            end else begin
+                if (wr_fifo_pending) begin
+                    case (wr_reg_idx)
+                        REG_CONTROL: begin
+                            // bit0 = pop
+                            if (wr_data_q[0] && !fifo_empty_o)
+                                rd_ptr_q <= rd_ptr_q + 1;
+                        end
+                        REG_ARG0: begin
+                            // Threshold register write
+                            threshold_q <= wr_data_q[FIFO_DEPTH_LOG2:0];
+                        end
+                        default: ;
+                    endcase
+                end
+            end
+        end
+    end else begin : gen_no_fifo
+        assign fifo_wr_ready_o  = 1'b0;
+        assign fifo_full_o      = 1'b0;
+        assign fifo_empty_o     = 1'b1;
+        assign fifo_threshold_o = 1'b0;
+        assign fifo_rd_level     = 16'b0;
+        assign fifo_rd_threshold = 16'b0;
+        assign fifo_rd_head_word = 32'h0;
+    end endgenerate
+
+    // =========================================================================
     // AXI-Lite Read Interface
     // =========================================================================
 
@@ -220,6 +319,32 @@ module loom_dpi_regfile #(
                     axil_rdata_o <= 32'd0;
                     for (int i = 0; i < N_DPI_FUNCS && i < 32; i++)
                         axil_rdata_o[i] <= func_state_q[i].pending & ~func_state_q[i].done;
+                end else if (rd_func_idx == 10'd1022 && HAS_DPI_FIFO) begin
+                    // FIFO registers at func_idx=1022
+                    case (rd_reg_idx)
+                        REG_STATUS: begin
+                            // {level[15:0], 14'b0, full, empty}
+                            axil_rdata_o <= {fifo_rd_level[15:0],
+                                             14'b0,
+                                             fifo_full_o,
+                                             fifo_empty_o};
+                        end
+                        REG_CONTROL: begin
+                            // {entry_words[15:0], threshold[15:0]}
+                            axil_rdata_o <= {FIFO_ENTRY_WORDS[15:0],
+                                             fifo_rd_threshold[15:0]};
+                        end
+                        default: begin
+                            // REG_ARG0 + k: head entry data words
+                            if (rd_reg_idx >= REG_ARG0 &&
+                                rd_reg_idx < REG_ARG0 + FIFO_ENTRY_WORDS[5:0] &&
+                                !fifo_empty_o) begin
+                                axil_rdata_o <= fifo_rd_head_word;
+                            end else begin
+                                axil_rdata_o <= 32'hDEAD_BEEF;
+                            end
+                        end
+                    endcase
                 end else if (rd_func_idx < N_DPI_FUNCS) begin
                     case (rd_reg_idx)
                         REG_STATUS: axil_rdata_o <= {29'd0,
@@ -279,10 +404,18 @@ module loom_dpi_regfile #(
             end
 
             if (wr_addr_valid_q && wr_data_valid_q && !axil_bvalid_o) begin
-                wr_addr_valid_q <= 1'b0;
-                wr_data_valid_q <= 1'b0;
-                axil_bvalid_o   <= 1'b1;
-                axil_bresp_o    <= 2'b00;
+                // Accept writes to valid function indices, pending mask, or FIFO
+                if (wr_func_idx < N_DPI_FUNCS || wr_func_idx == 10'd1022 || wr_func_idx == 10'd1023) begin
+                    wr_addr_valid_q <= 1'b0;
+                    wr_data_valid_q <= 1'b0;
+                    axil_bvalid_o   <= 1'b1;
+                    axil_bresp_o    <= 2'b00;
+                end else begin
+                    wr_addr_valid_q <= 1'b0;
+                    wr_data_valid_q <= 1'b0;
+                    axil_bvalid_o   <= 1'b1;
+                    axil_bresp_o    <= 2'b10;  // SLVERR for invalid addresses
+                end
             end
 
             if (axil_bvalid_o && axil_bready_i) begin

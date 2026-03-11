@@ -255,6 +255,17 @@ set_tests_properties(e2e_shell_regaccess PROPERTIES
     ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
 )
 
+# End-to-end DPI FIFO test using loomc/loomx
+add_test(NAME e2e_dpi_fifo
+    COMMAND make test
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/e2e_dpi_fifo
+)
+set_tests_properties(e2e_dpi_fifo PROPERTIES
+    DEPENDS "yosys_ext;yosys_slang_ext;reset_extract;scan_insert;loom_instrument;emu_top;loomc;loomx;verilator_ext"
+    TIMEOUT 300
+    ENVIRONMENT "LOOM_HOME=${CMAKE_SOURCE_DIR};VERILATOR=${VERILATOR_BIN}"
+)
+
 # End-to-end assertion test using loomc/loomx
 add_test(NAME e2e_assert
     COMMAND make test

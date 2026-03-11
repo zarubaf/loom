@@ -512,6 +512,9 @@ Consider a DUT with one DPI call and one `$finish`:
 |-----------|--------|-------------|
 | `loom_resets_extracted` | `reset_extract` | Confirms reset processing done |
 | `loom_n_dpi_funcs` | `loom_instrument` | Total DPI function count |
+| `loom_n_ro_dpi_funcs` | `loom_instrument` | Read-only DPI function count (FIFO candidates) |
+| `loom_ro_func_mask` | `loom_instrument` | Hex bitmask of read-only func_ids |
+| `loom_fifo_entry_words` | `loom_instrument` | Words per FIFO entry |
 | `loom_scan_chain_length` | `scan_insert` | Total scan chain bits |
 | `loom_tbx_clk` | yosys-slang | Auto-detected clock port name |
 

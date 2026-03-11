@@ -84,6 +84,17 @@ Result<void> Context::connect(std::string_view target, uint32_t freq_mhz) {
     if (!val.ok()) return val.error();
     n_memories_ = val.value();
 
+    // Read DPI FIFO entry words (0 if no FIFO present)
+    // CONTROL register at func_idx=1022: {entry_words[31:16], threshold[15:0]}
+    // When no FIFO is present, regfile returns 0xDEAD_BEEF for unknown addresses.
+    val = read32(addr::DpiRegfile + reg::DpiFifoControl);
+    if (val.ok() && val.value() != 0xDEADBEEF) {
+        uint32_t ew = (val.value() >> 16) & 0xFFFF;
+        fifo_entry_words_ = (ew > 0 && ew <= 16) ? ew : 0;
+    } else {
+        fifo_entry_words_ = 0;  // No FIFO or read failed
+    }
+
     // Read 8-word design hash
     for (int i = 0; i < 8; i++) {
         val = read32(addr::EmuCtrl + reg::DesignHash0 + i * 4);
@@ -91,10 +102,10 @@ Result<void> Context::connect(std::string_view target, uint32_t freq_mhz) {
         design_hash_[i] = val.value();
     }
 
-    logger.info("Connected. Shell: %s, Hash: %.16s..., DPI funcs: %u, Scan bits: %u, Memories: %u",
+    logger.info("Connected. Shell: %s, Hash: %.16s..., DPI funcs: %u, Scan bits: %u, Memories: %u, FIFO words: %u",
              version_string(shell_version_).c_str(),
              design_hash_hex().c_str(),
-             n_dpi_funcs_, scan_chain_length_, n_memories_);
+             n_dpi_funcs_, scan_chain_length_, n_memories_, fifo_entry_words_);
 
     return {};
 }
@@ -393,6 +404,43 @@ Result<void> Context::dpi_error(uint32_t func_id) {
 
     return write32(dpi_func_addr(func_id, reg::DpiControl),
                    ctrl::DpiSetDone | ctrl::DpiSetError);
+}
+
+// ============================================================================
+// DPI FIFO
+// ============================================================================
+
+Result<uint32_t> Context::fifo_status() {
+    return read32(addr::DpiRegfile + reg::DpiFifoStatus);
+}
+
+Result<bool> Context::fifo_is_empty() {
+    auto val = fifo_status();
+    if (!val.ok()) return val.error();
+    return (val.value() & 0x1) != 0;  // bit 0 = empty
+}
+
+Result<std::vector<uint32_t>> Context::fifo_pop_entry() {
+    if (fifo_entry_words_ == 0)
+        return Error::NotSupported;
+
+    std::vector<uint32_t> data(fifo_entry_words_);
+    // Read head entry data words (at ARG0 + k*4)
+    for (uint32_t k = 0; k < fifo_entry_words_; k++) {
+        auto val = read32(addr::DpiRegfile + reg::DpiFifoData + k * 4);
+        if (!val.ok()) return val.error();
+        data[k] = val.value();
+    }
+
+    // Pop: write bit0 to CONTROL register
+    auto rc = write32(addr::DpiRegfile + reg::DpiFifoControl, 0x1);
+    if (!rc.ok()) return rc.error();
+
+    return data;
+}
+
+Result<void> Context::fifo_set_threshold(uint32_t level) {
+    return write32(addr::DpiRegfile + reg::DpiFifoThreshold, level);
 }
 
 // ============================================================================
