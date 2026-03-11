@@ -64,7 +64,7 @@ Design documentation lives in `doc/`:
 - `doc/e2e-test.md` - End-to-end test guide
 - `doc/fpga-support.md` - FPGA build flow and architecture
 - `doc/shutdown-spec.md` - Clean shutdown mechanism ($finish, host finish)
-- `doc/assertions.md` - Synthesizable assertions (assert, assert property, else clauses)
+- `doc/assertions.md` - Synthesizable assertions (assert, assert property, ##N sequences, implications, $rose/$fell/$stable)
 
 **Keep documentation up-to-date.** When making significant changes to a component, update the corresponding documentation in `doc/`.
 

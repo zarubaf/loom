@@ -99,6 +99,47 @@ module assert_test (
     );
 
     // ================================================================
+    // Sequence assertions (SVA — ##N delays, implications)
+    // ================================================================
+
+    // S1: When counter is 5 (Idle->Active transition), state must be Active
+    //     one cycle later. (always passes)
+    s1_idle_to_active: assert property (
+        @(posedge clk_i) disable iff (!rst_ni)
+        (cnt_q == 8'd5) |-> ##1 (state_q == StActive)
+    );
+
+    // S2: Overlapping implication — when Active, counter must be non-zero.
+    //     (always passes since Active starts at cnt=6)
+    s2_active_cnt: assert property (
+        @(posedge clk_i) disable iff (!rst_ni)
+        (state_q == StActive) |-> (cnt_q > 8'd0)
+    );
+
+    // S3: When counter is 15 (Active->Done), state must be Done two
+    //     cycles later. (always passes)
+    s3_active_to_done: assert property (
+        @(posedge clk_i) disable iff (!rst_ni)
+        (cnt_q == 8'd15) |-> ##2 (state_q == StDone)
+    );
+
+    // S4: $rose/$fell — detect state transitions.
+    //     When reset deasserts ($rose(rst_ni)), state must be Idle.
+    //     (always passes)
+    always_ff @(posedge clk_i) begin
+        if ($rose(rst_ni))
+            s4_rst_deassert: assert (state_q == StIdle);
+    end
+
+    // S5: $stable — counter previous value stability check.
+    //     When counter is 0, cnt_prev_q must be stable (both 0 after reset).
+    //     This trivially passes at the first cycle after reset.
+    always_ff @(posedge clk_i) begin
+        if (rst_ni && cnt_q == 8'd1)
+            s5_prev_stable: assert ($past(cnt_prev_q) == 8'd0);
+    end
+
+    // ================================================================
     // Immediate assertions
     // ================================================================
 
