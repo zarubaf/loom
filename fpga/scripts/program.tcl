@@ -42,8 +42,7 @@ if {$mode eq "jtag"} {
     puts "JTAG load complete (volatile)."
 
 } elseif {$mode eq "jtag-partial"} {
-    set_property PROGRAM.FILE    $bit_file $device
-    set_property PROGRAM.PARTIAL 1         $device
+    set_property PROGRAM.FILE $bit_file $device
     program_hw_devices $device
     puts "Partial reconfiguration complete."
 
