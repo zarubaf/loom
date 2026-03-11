@@ -94,7 +94,11 @@ module xlnx_clk_gen (
     end
     // verilator lint_on STMTDLY
 
-    assign clk_out1 = clk_reg;
+    // In simulation, use s_axi_aclk (= aclk from XDMA BFM) as the output clock.
+    // The CDC BFM is a wire passthrough, so emu_clk must be the same clock as
+    // aclk to avoid cross-domain timing issues. On FPGA, the real Clocking Wizard
+    // IP generates a properly synchronized output clock.
+    assign clk_out1 = s_axi_aclk;
 
     // =========================================================================
     // Lock behavior — deassert for 10 output clk cycles after reconfig
