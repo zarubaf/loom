@@ -12,3 +12,4 @@ ip/*/.Xil/
 *.xci
 *xpr
 clockInfo.txt
+hd_visual/

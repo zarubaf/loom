@@ -727,6 +727,7 @@ module loom_shell (
     // 8. Loom Emulation Top (emu_clk domain)
     // =========================================================================
 
+    (* DONT_TOUCH = "yes" *)
     loom_emu_top u_emu_top (
         .clk_i  (emu_clk),
         .rst_ni (emu_rst_n),

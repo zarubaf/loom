@@ -9,7 +9,7 @@ BOARD_DIR    := $(FPGA_DIR)/boards/u250
 SCRIPTS_DIR  := $(FPGA_DIR)/scripts
 WORK_DIR     := $(FPGA_DIR)/work-u250
 
-VIVADO       ?= /opt/eda/ubuntu-24.04/xilinx/Vivado/2024.1/bin/vivado
+VIVADO       ?= /opt/eda/xilinx/Vivado/2024.1/bin/vivado
 VIVADO_FLAGS := -mode batch -nojournal -nolog
 
 # Transformed DUT (user must supply or use tests/e2e to generate)
@@ -28,8 +28,9 @@ export BOARD_DIR
 export IP_DIR
 export WORK_DIR
 export TRANSFORMED_V
+export RM_NAME ?= rm
 
-.PHONY: all ip synth bitstream program driver driver-load driver-unload rescan clean
+.PHONY: all ip synth bitstream program driver driver-load driver-unload rescan dfx-static dfx-rm dfx-program-flash dfx-program-rm clean
 
 all: bitstream
 
@@ -91,6 +92,46 @@ bitstream: $(WORK_DIR)/results/loom_shell.bit
 
 $(WORK_DIR)/results/loom_shell.bit: $(WORK_DIR)/results/synth.dcp
 	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/impl.tcl
+
+# ----------------------------------------------------------------
+# DFX — Static build (run once to lock the shell)
+# ----------------------------------------------------------------
+
+DFX_STATIC_DONE := $(WORK_DIR)/results/static_routed.dcp
+
+dfx-static: $(DFX_STATIC_DONE)
+
+# Step 1: synthesize static (emu_top as black box)
+$(WORK_DIR)/results/static_synth.dcp: $(LOOM_RTL) $(SYNTH_XDC) $(SYNTH_TCL) $(IP_DONE) | $(WORK_DIR)
+	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/synth_static.tcl
+
+# Step 2: synthesize RM OOC
+$(WORK_DIR)/results/$(RM_NAME)_synth.dcp: $(TRANSFORMED_V) $(IP_DONE) | $(WORK_DIR)
+	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/synth_rm.tcl
+
+# Step 3: full DFX P&R — locks static, writes full.bit + rm_partial.bit
+$(DFX_STATIC_DONE): $(WORK_DIR)/results/static_synth.dcp $(WORK_DIR)/results/$(RM_NAME)_synth.dcp
+	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/dfx_impl.tcl
+
+# ----------------------------------------------------------------
+# DFX — Fast RM swap (reuses locked static_routed.dcp)
+# ----------------------------------------------------------------
+
+dfx-rm: $(WORK_DIR)/results/$(RM_NAME)_synth.dcp $(DFX_STATIC_DONE)
+	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/dfx_rm.tcl
+
+# ----------------------------------------------------------------
+# DFX — Programming
+# ----------------------------------------------------------------
+
+# Program full.bit to SPI flash — makes shell persistent across power cycles
+dfx-program-flash:
+	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/dfx_program_flash.tcl
+
+# Load partial bitstream via JTAG — swaps RP, static shell survives
+dfx-program-rm:
+	@test -n "$(PARTIAL_BIT)" || (echo "ERROR: set PARTIAL_BIT=path/to/partial.bit"; exit 1)
+	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/dfx_program_rm.tcl
 
 # ----------------------------------------------------------------
 # Program + Rescan

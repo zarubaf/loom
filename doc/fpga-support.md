@@ -134,6 +134,89 @@ unavailable, the service loop falls back to 1ms polling.
 The shell `read`/`write` commands provide direct register access for
 debugging. The `couple`/`decouple` commands control the DFX decoupler.
 
+## DFX — Dynamic Function eXchange
+
+Loom uses Vivado DFX (Partial Reconfiguration) to allow the compiled DUT
+(`loom_emu_top`) to be swapped without reprogramming the static infrastructure.
+
+### Region split
+
+| Region | Contents | Bitstream |
+|--------|----------|-----------|
+| **Static** | XDMA, demux, firewall, decoupler, CDC, clk_gen, reset sync | `full.bit` → SPI flash |
+| **Reconfigurable Partition (RP)** | `loom_emu_top` (compiled DUT) | `*_partial.bit` → JTAG |
+
+The RP occupies SLR1+SLR2+SLR3. SLR0 is reserved for the static region
+(PCIe GT + XDMA live there).
+
+### Shell persistence
+
+The static shell is stored in the on-board SPI flash (Micron MT25QU01G).
+The FPGA loads it automatically on every power-on — no JTAG required for
+normal operation. The initial full bitstream is programmed to flash once:
+
+```bash
+make -C fpga dfx-program-flash
+```
+
+After a power cycle the shell is live within ~100 ms (flash load time).
+
+### Workflow
+
+```
+# One-time: build and lock the static shell
+make -C fpga dfx-static TRANSFORMED_V=tests/e2e/build/transformed.v
+
+# Program shell + initial RM to SPI flash (one-time per board)
+make -C fpga dfx-program-flash
+
+# --- subsequent DUT changes (fast path) ---
+
+# 1. Synthesize new RM
+make -C fpga dfx-rm TRANSFORMED_V=path/to/new_transformed.v RM_NAME=my_dut
+#    → work-u250/results/my_dut_partial.bit
+
+# 2. Load partial bitstream via JTAG (static shell survives)
+make -C fpga dfx-program-rm PARTIAL_BIT=work-u250/results/my_dut_partial.bit
+
+# 3. Run
+loomx -work path/to/build -t xdma
+```
+
+### Key files
+
+| File | Purpose |
+|------|---------|
+| `fpga/scripts/synth_static.tcl` | Synthesize static region (emu_top as black box) |
+| `fpga/scripts/synth_rm.tcl` | Synthesize RM (loom_emu_top + DUT, OOC) |
+| `fpga/scripts/dfx_impl.tcl` | Full DFX P&R → `static_routed.dcp` + `full.bit` |
+| `fpga/scripts/dfx_rm.tcl` | Fast RM P&R using locked static → `*_partial.bit` |
+| `fpga/scripts/dfx_program_flash.tcl` | Write `full.bit` to SPI flash (shell persistence) |
+| `fpga/scripts/dfx_program_rm.tcl` | JTAG partial bitstream load (RP swap) |
+| `fpga/boards/u250/u250_dfx.xdc` | Pblock definition (SLR1+SLR2+SLR3 for RP) |
+| `src/rtl/loom_emu_top_bb.sv` | Black-box stub for static synthesis |
+
+### `static_routed.dcp` — the golden checkpoint
+
+Once produced by `dfx-static`, `static_routed.dcp` is the locked implementation
+of the static region. All future `dfx-rm` builds load this checkpoint — only
+the RP cells are re-placed and re-routed. This means:
+
+- `dfx-static` is slow (full build, run once per board setup)
+- `dfx-rm` is fast (only RP, runs in minutes for small DUTs)
+
+**Do not delete `static_routed.dcp`** unless you intend to rebuild the entire
+static region. Treat it like a compiled artifact for the board.
+
+### DFX decoupler during reconfiguration
+
+Before loading a partial bitstream, the host must ensure the decoupler is
+asserted (`decouple=1` at `0x5_0000`). The JTAG programming scripts do NOT
+do this automatically — it is the responsibility of `loomx` (or the operator)
+to quiesce the AXI bus before triggering partial reconfiguration.
+
+The existing `loomx decouple` shell command handles this.
+
 ## Build Flow
 
 ```bash
