@@ -677,11 +677,11 @@ struct EmuTopPass : public Pass {
             dpi_regfile->setPort(ID(fifo_threshold_o), fifo_threshold_w);
         } else {
             dpi_regfile->setPort(ID(fifo_wr_valid_i), RTLIL::SigSpec(RTLIL::State::S0));
-            dpi_regfile->setPort(ID(fifo_wr_ready_o), RTLIL::SigSpec());
+            dpi_regfile->setPort(ID(fifo_wr_ready_o), wrapper->addWire(NEW_ID, 1));
             dpi_regfile->setPort(ID(fifo_wr_data_i), RTLIL::SigSpec(RTLIL::State::S0, fifo_entry_words * 32));
-            dpi_regfile->setPort(ID(fifo_full_o), RTLIL::SigSpec());
-            dpi_regfile->setPort(ID(fifo_empty_o), RTLIL::SigSpec());
-            dpi_regfile->setPort(ID(fifo_threshold_o), RTLIL::SigSpec());
+            dpi_regfile->setPort(ID(fifo_full_o), wrapper->addWire(NEW_ID, 1));
+            dpi_regfile->setPort(ID(fifo_empty_o), wrapper->addWire(NEW_ID, 1));
+            dpi_regfile->setPort(ID(fifo_threshold_o), wrapper->addWire(NEW_ID, 1));
         }
 
         // =========================================================================

@@ -96,10 +96,11 @@ module loom_scan_ctrl #(
     // Word index: bit_pos / 32.  For single-word chains, always 0.
     logic [$clog2(N_DATA_WORDS > 1 ? N_DATA_WORDS : 2)-1:0] word_idx;
     generate
-        if (N_DATA_WORDS > 1)
+        if (N_DATA_WORDS > 1) begin : gen_word_idx_multi
             assign word_idx = bit_pos[BIT_POS_W-1:5];
-        else
+        end else begin : gen_word_idx_single
             assign word_idx = '0;
+        end
     endgenerate
 
     // Scan input data:

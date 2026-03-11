@@ -269,6 +269,9 @@ module xlnx_xdma (
     // Shutdown handling
     // =========================================================================
 
+    // axi_aresetn is used as an async reset elsewhere in the design; here it is
+    // sampled synchronously as an enable guard for the shutdown path.
+    /* verilator lint_off SYNCASYNCNET */
     always @(posedge axi_aclk) begin
         if (axi_aresetn && bfm_shutdown) begin
             $display("[xdma_bfm] Shutdown complete, ending simulation");
@@ -277,6 +280,7 @@ module xlnx_xdma (
             $finish;
         end
     end
+    /* verilator lint_on SYNCASYNCNET */
 
     // =========================================================================
     // Simulation timeout (configurable via +timeout=<ns>, -1 for infinite)

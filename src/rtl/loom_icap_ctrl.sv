@@ -71,6 +71,7 @@ module loom_icap_ctrl #(
     // =========================================================================
     logic        icap_csib;
     logic [31:0] icap_din;
+    logic [31:0] icap_rdata;   // readback not used; named to silence PINCONNECTEMPTY
     logic        icap_avail;
     logic        icap_prdone;
     logic        icap_prerror;
@@ -84,7 +85,7 @@ module loom_icap_ctrl #(
         .CSIB   (icap_csib),
         .RDWRB  (1'b0),
         .I      (icap_din),
-        .O      (),
+        .O      (icap_rdata),
         .AVAIL  (icap_avail),
         .PRDONE (icap_prdone),
         .PRERROR(icap_prerror)

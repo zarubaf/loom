@@ -71,8 +71,12 @@ module xlnx_clk_gen (
 
     reg clk_reg;
 
-    // Reconfig event — triggers clock restart
+    // Reconfig event — triggers clock restart.
+    // Set in the AXI (s_axi_aclk) domain, cleared in the clk_reg domain:
+    // intentional multi-domain write in this behavioral model.
+    /* verilator lint_off MULTIDRIVEN */
     reg reconfig_pending;
+    /* verilator lint_on MULTIDRIVEN */
     reg [3:0] lock_cnt;
 
     initial begin

@@ -159,6 +159,7 @@ module loom_shell (
     // Pass full IRQ vector for BFM via loom_irq_i port.
     wire              usr_irq = |irq;  // FPGA: single-bit OR for XDMA MSI
 
+    /* verilator lint_off PINCONNECTEMPTY */
     xlnx_xdma u_xdma (
         .sys_clk    (pcie_refclk),
         .sys_clk_gt (pcie_refclk_gt),
@@ -250,6 +251,7 @@ module loom_shell (
         .cfg_mgmt_read_data      (),
         .cfg_mgmt_read_write_done()
     );
+    /* verilator lint_on PINCONNECTEMPTY */
 
     // =========================================================================
     // 2. AXI-Lite Demux (4 masters on aclk domain)
@@ -354,6 +356,7 @@ module loom_shell (
 
     wire fw_decouple_status;
 
+    /* verilator lint_off PINCONNECTEMPTY */
     loom_axil_firewall #(
         .DATA_WIDTH (32),
         .ADDR_WIDTH (ADDR_WIDTH)
@@ -429,11 +432,13 @@ module loom_shell (
         .evt_unsolicited_o (),
         .irq_o             ()
     );
+    /* verilator lint_on PINCONNECTEMPTY */
 
     // =========================================================================
     // 4. DFX Decoupler (AXI4 DMA path only)
     // =========================================================================
 
+    /* verilator lint_off PINCONNECTEMPTY */
     xlnx_decoupler u_decoupler (
         .decouple        (fw_decouple_status),
         .decouple_status (),
@@ -512,6 +517,7 @@ module loom_shell (
         .rp_intf1_RVALID  (axi4_err_rvalid),
         .rp_intf1_RREADY  (axi4_err_rready)
     );
+    /* verilator lint_on PINCONNECTEMPTY */
 
     // =========================================================================
     // 4b. AXI4 Error Slave (DMA RP side)
@@ -627,6 +633,7 @@ module loom_shell (
     wire emu_clk;
     wire emu_rst_n;
 
+    /* verilator lint_off PINCONNECTEMPTY */
     xlnx_cdc u_cdc (
         // Source side (aclk domain — from firewall master)
         .s_axi_aclk    (aclk),
@@ -674,6 +681,7 @@ module loom_shell (
         .m_axi_bvalid  (cdc_axil_bvalid),
         .m_axi_bready  (cdc_axil_bready)
     );
+    /* verilator lint_on PINCONNECTEMPTY */
 
     // =========================================================================
     // 6. Clock Generator

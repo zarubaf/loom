@@ -53,8 +53,11 @@ module ICAPE3 #(
 );
     // Countdown: reload to 16 on every active write cycle, decrement otherwise.
     // PRDONE fires one clock after the counter reaches 1.
+    // lint_off: initial values + procedural assignments are fine in a behavioral model.
+    /* verilator lint_off PROCASSINIT */
     reg [4:0] ctr_q = '0;
     reg       prdone_q = '0;
+    /* verilator lint_on PROCASSINIT */
 
     always @(posedge CLK) begin
         if (!CSIB && !RDWRB)
