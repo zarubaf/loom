@@ -30,9 +30,9 @@ read_xdc $board_dir/u250_implementation.xdc
 # Partial implementation (RP only)
 # ----------------------------------------------------------------
 opt_design
-place_design -partial
+place_design
 phys_opt_design
-route_design -partial
+route_design
 
 # ----------------------------------------------------------------
 # Reports
