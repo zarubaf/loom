@@ -154,8 +154,8 @@ module loom_shell (
     wire [N_IRQ-1:0] irq    = irq_sync_q2;
     wire              finish = finish_sync_q2;
 
-    // finish + DPI stall → XDMA user IRQ
-    wire              usr_irq = irq[0];
+    // XDMA user IRQ: DPI stall (irq[0]) OR state change (irq[1])
+    wire              usr_irq = irq[0] | irq[1];
 
     xlnx_xdma u_xdma (
         .sys_clk    (pcie_refclk),

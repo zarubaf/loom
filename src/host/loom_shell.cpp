@@ -736,6 +736,11 @@ int Shell::cmd_run(const std::vector<std::string>& args) {
     bool use_irq = (dpi_service_.mode() == DpiMode::Interrupt) &&
                    ctx_.has_irq_support();
 
+    // Enable state-change IRQ (bit 2) so that finish → Frozen wakes wait_irq()
+    if (use_irq) {
+        ctx_.write32(addr::EmuCtrl + reg::IrqEnable, 0x4);
+    }
+
     while (!interrupted_.load()) {
         // Wait for DPI interrupt (interrupt mode only)
         if (use_irq) {
