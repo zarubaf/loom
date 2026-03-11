@@ -25,8 +25,9 @@ reset synchroniser. Defined by everything in `loom_shell` except `u_emu_top`.
 
 **RP — Reconfigurable Partition**
 The region of the FPGA fabric reserved for swappable logic. In Loom the RP is
-the `u_emu_top` cell (122/128 clock regions across all 4 SLRs (~95% of device) on the U250). The RP boundary is fixed at
-first-build time and cannot move without rebuilding the static region.
+the `u_emu_top` cell (122/128 clock regions across all 4 SLRs (~95% of device)
+on the U250). The RP boundary is fixed at first-build time and cannot move
+without rebuilding the static region.
 
 **RM — Reconfigurable Module**
 One specific implementation that fills the RP. Every compiled DUT produces one
@@ -35,8 +36,9 @@ Named via `RM_NAME=` on the make command line (default: `rm`).
 
 **Partial bitstream (`*_partial.bit`)**
 A bitstream that reconfigures only the RP. Much smaller than a full bitstream
-(covers only 122/128 clock regions across all 4 SLRs (~95% of device)). Loaded via JTAG without disturbing the static region
-or the PCIe link. Every new DUT build produces one of these.
+(covers only 122/128 clock regions across all 4 SLRs (~95% of device)). Loaded
+via JTAG without disturbing the static region or the PCIe link. Every new DUT
+build produces one of these.
 
 **Full bitstream (`full.bit`)**
 A bitstream that configures the entire device: static region + one initial RM.
@@ -62,7 +64,7 @@ Three DCPs matter here:
 | File | When produced | Contains |
 |------|--------------|----------|
 | `static_synth.dcp` | `dfx-static` step 1 | Synthesised static netlist with RP as black box |
-| `static_routed.dcp` | `dfx-static` step 3 | **Golden checkpoint** — fully placed & routed static region, RP area locked |
+| `static_routed.dcp` | `dfx-static` step 3 | **Golden checkpoint** — fully placed & routed static region |
 | `${RM_NAME}_synth.dcp` | `dfx-rm` step 1 | Synthesised RM netlist (OOC) |
 
 **OOC — Out-of-Context synthesis**
@@ -78,8 +80,8 @@ A rectangular region of FPGA fabric assigned to the RP. Defined in
 
 **`pr_verify`**
 Vivado command that checks a partial bitstream is compatible with its full
-bitstream. Run automatically at the end of `dfx_impl.tcl` and `dfx_rm.tcl`.
-Fails if the static region changed between builds.
+bitstream. Run automatically at the end of `dfx_rm.tcl`. Fails if the static
+region changed between builds.
 
 **Decoupler**
 The Xilinx DFX Decoupler IP (`xlnx_decoupler`) in the static region. When
@@ -92,21 +94,37 @@ after. `loomx decouple` / `loomx couple` do this from the host.
 
 ## Build Artifacts
 
+Each Vivado invocation creates a timestamped run directory under `work-u250/runs/`
+containing the full log, journal, and a snapshot of all outputs produced by that
+run. `work-u250/results/` holds the **latest** version of each file, with
+bitstreams and reports as symlinks into `runs/` and DCPs as real files (they are
+inputs to downstream steps and must survive the start of the next run).
+
 ```
-work-u250/results/
-├── static_synth.dcp        Static synthesis checkpoint (RP = black box)
-├── static_routed.dcp       *** GOLDEN *** locked static P&R — keep this safe
-├── full.bit                Full bitstream (static + initial RM) → SPI flash
-├── shell.mcs               MCS for flash programming (generated from full.bit)
-├── <RM_NAME>_synth.dcp     RM synthesis checkpoint
-├── <RM_NAME>_partial.bit   Partial bitstream for JTAG DUT swap
-├── <RM_NAME>_routed.dcp    RM routed checkpoint
-└── *.rpt                   Utilisation / timing / DRC reports
+work-u250/
+├── results/
+│   ├── static_synth.dcp          real file — static synthesis checkpoint
+│   ├── static_routed.dcp         real file — *** GOLDEN *** keep this safe
+│   ├── <RM_NAME>_synth.dcp       real file — RM synthesis checkpoint
+│   ├── full.bit               →  runs/<timestamp>_dfx_impl_<rm>/full.bit
+│   ├── <RM_NAME>_partial.bit  →  runs/<timestamp>_dfx_rm_<rm>/<RM_NAME>_partial.bit
+│   └── *.rpt                  →  runs/<timestamp>_<step>_<rm>/*.rpt
+└── runs/
+    └── <timestamp>_<step>_<rm>/
+        ├── vivado.log            Vivado stdout log
+        ├── vivado.jou            Vivado journal (replay script)
+        ├── metadata.txt          step, rm_name, timestamp, exit_code
+        ├── *.bit                 bitstream(s) produced by this run
+        └── *.rpt                 utilisation / timing / DRC reports
 ```
 
 `static_routed.dcp` is the most important file. Treat it like a compiled
 artifact for the board — back it up alongside `full.bit` and `shell.mcs`. If
 you delete it, the next `dfx-static` must redo the full place & route.
+
+At the **start** of each run, stale `*.bit` and `*.rpt` symlinks are removed
+from `results/` so a failed build never leaves a previous run's bitstream
+silently in place.
 
 ---
 
@@ -136,7 +154,7 @@ make dfx-rm TRANSFORMED_V=path/to/new_transformed.v RM_NAME=my_dut
 #    → work-u250/results/my_dut_partial.bit
 
 # 2. Load via JTAG — static shell is completely untouched
-make dfx-program-rm PARTIAL_BIT=work-u250/results/my_dut_partial.bit
+make dfx-program-rm RM_NAME=my_dut
 
 # 3. Run
 loomx -work path/to/build -t xdma
@@ -169,7 +187,7 @@ Only needed if you change the **static region** itself:
 | `make dfx-static` | **DFX**: build & lock static shell (slow, run once) |
 | `make dfx-rm` | **DFX**: build partial bitstream for a DUT (fast) |
 | `make dfx-program-flash` | Write `full.bit` to SPI flash (shell persistence) |
-| `make dfx-program-rm` | Load partial bitstream via JTAG (DUT swap) |
+| `make dfx-program-rm` | Load `$(RM_NAME)_partial.bit` via JTAG (DUT swap) |
 | `make program` | Non-DFX JTAG full-device program |
 | `make driver` | Build XDMA kernel driver |
 | `make driver-load` | Insert XDMA kernel module |
@@ -200,8 +218,7 @@ fpga/
     ├── synth_static.tcl     DFX: static synthesis (RP as black box)
     ├── synth_rm.tcl         DFX: RM OOC synthesis
     ├── impl.tcl             Non-DFX implementation
-    ├── dfx_impl.tcl         DFX: full P&R → locks static_routed.dcp
+    ├── dfx_impl.tcl         DFX: full P&R → produces static_routed.dcp
     ├── dfx_rm.tcl           DFX: partial P&R using locked static
-    ├── program.tcl          Non-DFX JTAG programming
     └── program.tcl          Unified programmer (MODE=jtag|jtag-partial|flash)
 ```

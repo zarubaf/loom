@@ -12,24 +12,40 @@ WORK_DIR     := $(FPGA_DIR)/work-u250
 VIVADO       ?= /opt/eda/xilinx/Vivado/2024.1/bin/vivado
 
 # ----------------------------------------------------------------
-# Per-run structured logging
+# Per-run structured logging and artifact management
 # Usage: $(call vivado_run,<step>,<tcl>[,<extra KEY=VALUE env>])
-# Creates: $(WORK_DIR)/logs/<timestamp>_<step>_<rm>/
-#   vivado.log  vivado.jou  metadata.txt  *.rpt snapshot
+#
+# Each invocation creates:
+#   $(WORK_DIR)/runs/<timestamp>_<step>_<rm>/
+#     vivado.log  vivado.jou  metadata.txt  *.bit  *.rpt
+#
+# *.bit and *.rpt are moved into the run dir after completion;
+# results/ holds symlinks to the latest run that produced them.
+# *.dcp files stay as real files in results/ (inputs to downstream steps).
+#
+# At start: stale *.bit and *.rpt symlinks are removed so a failed run
+# never leaves the previous run's bitstreams silently in place.
 # ----------------------------------------------------------------
 define vivado_run
 { \
-  _d="$(WORK_DIR)/logs/$$(date +%Y%m%d_%H%M%S)_$(1)_$(RM_NAME)"; \
-  mkdir -p "$$_d"; \
+  _d="$(WORK_DIR)/runs/$$(date +%Y%m%d_%H%M%S)_$(1)_$(RM_NAME)"; \
+  mkdir -p "$$_d" "$(WORK_DIR)/results"; \
   printf 'step=$(1)\nrm_name=$(RM_NAME)\ntimestamp=%s\n' "$$(date -Iseconds)" \
     > "$$_d/metadata.txt"; \
+  find "$(WORK_DIR)/results" -maxdepth 1 \( -name '*.bit' -o -name '*.rpt' \) \
+    -type l -delete 2>/dev/null || true; \
   env $(3) $(VIVADO) -mode batch \
     -log     "$$_d/vivado.log" \
     -journal "$$_d/vivado.jou" \
     -source  "$(2)"; \
   _e=$$?; \
   printf 'exit_code=%d\n' "$$_e" >> "$$_d/metadata.txt"; \
-  cp "$(WORK_DIR)/results"/*.rpt "$$_d/" 2>/dev/null || true; \
+  for _f in "$(WORK_DIR)/results"/*.bit "$(WORK_DIR)/results"/*.rpt; do \
+    [ -e "$$_f" ] || continue; \
+    [ -L "$$_f" ] && continue; \
+    mv "$$_f" "$$_d/"; \
+    ln -sf "$$_d/$$(basename $$_f)" "$$_f"; \
+  done; \
   exit $$_e; \
 }
 endef
@@ -104,7 +120,7 @@ $(WORK_DIR)/results/synth.dcp: $(TRANSFORMED_V) $(LOOM_RTL) $(SYNTH_XDC) $(SYNTH
 	@$(call vivado_run,synth,$(SCRIPTS_DIR)/synth.tcl)
 
 $(WORK_DIR):
-	mkdir -p $@/results $@/logs
+	mkdir -p $@/results $@/runs
 
 # ----------------------------------------------------------------
 # Bitstream
@@ -164,8 +180,7 @@ dfx-program-flash:
 
 # DFX: swap RP via JTAG partial bitstream (static shell survives)
 dfx-program-rm:
-	@test -n "$(PARTIAL_BIT)" || (echo "ERROR: set PARTIAL_BIT=path/to/partial.bit"; exit 1)
-	@$(call vivado_run,program,$(SCRIPTS_DIR)/program.tcl,MODE=jtag-partial BIT_FILE=$(PARTIAL_BIT))
+	@$(call vivado_run,program,$(SCRIPTS_DIR)/program.tcl,MODE=jtag-partial BIT_FILE=$(WORK_DIR)/results/$(RM_NAME)_partial.bit)
 
 rescan:
 	sudo $(SCRIPTS_DIR)/pcie_rescan.sh
