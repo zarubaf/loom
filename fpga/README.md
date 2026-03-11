@@ -203,6 +203,5 @@ fpga/
     ├── dfx_impl.tcl         DFX: full P&R → locks static_routed.dcp
     ├── dfx_rm.tcl           DFX: partial P&R using locked static
     ├── program.tcl          Non-DFX JTAG programming
-    ├── dfx_program_flash.tcl  Write full.bit to SPI flash
-    └── dfx_program_rm.tcl   JTAG partial bitstream load
+    └── program.tcl          Unified programmer (MODE=jtag|jtag-partial|flash)
 ```

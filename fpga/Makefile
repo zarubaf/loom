@@ -30,7 +30,7 @@ export WORK_DIR
 export TRANSFORMED_V
 export RM_NAME ?= rm
 
-.PHONY: all ip synth bitstream program driver driver-load driver-unload rescan dfx-static dfx-rm dfx-program-flash dfx-program-rm clean
+.PHONY: all ip synth bitstream program dfx-static dfx-rm dfx-program-full dfx-program-flash dfx-program-rm driver driver-load driver-unload rescan clean
 
 all: bitstream
 
@@ -121,24 +121,29 @@ dfx-rm: $(WORK_DIR)/results/$(RM_NAME)_synth.dcp $(DFX_STATIC_DONE)
 	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/dfx_rm.tcl
 
 # ----------------------------------------------------------------
-# DFX — Programming
+# Programming (all modes use scripts/program.tcl)
 # ----------------------------------------------------------------
 
-# Program full.bit to SPI flash — makes shell persistent across power cycles
-dfx-program-flash:
-	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/dfx_program_flash.tcl
+# Non-DFX full JTAG load (legacy flat bitstream)
+program:
+	MODE=jtag BIT_FILE=$(WORK_DIR)/results/loom_shell.bit \
+	  $(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/program.tcl
 
-# Load partial bitstream via JTAG — swaps RP, static shell survives
+# DFX: volatile full load for testing (flash unchanged, reverts on power cycle)
+dfx-program-full:
+	MODE=jtag BIT_FILE=$(WORK_DIR)/results/full.bit \
+	  $(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/program.tcl
+
+# DFX: write full.bit to SPI flash (persistent across power cycles)
+dfx-program-flash:
+	MODE=flash BIT_FILE=$(WORK_DIR)/results/full.bit \
+	  $(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/program.tcl
+
+# DFX: swap RP via JTAG partial bitstream (static shell survives)
 dfx-program-rm:
 	@test -n "$(PARTIAL_BIT)" || (echo "ERROR: set PARTIAL_BIT=path/to/partial.bit"; exit 1)
-	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/dfx_program_rm.tcl
-
-# ----------------------------------------------------------------
-# Program + Rescan
-# ----------------------------------------------------------------
-
-program:
-	$(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/program.tcl
+	MODE=jtag-partial BIT_FILE=$(PARTIAL_BIT) \
+	  $(VIVADO) $(VIVADO_FLAGS) -source $(SCRIPTS_DIR)/program.tcl
 
 rescan:
 	sudo $(SCRIPTS_DIR)/pcie_rescan.sh
