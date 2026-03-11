@@ -7,6 +7,8 @@
 # Input:  RM_NAME — name tag (matches rm_synth.dcp produced by synth_rm.tcl)
 # Output: work-u250/results/${RM_NAME}_partial.bit
 
+source [file join [file dirname [info script]] reports.tcl]
+
 set work_dir  $::env(WORK_DIR)
 set board_dir $::env(BOARD_DIR)
 set rm_name   [expr {[info exists ::env(RM_NAME)] ? $::env(RM_NAME) : "rm"}]
@@ -30,15 +32,20 @@ read_xdc $board_dir/u250_implementation.xdc
 # Partial implementation (RP only)
 # ----------------------------------------------------------------
 opt_design
+loom::reports_stage $work_dir $rm_name opt
+
 place_design
+loom::reports_stage $work_dir $rm_name place
+
 phys_opt_design
+loom::reports_stage $work_dir $rm_name phys_opt
+
 route_design
 
 # ----------------------------------------------------------------
 # Reports
 # ----------------------------------------------------------------
-report_utilization  -file $work_dir/results/${rm_name}_utilization.rpt
-report_timing_summary -file $work_dir/results/${rm_name}_timing.rpt
+loom::reports_impl $work_dir $rm_name
 
 # ----------------------------------------------------------------
 # Partial bitstream

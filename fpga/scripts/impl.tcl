@@ -18,12 +18,8 @@ place_design
 phys_opt_design
 route_design
 
-# ----------------------------------------------------------------
-# Reports
-# ----------------------------------------------------------------
-report_utilization -file $work_dir/results/impl_utilization.rpt
-report_timing_summary -file $work_dir/results/impl_timing.rpt
-report_drc -file $work_dir/results/impl_drc.rpt
+source [file join [file dirname [info script]] reports.tcl]
+loom::reports_impl $work_dir impl
 
 # ----------------------------------------------------------------
 # Write outputs

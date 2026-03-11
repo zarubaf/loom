@@ -36,9 +36,8 @@ route_design
 # ----------------------------------------------------------------
 # Reports
 # ----------------------------------------------------------------
-report_utilization  -file $work_dir/results/dfx_impl_utilization.rpt
-report_timing_summary -file $work_dir/results/dfx_impl_timing.rpt
-report_drc          -file $work_dir/results/dfx_impl_drc.rpt
+source [file join [file dirname [info script]] reports.tcl]
+loom::reports_impl $work_dir dfx_impl
 
 # ----------------------------------------------------------------
 # Outputs

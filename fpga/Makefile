@@ -16,24 +16,23 @@ VIVADO       ?= /opt/eda/xilinx/Vivado/2024.1/bin/vivado
 # Usage: $(call vivado_run,<step>,<tcl>[,<extra KEY=VALUE env>])
 #
 # Each invocation creates:
-#   $(WORK_DIR)/runs/<timestamp>_<step>_<rm>/
+#   $(WORK_DIR)/runs/<timestamp>_<step>_<rm>/      (default)
+#   or $RUN_DIR/                                   (if RUN_DIR is set)
 #     vivado.log  vivado.jou  metadata.txt  *.bit  *.rpt
 #
 # *.bit and *.rpt are moved into the run dir after completion;
 # results/ holds symlinks to the latest run that produced them.
 # *.dcp files stay as real files in results/ (inputs to downstream steps).
 #
-# At start: stale *.bit and *.rpt symlinks are removed so a failed run
-# never leaves the previous run's bitstreams silently in place.
+# After the run, results/ symlinks are force-updated to the new run dir.
+# A failed run leaves the previous symlinks intact.
 # ----------------------------------------------------------------
 define vivado_run
 { \
-  _d="$(WORK_DIR)/runs/$$(date +%Y%m%d_%H%M%S)_$(1)_$(RM_NAME)"; \
+  _d="$${RUN_DIR:-$(WORK_DIR)/runs/$$(date +%Y%m%d_%H%M%S)_$(1)_$(RM_NAME)}"; \
   mkdir -p "$$_d" "$(WORK_DIR)/results"; \
   printf 'step=$(1)\nrm_name=$(RM_NAME)\ntimestamp=%s\n' "$$(date -Iseconds)" \
     > "$$_d/metadata.txt"; \
-  find "$(WORK_DIR)/results" -maxdepth 1 \( -name '*.bit' -o -name '*.rpt' \) \
-    -type l -delete 2>/dev/null || true; \
   env $(3) $(VIVADO) -mode batch \
     -log     "$$_d/vivado.log" \
     -journal "$$_d/vivado.jou" \
@@ -67,6 +66,9 @@ export IP_DIR
 export WORK_DIR
 export TRANSFORMED_V
 export RM_NAME ?= rm
+# Override to pin all vivado_run invocations to a specific directory instead of
+# the default auto-generated timestamp path ($(WORK_DIR)/runs/<ts>_<step>_<rm>).
+export RUN_DIR ?=
 
 .PHONY: all ip synth bitstream program dfx-static dfx-rm dfx-program-full dfx-program-flash dfx-program-rm driver driver-load driver-unload rescan clean
 
@@ -135,9 +137,11 @@ $(WORK_DIR)/results/loom_shell.bit: $(WORK_DIR)/results/synth.dcp
 # DFX — Static build (run once to lock the shell)
 # ----------------------------------------------------------------
 
-DFX_STATIC_DONE := $(WORK_DIR)/results/static_routed.dcp
+DFX_STATIC_DONE    := $(WORK_DIR)/results/static_routed.dcp
+DFX_FULL_BIT       := $(WORK_DIR)/results/full.bit
+DFX_RM_PARTIAL_BIT := $(WORK_DIR)/results/$(RM_NAME)_partial.bit
 
-dfx-static: $(DFX_STATIC_DONE)
+dfx-static: $(DFX_STATIC_DONE) $(DFX_FULL_BIT) $(DFX_RM_PARTIAL_BIT)
 
 # Step 1: synthesize static (emu_top as black box)
 $(WORK_DIR)/results/static_synth.dcp: $(LOOM_RTL) $(SYNTH_XDC) $(SYNTH_TCL) $(IP_DONE) | $(WORK_DIR)
@@ -148,7 +152,9 @@ $(WORK_DIR)/results/$(RM_NAME)_synth.dcp: $(TRANSFORMED_V) $(IP_DONE) | $(WORK_D
 	@$(call vivado_run,synth_rm,$(SCRIPTS_DIR)/synth_rm.tcl)
 
 # Step 3: full DFX P&R — locks static, writes full.bit + rm_partial.bit
-$(DFX_STATIC_DONE): $(WORK_DIR)/results/static_synth.dcp $(WORK_DIR)/results/$(RM_NAME)_synth.dcp
+# Grouped target (&:) — one recipe produces all three outputs; Make re-runs if any is missing.
+$(DFX_STATIC_DONE) $(DFX_FULL_BIT) $(DFX_RM_PARTIAL_BIT) &: \
+    $(WORK_DIR)/results/static_synth.dcp $(WORK_DIR)/results/$(RM_NAME)_synth.dcp
 	@$(call vivado_run,dfx_impl,$(SCRIPTS_DIR)/dfx_impl.tcl)
 
 # ----------------------------------------------------------------
