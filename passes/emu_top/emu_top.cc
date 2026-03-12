@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "picosha2.h"
+#include "loom_version.h"
 
 USING_YOSYS_NAMESPACE
 PRIVATE_NAMESPACE_BEGIN
@@ -286,8 +287,11 @@ struct EmuTopPass : public Pass {
                 std::fprintf(mf, "hash = \"%s\"\n", hash_hex.c_str());
                 std::fprintf(mf, "top_module = \"%s\"\n\n", top_name.c_str());
                 std::fprintf(mf, "[shell]\n");
-                std::fprintf(mf, "version = \"0.1.0\"\n");
-                std::fprintf(mf, "version_hex = 0x000100\n\n");
+                std::fprintf(mf, "version = \"%d.%d.%d\"\n",
+                    LOOM_SHELL_VERSION_MAJOR,
+                    LOOM_SHELL_VERSION_MINOR,
+                    LOOM_SHELL_VERSION_PATCH);
+                std::fprintf(mf, "version_hex = 0x%06x\n\n", LOOM_SHELL_VERSION);
                 std::fclose(mf);
                 log("  Wrote loom_manifest.toml\n");
             } else {
@@ -390,6 +394,13 @@ struct EmuTopPass : public Pass {
         // Helper lambda: extract a slice from a flat bus wire
         auto slice = [&](RTLIL::Wire *bus, int idx, int width) -> RTLIL::SigSpec {
             return RTLIL::SigSpec(bus, idx * width, width);
+        };
+        // addr_slice: extract the lower `take` bits of slave `idx`'s addr slot.
+        // Used to match narrower port widths (emu_ctrl=8b, scan_ctrl=12b, dpi_regfile=16b)
+        // without widening the slave RTL.  The upper bits are the routing base
+        // (already handled by the demux) and are not needed by the slave decode.
+        auto addr_slice = [&](RTLIL::Wire *bus, int idx, int take) -> RTLIL::SigSpec {
+            return RTLIL::SigSpec(bus, idx * addr_width, take);
         };
         auto bit = [&](RTLIL::Wire *bus, int idx) -> RTLIL::SigSpec {
             return RTLIL::SigSpec(bus, idx, 1);
@@ -552,7 +563,7 @@ struct EmuTopPass : public Pass {
         emu_ctrl->setParam(ID(MAX_ARG_WIDTH), dut_args_width);
         emu_ctrl->setParam(ID(MAX_RET_WIDTH), dut_result_width);
         emu_ctrl->setParam(ID(MAX_ARGS), max_args);
-        emu_ctrl->setParam(ID(SHELL_VERSION), 0x000100);
+        emu_ctrl->setParam(ID(SHELL_VERSION), (int)LOOM_SHELL_VERSION);
         for (int i = 0; i < 8; i++) {
             char pname[32];
             std::snprintf(pname, sizeof(pname), "DESIGN_HASH_%d", i);
@@ -577,14 +588,14 @@ struct EmuTopPass : public Pass {
         emu_ctrl->setPort(ID(clk_i), clk_i);
         emu_ctrl->setPort(ID(rst_ni), rst_ni);
         // AXI-Lite (from demux master 0)
-        emu_ctrl->setPort(ID(axil_araddr_i), slice(demux_araddr, 0, addr_width));
+        emu_ctrl->setPort(ID(axil_araddr_i), addr_slice(demux_araddr, 0, 8));
         emu_ctrl->setPort(ID(axil_arvalid_i), bit(demux_arvalid, 0));
         emu_ctrl->setPort(ID(axil_arready_o), bit(demux_arready, 0));
         emu_ctrl->setPort(ID(axil_rdata_o), slice(demux_rdata, 0, 32));
         emu_ctrl->setPort(ID(axil_rresp_o), slice(demux_rresp, 0, 2));
         emu_ctrl->setPort(ID(axil_rvalid_o), bit(demux_rvalid, 0));
         emu_ctrl->setPort(ID(axil_rready_i), bit(demux_rready, 0));
-        emu_ctrl->setPort(ID(axil_awaddr_i), slice(demux_awaddr, 0, addr_width));
+        emu_ctrl->setPort(ID(axil_awaddr_i), addr_slice(demux_awaddr, 0, 8));
         emu_ctrl->setPort(ID(axil_awvalid_i), bit(demux_awvalid, 0));
         emu_ctrl->setPort(ID(axil_awready_o), bit(demux_awready, 0));
         emu_ctrl->setPort(ID(axil_wdata_i), slice(demux_wdata, 0, 32));
@@ -644,14 +655,14 @@ struct EmuTopPass : public Pass {
         }
         dpi_regfile->setPort(ID(clk_i), clk_i);
         dpi_regfile->setPort(ID(rst_ni), rst_ni);
-        dpi_regfile->setPort(ID(axil_araddr_i), slice(demux_araddr, 1, addr_width));
+        dpi_regfile->setPort(ID(axil_araddr_i), addr_slice(demux_araddr, 1, 16));
         dpi_regfile->setPort(ID(axil_arvalid_i), bit(demux_arvalid, 1));
         dpi_regfile->setPort(ID(axil_arready_o), bit(demux_arready, 1));
         dpi_regfile->setPort(ID(axil_rdata_o), slice(demux_rdata, 1, 32));
         dpi_regfile->setPort(ID(axil_rresp_o), slice(demux_rresp, 1, 2));
         dpi_regfile->setPort(ID(axil_rvalid_o), bit(demux_rvalid, 1));
         dpi_regfile->setPort(ID(axil_rready_i), bit(demux_rready, 1));
-        dpi_regfile->setPort(ID(axil_awaddr_i), slice(demux_awaddr, 1, addr_width));
+        dpi_regfile->setPort(ID(axil_awaddr_i), addr_slice(demux_awaddr, 1, 16));
         dpi_regfile->setPort(ID(axil_awvalid_i), bit(demux_awvalid, 1));
         dpi_regfile->setPort(ID(axil_awready_o), bit(demux_awready, 1));
         dpi_regfile->setPort(ID(axil_wdata_i), slice(demux_wdata, 1, 32));
@@ -691,14 +702,14 @@ struct EmuTopPass : public Pass {
         scan_ctrl->setParam(ID(CHAIN_LENGTH), scan_chain_length);
         scan_ctrl->setPort(ID(clk_i), clk_i);
         scan_ctrl->setPort(ID(rst_ni), rst_ni);
-        scan_ctrl->setPort(ID(axil_araddr_i), slice(demux_araddr, 2, addr_width));
+        scan_ctrl->setPort(ID(axil_araddr_i), addr_slice(demux_araddr, 2, 12));
         scan_ctrl->setPort(ID(axil_arvalid_i), bit(demux_arvalid, 2));
         scan_ctrl->setPort(ID(axil_arready_o), bit(demux_arready, 2));
         scan_ctrl->setPort(ID(axil_rdata_o), slice(demux_rdata, 2, 32));
         scan_ctrl->setPort(ID(axil_rresp_o), slice(demux_rresp, 2, 2));
         scan_ctrl->setPort(ID(axil_rvalid_o), bit(demux_rvalid, 2));
         scan_ctrl->setPort(ID(axil_rready_i), bit(demux_rready, 2));
-        scan_ctrl->setPort(ID(axil_awaddr_i), slice(demux_awaddr, 2, addr_width));
+        scan_ctrl->setPort(ID(axil_awaddr_i), addr_slice(demux_awaddr, 2, 12));
         scan_ctrl->setPort(ID(axil_awvalid_i), bit(demux_awvalid, 2));
         scan_ctrl->setPort(ID(axil_awready_o), bit(demux_awready, 2));
         scan_ctrl->setPort(ID(axil_wdata_i), slice(demux_wdata, 2, 32));
@@ -734,14 +745,14 @@ struct EmuTopPass : public Pass {
             mem_ctrl->setParam(ID(TOTAL_BYTES), (int)shadow_total_bytes);
             mem_ctrl->setPort(ID(clk_i), clk_i);
             mem_ctrl->setPort(ID(rst_ni), rst_ni);
-            mem_ctrl->setPort(ID(axil_araddr_i), slice(demux_araddr, 3, addr_width));
+            mem_ctrl->setPort(ID(axil_araddr_i), addr_slice(demux_araddr, 3, 12));
             mem_ctrl->setPort(ID(axil_arvalid_i), bit(demux_arvalid, 3));
             mem_ctrl->setPort(ID(axil_arready_o), bit(demux_arready, 3));
             mem_ctrl->setPort(ID(axil_rdata_o), slice(demux_rdata, 3, 32));
             mem_ctrl->setPort(ID(axil_rresp_o), slice(demux_rresp, 3, 2));
             mem_ctrl->setPort(ID(axil_rvalid_o), bit(demux_rvalid, 3));
             mem_ctrl->setPort(ID(axil_rready_i), bit(demux_rready, 3));
-            mem_ctrl->setPort(ID(axil_awaddr_i), slice(demux_awaddr, 3, addr_width));
+            mem_ctrl->setPort(ID(axil_awaddr_i), addr_slice(demux_awaddr, 3, 12));
             mem_ctrl->setPort(ID(axil_awvalid_i), bit(demux_awvalid, 3));
             mem_ctrl->setPort(ID(axil_awready_o), bit(demux_awready, 3));
             mem_ctrl->setPort(ID(axil_wdata_i), slice(demux_wdata, 3, 32));

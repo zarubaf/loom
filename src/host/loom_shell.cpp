@@ -10,6 +10,7 @@
 #include <climits>
 #include <csignal>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -518,6 +519,35 @@ const Command* Shell::find_command(const std::string& name) const {
 }
 
 // ============================================================================
+// ============================================================================
+// Filesystem path completion helper
+// ============================================================================
+
+static replxx::Replxx::completions_t complete_path(const std::string& partial,
+                                                    int& context_len) {
+    namespace fs = std::filesystem;
+    replxx::Replxx::completions_t out;
+
+    fs::path p(partial);
+    fs::path dir  = p.has_parent_path() ? p.parent_path() : fs::path(".");
+    std::string stem = p.filename().string();
+
+    std::error_code ec;
+    for (auto& entry : fs::directory_iterator(dir, ec)) {
+        std::string name = entry.path().filename().string();
+        if (name.compare(0, stem.size(), stem) != 0) continue;
+
+        fs::path full = (p.has_parent_path() ? dir / name : fs::path(name));
+        std::string candidate = full.string();
+        if (entry.is_directory(ec)) candidate += '/';
+        out.push_back(candidate);
+    }
+
+    context_len = static_cast<int>(partial.size());
+    return out;
+}
+
+// ============================================================================
 // Replxx Setup
 // ============================================================================
 
@@ -538,19 +568,24 @@ void Shell::setup_replxx() {
         [this](const std::string& input, int& context_len) {
             replxx::Replxx::completions_t completions;
 
-            // Check if we're completing the second argument of certain commands
+            // Path completion for commands that take a file argument.
+            // Trigger when: a file-taking command is fully typed AND either
+            //   (a) there is already a partial path token, or
+            //   (b) the input ends with a space (user hit Tab with no prefix —
+            //       should list CWD just like a UNIX shell would).
             auto tokens = tokenize(input);
-            if (tokens.size() >= 1) {
+            if (!tokens.empty()) {
                 const auto *cmd = find_command(tokens[0]);
-                bool is_file_cmd = cmd && (cmd->name == "dump" ||
-                                           cmd->name == "inspect" ||
+                bool is_file_cmd = cmd && (cmd->name == "reconfigure" ||
+                                           cmd->name == "dump"        ||
+                                           cmd->name == "inspect"     ||
                                            cmd->name == "deposit_script");
-
-                if (is_file_cmd && tokens.size() >= 2) {
-                    // Complete *.pb files — not implemented here (filesystem
-                    // completion would require OS-specific listing). Return
-                    // empty to let the shell fall through.
-                    return completions;
+                bool has_path_arg = tokens.size() >= 2;
+                bool after_space  = !input.empty() && input.back() == ' ';
+                if (is_file_cmd && (has_path_arg || after_space)) {
+                    std::string partial = (has_path_arg && !after_space)
+                                         ? tokens.back() : "";
+                    return complete_path(partial, context_len);
                 }
             }
 
@@ -1569,6 +1604,18 @@ int Shell::cmd_reconfigure(const std::vector<std::string>& args) {
         logger.error("Reconfiguration failed (error %d)", static_cast<int>(rc.error()));
         return -1;
     }
+
+    // Re-scan initial state into the new RM.  The scan image captured at
+    // connect time may be stale if the design changed, but it's the best
+    // we have without a new scan_map.pb.  A future enhancement could accept
+    // an updated scan_map alongside the partial bitstream.
+    if (!initial_scan_image_.empty()) {
+        logger.info("reconfigure: scanning in initial state for new RM...");
+        ctx_.scan_write_data(initial_scan_image_);
+        ctx_.scan_restore();
+        initial_image_applied_ = true;
+    }
+
     return 0;
 }
 
