@@ -1,0 +1,13 @@
+Source: xdma-dkms
+Section: kernel
+Priority: optional
+Maintainer: Florian Zaruba <florian@zaruba.email>
+Build-Depends: debhelper-compat (= 13), dh-dkms
+Standards-Version: 4.6.0
+
+Package: xdma-dkms
+Architecture: all
+Depends: dkms, ${misc:Depends}
+Description: Xilinx XDMA PCIe DMA kernel driver (DKMS)
+ DKMS package for the Xilinx XDMA driver used by Loom for
+ PCIe/XDMA host-to-FPGA communication.

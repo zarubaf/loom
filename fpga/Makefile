@@ -50,8 +50,7 @@ endef
 # Transformed DUT (user must supply or use tests/e2e to generate)
 TRANSFORMED_V ?= $(LOOM_ROOT)/tests/e2e/build/transformed.v
 
-# XDMA driver source
-XDMA_DIR     := $(LOOM_ROOT)/third_party/dma_ip_drivers/XDMA/linux-kernel
+# XDMA driver — install via: cd dkms/xdma-dkms && make deb && sudo apt install ./xdma-dkms_*.deb
 
 # Board settings
 export XILINX_PART       := xcu250-figd2104-2L-e
@@ -195,11 +194,11 @@ rescan:
 # ----------------------------------------------------------------
 
 driver:
-	$(MAKE) -C $(XDMA_DIR)/xdma
-	$(MAKE) -C $(XDMA_DIR)/tools
+	@echo "Build the DKMS .deb:  cd $(LOOM_ROOT)/dkms/xdma-dkms && make deb"
+	@echo "Install:              sudo apt install $(LOOM_ROOT)/dkms/xdma-dkms/../xdma-dkms_*.deb"
 
-driver-load: driver
-	sudo insmod $(XDMA_DIR)/xdma/xdma.ko
+driver-load:
+	sudo modprobe xdma
 	@sleep 1
 	@if [ -e /dev/xdma0_user ]; then \
 		echo "OK: /dev/xdma0_user available"; \

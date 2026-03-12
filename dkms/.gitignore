@@ -1,0 +1,9 @@
+*.deb
+*.buildinfo
+*.changes
+xdma-dkms/src/
+xdma-dkms/debian/.debhelper/
+xdma-dkms/debian/debhelper-build-stamp
+xdma-dkms/debian/files
+xdma-dkms/debian/xdma-dkms.substvars
+xdma-dkms/debian/xdma-dkms/

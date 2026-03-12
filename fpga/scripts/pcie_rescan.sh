@@ -22,7 +22,6 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOOM_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-XDMA_KO="$LOOM_ROOT/third_party/dma_ip_drivers/XDMA/linux-kernel/xdma/xdma.ko"
 
 # --- 1. Unload XDMA driver ------------------------------------------------
 if lsmod | grep -q xdma; then
@@ -87,9 +86,8 @@ echo "Found: $xlnx_dev"
 bdf=$(echo "$xlnx_dev" | cut -d' ' -f1)
 
 # Try loading XDMA driver
-if [ -f "$XDMA_KO" ]; then
-    echo "Loading xdma driver (third_party)..."
-    insmod "$XDMA_KO"
+if modprobe xdma 2>/dev/null; then
+    echo "Loaded xdma driver via modprobe (DKMS)"
 else
     echo "No xdma driver found — enabling sysfs BAR access"
     echo 1 > "/sys/bus/pci/devices/0000:$bdf/enable"

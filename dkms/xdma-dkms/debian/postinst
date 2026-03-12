@@ -1,0 +1,28 @@
+#!/bin/sh
+set -e
+
+PACKAGE_NAME="xdma"
+PACKAGE_VERSION="2020.2.2"
+
+case "$1" in
+    configure)
+        if [ -x /usr/sbin/dkms ]; then
+            dkms add -m "$PACKAGE_NAME" -v "$PACKAGE_VERSION" 2>/dev/null || true
+            for kver in /lib/modules/*/build; do
+                kver="${kver#/lib/modules/}"
+                kver="${kver%/build}"
+                [ -d "/lib/modules/$kver/build" ] || continue
+                echo "Building xdma/$PACKAGE_VERSION for $kver ..."
+                if ! dkms build -m "$PACKAGE_NAME" -v "$PACKAGE_VERSION" -k "$kver"; then
+                    echo "WARNING: xdma build failed for $kver (missing headers?) — skipping"
+                    continue
+                fi
+                dkms install -m "$PACKAGE_NAME" -v "$PACKAGE_VERSION" -k "$kver" || true
+            done
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

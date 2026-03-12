@@ -1,0 +1,7 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: xdma
+Source: https://github.com/Xilinx/dma_ip_drivers
+
+Files: *
+Copyright: 2016-present Xilinx, Inc.
+License: GPL-2.0

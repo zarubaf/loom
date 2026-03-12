@@ -1,0 +1,5 @@
+xdma-dkms (2020.2.2-1) unstable; urgency=low
+
+  * Initial DKMS packaging of Xilinx XDMA driver.
+
+ -- Florian Zaruba <florian@zaruba.email>  Thu, 12 Mar 2026 00:00:00 +0000
