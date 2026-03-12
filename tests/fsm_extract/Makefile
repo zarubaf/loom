@@ -21,12 +21,19 @@ SIM_BINS  := $(addprefix $(BUILD_DIR)/Vtb_,$(addsuffix _equiv,$(FSM_NAMES)))
 
 all: sim
 
-# --- Transform + generate testbench (grouped target, Make >= 4.3) ---
-transformed_%_fsm.v tb_%_fsm_equiv.sv &: %_fsm.sv gen_equiv.tcl $(SLANG_SO)
+# --- Transform + generate testbench ---
+# Yosys produces both transformed_%_fsm.v and tb_%_fsm_equiv.sv in one shot.
+# Use a stamp file so it works with Make < 4.3 (no grouped-target &: syntax).
+.PRECIOUS: .stamp_%_fsm
+.stamp_%_fsm: %_fsm.sv gen_equiv.tcl $(SLANG_SO)
 	$(YOSYS) -m $(SLANG_SO) -p "tcl gen_equiv.tcl $*_fsm"
+	@touch $@
+
+transformed_%_fsm.v: .stamp_%_fsm ;
+tb_%_fsm_equiv.sv:   .stamp_%_fsm ;
 
 # --- Build Verilator binary ---
-$(BUILD_DIR)/Vtb_%_fsm_equiv: transformed_%_fsm.v %_fsm.sv tb_%_fsm_equiv.sv
+$(BUILD_DIR)/Vtb_%_fsm_equiv: transformed_%_fsm.v %_fsm.sv tb_%_fsm_equiv.sv | .stamp_%_fsm
 	$(VERILATOR) --binary --timing --debug \
 		-Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEINCOMPLETE \
 		--top-module tb_$*_fsm_equiv \
@@ -37,4 +44,4 @@ sim: $(SIM_BINS)
 	@for bin in $^; do $$bin || exit 1; done
 
 clean:
-	rm -rf $(BUILD_DIR) transformed_*_fsm.v tb_*_fsm_equiv.sv _ports.json
+	rm -rf $(BUILD_DIR) transformed_*_fsm.v tb_*_fsm_equiv.sv .stamp_*_fsm _ports.json
