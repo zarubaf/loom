@@ -33,17 +33,15 @@ define vivado_run
   mkdir -p "$$_d" "$(WORK_DIR)/results"; \
   printf 'step=$(1)\nrm_name=$(RM_NAME)\ntimestamp=%s\n' "$$(date -Iseconds)" \
     > "$$_d/metadata.txt"; \
-  env $(3) $(VIVADO) -mode batch \
+  env $(3) LOOM_RUN_DIR="$$_d" $(VIVADO) -mode batch \
     -log     "$$_d/vivado.log" \
     -journal "$$_d/vivado.jou" \
     -source  "$(2)"; \
   _e=$$?; \
   printf 'exit_code=%d\n' "$$_e" >> "$$_d/metadata.txt"; \
-  for _f in "$(WORK_DIR)/results"/*.bit "$(WORK_DIR)/results"/*.rpt; do \
+  for _f in "$$_d/results"/*.bit "$$_d/results"/*.dcp "$$_d/results"/*.hash; do \
     [ -e "$$_f" ] || continue; \
-    [ -L "$$_f" ] && continue; \
-    mv "$$_f" "$$_d/"; \
-    ln -sf "$$_d/$$(basename $$_f)" "$$_f"; \
+    ln -sf "$$_f" "$(WORK_DIR)/results/$$(basename $$_f)"; \
   done; \
   exit $$_e; \
 }

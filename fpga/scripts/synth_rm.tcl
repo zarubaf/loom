@@ -9,8 +9,9 @@
 source [file join [file dirname [info script]] reports.tcl]
 source $::env(BOARD_DIR)/settings.tcl
 
-set work_dir    $::env(WORK_DIR)
-set rm_name     [expr {[info exists ::env(RM_NAME)] ? $::env(RM_NAME) : "rm"}]
+set work_dir $::env(WORK_DIR)
+set run_dir  $::env(LOOM_RUN_DIR)
+set rm_name  [expr {[info exists ::env(RM_NAME)] ? $::env(RM_NAME) : "rm"}]
 
 create_project -in_memory -part $XILINX_PART
 
@@ -23,6 +24,6 @@ synth_design \
     -mode out_of_context \
     -verilog_define "XILINX=1"
 
-file mkdir $work_dir/results
-write_checkpoint -force $work_dir/results/${rm_name}_synth.dcp
-loom::reports_synth $work_dir ${rm_name}_synth
+file mkdir $run_dir/results
+write_checkpoint -force $run_dir/results/${rm_name}_synth.dcp
+loom::reports_synth $run_dir ${rm_name}_synth

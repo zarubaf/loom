@@ -5,8 +5,8 @@
 #   loom::read_ips               — read all Loom IP cores
 #   loom::read_shell_rtl         — read static-shell RTL (no DUT)
 #   loom::read_rm_rtl            — read RM RTL (no shell, no DUT)
-#   loom::reports_synth $dir $pfx  — post-synthesis reports
-#   loom::reports_impl  $dir $pfx  — post-route reports
+#   loom::reports_synth $run_dir $pfx  — post-synthesis reports
+#   loom::reports_impl  $run_dir $pfx  — post-route reports
 
 namespace eval loom {
 
@@ -42,7 +42,7 @@ proc read_rm_rtl {} {
 
 # Print the timing closure result and the maximum achievable frequency.
 # Call after route_design. Uses the worst setup path across all clocks.
-proc report_achieved_freq {work_dir prefix} {
+proc report_achieved_freq {rpt_dir prefix} {
     catch {
         set path [lindex [get_timing_paths -max_paths 1 -nworst 1 -setup -quiet] 0]
         if {$path eq ""} {
@@ -60,7 +60,7 @@ proc report_achieved_freq {work_dir prefix} {
         puts "Timing $met  |  clock: $clk  |  target: [format %.3f $period] ns ([format %.1f [expr {1000.0/$period}]] MHz)"
         puts "             |  WNS: [format %+.3f $wns] ns  ->  achievable: [format %.3f $t_ach] ns ([format %.1f $f_ach] MHz)"
         puts "-----------------------------------------------------------"
-        set f [open $work_dir/results/${prefix}_freq.txt w]
+        set f [open $rpt_dir/${prefix}_freq.txt w]
         puts $f "target_period_ns   [format %.3f $period]"
         puts $f "target_freq_mhz    [format %.1f [expr {1000.0/$period}]]"
         puts $f "wns_ns             [format %+.3f $wns]"
@@ -74,35 +74,34 @@ proc report_achieved_freq {work_dir prefix} {
 
 # Lightweight mid-implementation checkpoint: timing summary + utilization.
 # Call after opt_design / place_design / phys_opt_design with a stage suffix,
-# e.g.: loom::reports_stage $work_dir $rm_name place
-proc reports_stage {work_dir prefix stage} {
-    set d $work_dir/results
+# e.g.: loom::reports_stage $run_dir $rm_name place
+proc reports_stage {run_dir prefix stage} {
+    set d $run_dir/reports
     file mkdir $d
     report_timing_summary -warn_on_violation \
                           -file $d/${prefix}_timing_${stage}.rpt
     report_utilization    -file $d/${prefix}_utilization_${stage}.rpt
 }
 
-proc reports_synth {work_dir prefix} {
-    set d $work_dir/results
+proc reports_synth {run_dir prefix} {
+    set d $run_dir/reports
     file mkdir $d
-    report_utilization         -file $d/${prefix}_utilization.rpt
-    report_timing_summary      -warn_on_violation \
-                               -file $d/${prefix}_timing.rpt
+    report_utilization    -file $d/${prefix}_utilization.rpt
+    report_timing_summary -warn_on_violation \
+                          -file $d/${prefix}_timing.rpt
 }
 
-proc reports_impl {work_dir prefix} {
-    set d $work_dir/results
+proc reports_impl {run_dir prefix} {
+    set d $run_dir/reports
     file mkdir $d
-    report_achieved_freq $work_dir $prefix
+    report_achieved_freq $d $prefix
     report_utilization         -file $d/${prefix}_utilization.rpt
     report_timing_summary      -warn_on_violation \
                                -file $d/${prefix}_timing.rpt
     report_timing              -warn_on_violation -nworst 20 -path_type full \
                                -slack_lesser_than 0 \
                                -file $d/${prefix}_timing_paths.rpt
-    report_clock_interaction   -significant_only \
-                               -file $d/${prefix}_clock_interaction.rpt
+    report_clock_interaction   -file $d/${prefix}_clock_interaction.rpt
     report_methodology         -file $d/${prefix}_methodology.rpt
     report_drc                 -file $d/${prefix}_drc.rpt
     report_route_status        -file $d/${prefix}_route_status.rpt

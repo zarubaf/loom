@@ -10,6 +10,7 @@
 source [file join [file dirname [info script]] reports.tcl]
 
 set work_dir  $::env(WORK_DIR)
+set run_dir   $::env(LOOM_RUN_DIR)
 set board_dir $::env(BOARD_DIR)
 set rm_name   [expr {[info exists ::env(RM_NAME)] ? $::env(RM_NAME) : "rm"}]
 
@@ -32,32 +33,47 @@ read_xdc $board_dir/u250_implementation.xdc
 # Partial implementation (RP only)
 # ----------------------------------------------------------------
 opt_design
-loom::reports_stage $work_dir $rm_name opt
+loom::reports_stage $run_dir $rm_name opt
 
 place_design
-loom::reports_stage $work_dir $rm_name place
+loom::reports_stage $run_dir $rm_name place
 
 phys_opt_design
-loom::reports_stage $work_dir $rm_name phys_opt
+loom::reports_stage $run_dir $rm_name phys_opt
 
 route_design
 
 # ----------------------------------------------------------------
 # Reports
 # ----------------------------------------------------------------
-loom::reports_impl $work_dir $rm_name
+loom::reports_impl $run_dir $rm_name
 
 # ----------------------------------------------------------------
 # Partial bitstream
 # ----------------------------------------------------------------
-write_bitstream -force -cell u_emu_top $work_dir/results/${rm_name}_partial.bit
+file mkdir $run_dir/results
+
+write_bitstream -force -cell u_emu_top $run_dir/results/${rm_name}_partial.bit
+
+# Write design hash sidecar so loomx can verify the bitstream was accepted.
+set manifest [file join [file dirname $::env(TRANSFORMED_V)] loom_manifest.toml]
+if {[file exists $manifest]} {
+    set fh [open $manifest r]
+    set content [read $fh]
+    close $fh
+    if {[regexp {hash\s*=\s*"([0-9a-f]+)"} $content _ design_hash]} {
+        set fh [open $run_dir/results/${rm_name}_partial.hash w]
+        puts -nonewline $fh $design_hash
+        close $fh
+    }
+}
 
 # Verify static region matches golden checkpoint.
-write_checkpoint -force $work_dir/results/${rm_name}_routed.dcp
+write_checkpoint -force $run_dir/results/${rm_name}_routed.dcp
 pr_verify \
   -initial    $work_dir/results/static_routed.dcp \
-  -additional $work_dir/results/${rm_name}_routed.dcp \
-  -file       $work_dir/results/${rm_name}_pr_verify.rpt
+  -additional $run_dir/results/${rm_name}_routed.dcp \
+  -file       $run_dir/reports/${rm_name}_pr_verify.rpt
 puts "pr_verify passed."
 
 puts "DFX RM done: $work_dir/results/${rm_name}_partial.bit"

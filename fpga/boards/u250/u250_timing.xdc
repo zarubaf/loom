@@ -25,6 +25,7 @@ set_false_path -through [get_ports pcie_perst_n]
 # Reset synchronizer is a proper 2-stage sync — no timing path needed
 set_false_path -to [get_pins {rst_sync_q1_reg/D}]
 set_false_path -to [get_pins {rst_sync_q1_reg/CLR}]
+set_false_path -to [get_pins {rst_sync_q2_reg/CLR}]
 
 # IRQ synchronizer: CDC from emu_clk to aclk — no timing path needed
 set_false_path -to [get_pins {irq_sync_q1_reg[*]/D}]

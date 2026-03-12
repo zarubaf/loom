@@ -5,6 +5,7 @@
 source $::env(BOARD_DIR)/settings.tcl
 
 set work_dir  $::env(WORK_DIR)
+set run_dir   $::env(LOOM_RUN_DIR)
 set board_dir $::env(BOARD_DIR)
 set ip_dir    $::env(IP_DIR)
 
@@ -23,7 +24,6 @@ read_ip $ip_dir/xlnx_decoupler/xlnx_decoupler.srcs/sources_1/ip/xlnx_decoupler/x
 # ----------------------------------------------------------------
 # Read RTL
 # ----------------------------------------------------------------
-# Infrastructure RTL
 set loom_src $::env(LOOM_SRC)
 read_verilog -sv \
   $loom_src/rtl/loom_axi4_err_slv.sv \
@@ -50,9 +50,9 @@ read_xdc $board_dir/u250_timing.xdc
 synth_design -top loom_shell -flatten_hierarchy rebuilt -verilog_define "XILINX=1"
 
 # ----------------------------------------------------------------
-# Write checkpoint
+# Write outputs
 # ----------------------------------------------------------------
-file mkdir $work_dir/results
-write_checkpoint -force $work_dir/results/synth.dcp
-report_utilization -file $work_dir/results/synth_utilization.rpt
-report_timing_summary -file $work_dir/results/synth_timing.rpt
+file mkdir $run_dir/results $run_dir/reports
+write_checkpoint      -force $run_dir/results/synth.dcp
+report_utilization    -file  $run_dir/reports/synth_utilization.rpt
+report_timing_summary -file  $run_dir/reports/synth_timing.rpt
