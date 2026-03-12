@@ -15,7 +15,7 @@ if(APPLE)
         "PATH=${BREW_PREFIX}/opt/bison/bin:${BREW_PREFIX}/opt/flex/bin:$ENV{PATH}"
         "PKG_CONFIG_PATH=${BREW_PREFIX}/opt/libffi/lib/pkgconfig:${BREW_PREFIX}/opt/readline/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}"
         "LDFLAGS=-L${BREW_PREFIX}/opt/readline/lib -L${BREW_PREFIX}/opt/libffi/lib"
-        "CPPFLAGS=-I${BREW_PREFIX}/opt/readline/include -I${BREW_PREFIX}/opt/libffi/include"
+        "CPPFLAGS=-I${BREW_PREFIX}/opt/flex/include -I${BREW_PREFIX}/opt/readline/include -I${BREW_PREFIX}/opt/libffi/include"
     )
 else()
     set(YOSYS_BUILD_ENV "")

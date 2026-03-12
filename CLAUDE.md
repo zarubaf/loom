@@ -10,15 +10,23 @@
 ## Quick Start
 
 ```bash
-# Prerequisites (macOS)
-brew install pkg-config libffi bison readline autoconf
+# Prerequisites (macOS — requires Homebrew LLVM for C++20 <source_location>)
+brew install pkg-config libffi bison readline autoconf llvm
 
 # Prerequisites (Ubuntu)
 sudo apt-get install build-essential cmake bison flex libfl-dev \
     pkg-config libffi-dev libreadline-dev zlib1g-dev tcl-dev \
     autoconf ccache help2man perl python3 git
 
-# Build (automatically fetches and builds Yosys, yosys-slang, and Verilator v5.044)
+# Init submodules (slang is nested inside yosys-slang)
+git submodule update --init --recursive
+
+# Build — macOS (use Homebrew LLVM; fetches Yosys, yosys-slang, Verilator v5.044)
+CC=/opt/homebrew/opt/llvm/bin/clang CXX=/opt/homebrew/opt/llvm/bin/clang++ \
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(sysctl -n hw.ncpu)
+
+# Build — Linux
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 
