@@ -16,6 +16,7 @@ target_include_directories(loom_host PUBLIC
     ${CMAKE_SOURCE_DIR}/src/util
     ${CMAKE_SOURCE_DIR}/src/include
     ${CMAKE_SOURCE_DIR}/src/dpi
+    ${CMAKE_BINARY_DIR}
 )
 target_compile_features(loom_host PUBLIC cxx_std_20)
 target_link_libraries(loom_host PUBLIC replxx::replxx loom_proto)

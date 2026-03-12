@@ -48,7 +48,7 @@ module loom_emu_ctrl #(
     parameter int unsigned MAX_ARG_WIDTH   = 64,
     parameter int unsigned MAX_RET_WIDTH   = 32,
     parameter int unsigned MAX_ARGS        = 8,
-    parameter logic [31:0] SHELL_VERSION   = 32'h00_02_00,  // 0.2.0
+    parameter logic [31:0] SHELL_VERSION   = 32'h0,  // injected by emu_top Yosys pass from loom_version.h
     parameter logic [31:0] DESIGN_HASH_0  = 32'h0,
     parameter logic [31:0] DESIGN_HASH_1  = 32'h0,
     parameter logic [31:0] DESIGN_HASH_2  = 32'h0,

@@ -235,7 +235,7 @@ namespace ctrl {
 // Shell Version
 // ============================================================================
 
-constexpr uint32_t LOOM_SHELL_VERSION = 0x000200;  // 0.2.0
+#include "loom_version.h"  // LOOM_SHELL_VERSION — generated from CMakeLists.txt project(VERSION)
 
 // Convert packed version (0xMMNNPP) to "M.N.P" string
 inline std::string version_string(uint32_t v) {
@@ -414,6 +414,7 @@ public:
     Result<void> write32(uint32_t addr, uint32_t data);
 
 private:
+    Result<void> probe_rm();   // re-read RM registers after connect or reconfigure
     Result<void> scan_wait_done(int timeout_ms);
     Result<void> mem_wait_done(int timeout_ms);
     Result<void> mem_clear_done();

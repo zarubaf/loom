@@ -7,6 +7,7 @@ add_library(emu_top MODULE emu_top.cc)
 target_include_directories(emu_top PRIVATE
     ${YOSYS_INCLUDE}
     ${CMAKE_SOURCE_DIR}/third_party/picosha2
+    ${CMAKE_BINARY_DIR}
 )
 target_compile_definitions(emu_top PRIVATE
     _YOSYS_

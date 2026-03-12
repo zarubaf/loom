@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 cmake_minimum_required(VERSION 3.20)
-project(loom LANGUAGES C CXX)
+project(loom VERSION 0.2.0 LANGUAGES C CXX)
+
+# Generate loom_version.h from the project version above — single source of truth
+configure_file(src/loom_version.h.in loom_version.h @ONLY)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
