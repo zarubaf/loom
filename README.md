@@ -105,8 +105,11 @@ Xilinx IPs for FPGA). See [doc/fpga-support.md](doc/fpga-support.md).
 ### macOS
 
 ```bash
-brew install pkg-config libffi bison readline autoconf
+brew install pkg-config libffi bison readline autoconf llvm
 ```
+
+Apple Clang does not ship `<source_location>` (required by the slang
+frontend). Homebrew LLVM provides a complete C++20 toolchain.
 
 ### Linux (Debian/Ubuntu)
 
@@ -120,7 +123,24 @@ Yosys, yosys-slang, and Verilator are fetched and built automatically.
 
 ## Building
 
+### macOS
+
 ```bash
+# Initialize submodules (slang is nested inside yosys-slang)
+git submodule update --init --recursive
+
+# Configure with Homebrew LLVM
+CC=/opt/homebrew/opt/llvm/bin/clang \
+CXX=/opt/homebrew/opt/llvm/bin/clang++ \
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+cmake --build build -j$(sysctl -n hw.ncpu)
+```
+
+### Linux
+
+```bash
+git submodule update --init --recursive
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 ```

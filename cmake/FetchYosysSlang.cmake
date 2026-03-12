@@ -10,6 +10,8 @@ ExternalProject_Add(yosys_slang_ext
     BINARY_DIR         ${YOSYS_SLANG_BINARY}
     CMAKE_ARGS
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+        -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
         -DCMAKE_CXX_STANDARD=20
         -DYOSYS_CONFIG=${YOSYS_PREFIX}/bin/yosys-config
         -DBUILD_AS_PLUGIN=ON
