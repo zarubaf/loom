@@ -486,6 +486,19 @@ void Shell::register_commands() {
         [this](const auto& args) { return cmd_loadmem(args); }
     });
     commands_.push_back({
+        "reconfigure", {"pr"},
+        "Load partial bitstream via PCIe (ICAP_ULTRASCALE)",
+        "Usage: reconfigure <partial.bit>\n"
+        "  Stream a partial bitstream into the FPGA reconfigurable partition\n"
+        "  via the on-chip ICAP controller.  The RP is automatically decoupled\n"
+        "  before programming and re-coupled after.\n"
+        "\n"
+        "  Requires XDMA transport (-t xdma).  FPGA-only; not available in sim.\n"
+        "\n"
+        "  Example: reconfigure new_dut_partial.bit",
+        [this](const auto& args) { return cmd_reconfigure(args); }
+    });
+    commands_.push_back({
         "exit", {"quit", "q"},
         "Disconnect and exit",
         "Usage: exit\n"
@@ -1537,6 +1550,25 @@ int Shell::cmd_loadmem(const std::vector<std::string>& args) {
     logger.info("Loaded %s into %s (%u entries, %s format)",
                 filepath.c_str(), mem_name.c_str(), target->depth(),
                 is_hex ? "hex" : "bin");
+    return 0;
+}
+
+// ============================================================================
+// Command: reconfigure
+// ============================================================================
+
+int Shell::cmd_reconfigure(const std::vector<std::string>& args) {
+    if (args.size() < 2) {
+        logger.error("Usage: reconfigure <partial.bit>");
+        return -1;
+    }
+    const std::string& path = args[1];
+
+    auto rc = ctx_.reconfigure(path);
+    if (!rc.ok()) {
+        logger.error("Reconfiguration failed (error %d)", static_cast<int>(rc.error()));
+        return -1;
+    }
     return 0;
 }
 

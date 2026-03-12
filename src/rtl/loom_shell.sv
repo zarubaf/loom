@@ -8,10 +8,11 @@
 // Sub-module implementations differ between sim (behavioral BFMs) and
 // FPGA (Xilinx IPs), but the shell module itself is identical.
 //
-// Address Map (20-bit, 3 masters on aclk domain):
+// Address Map (20-bit, 4 masters on aclk domain):
 //   [0x0_0000 – 0x3_FFFF]  firewall → CDC → loom_emu_top
 //   [0x4_0000 – 0x4_FFFF]  xlnx_clk_gen DRP
 //   [0x5_0000 – 0x5_FFFF]  firewall management registers
+//   [0x6_0000 – 0x6_FFFF]  loom_icap_ctrl (ICAP_ULTRASCALE, PCIe DFX)
 
 module loom_shell (
     // PCIe (XDMA)
@@ -33,7 +34,7 @@ module loom_shell (
     // =========================================================================
     localparam int ADDR_WIDTH    = 20;
     localparam int N_IRQ         = 16;
-    localparam int N_MASTERS     = 3;
+    localparam int N_MASTERS     = 4;
 
     // =========================================================================
     // Clock Buffers
@@ -251,11 +252,12 @@ module loom_shell (
     );
 
     // =========================================================================
-    // 2. AXI-Lite Demux (3 masters on aclk domain)
+    // 2. AXI-Lite Demux (4 masters on aclk domain)
     // =========================================================================
     // Master 0: [0x0_0000 – 0x3_FFFF] firewall s_axi → CDC → emu_top
     // Master 1: [0x4_0000 – 0x4_FFFF] clk_gen DRP
     // Master 2: [0x5_0000 – 0x5_FFFF] firewall s_mgmt (management registers)
+    // Master 3: [0x6_0000 – 0x6_FFFF] loom_icap_ctrl (ICAP_ULTRASCALE)
 
     wire [N_MASTERS*ADDR_WIDTH-1:0] demux_m_araddr;
     wire [N_MASTERS-1:0]            demux_m_arvalid;
@@ -279,8 +281,8 @@ module loom_shell (
     loom_axil_demux #(
         .ADDR_WIDTH (ADDR_WIDTH),
         .N_MASTERS  (N_MASTERS),
-        .BASE_ADDR  ({20'h50000, 20'h40000, 20'h00000}),
-        .ADDR_MASK  ({20'hF0000, 20'hF0000, 20'hC0000})
+        .BASE_ADDR  ({20'h60000, 20'h50000, 20'h40000, 20'h00000}),
+        .ADDR_MASK  ({20'hF0000, 20'hF0000, 20'hF0000, 20'hC0000})
     ) u_demux (
         .clk_i  (aclk),
         .rst_ni (aresetn),
@@ -726,7 +728,39 @@ module loom_shell (
     assign emu_rst_n = rst_sync_q2;
 
     // =========================================================================
-    // 8. Loom Emulation Top (emu_clk domain)
+    // 8. ICAP Controller (aclk domain, static region only)
+    //    Provides PCIe-based partial reconfiguration without a JTAG cable.
+    //    In simulation this instantiates the no-op stub.
+    // =========================================================================
+
+    loom_icap_ctrl #(
+        .ADDR_WIDTH (ADDR_WIDTH)
+    ) u_icap_ctrl (
+        .clk_i  (aclk),
+        .rst_ni (aresetn),
+
+        .s_axil_araddr_i  (demux_m_araddr [3*ADDR_WIDTH +: ADDR_WIDTH]),
+        .s_axil_arvalid_i (demux_m_arvalid[3]),
+        .s_axil_arready_o (demux_m_arready[3]),
+        .s_axil_rdata_o   (demux_m_rdata  [3*32 +: 32]),
+        .s_axil_rresp_o   (demux_m_rresp  [3*2 +: 2]),
+        .s_axil_rvalid_o  (demux_m_rvalid [3]),
+        .s_axil_rready_i  (demux_m_rready [3]),
+
+        .s_axil_awaddr_i  (demux_m_awaddr [3*ADDR_WIDTH +: ADDR_WIDTH]),
+        .s_axil_awvalid_i (demux_m_awvalid[3]),
+        .s_axil_awready_o (demux_m_awready[3]),
+        .s_axil_wdata_i   (demux_m_wdata  [3*32 +: 32]),
+        .s_axil_wstrb_i   (demux_m_wstrb  [3*4 +: 4]),
+        .s_axil_wvalid_i  (demux_m_wvalid [3]),
+        .s_axil_wready_o  (demux_m_wready [3]),
+        .s_axil_bresp_o   (demux_m_bresp  [3*2 +: 2]),
+        .s_axil_bvalid_o  (demux_m_bvalid [3]),
+        .s_axil_bready_i  (demux_m_bready [3])
+    );
+
+    // =========================================================================
+    // 9. Loom Emulation Top (emu_clk domain)
     // =========================================================================
 
     (* DONT_TOUCH = "yes" *)

@@ -103,12 +103,13 @@ enum class State : uint8_t {
 // ============================================================================
 
 namespace addr {
-    constexpr uint32_t EmuCtrl = 0x00000;
+    constexpr uint32_t EmuCtrl  = 0x00000;
     constexpr uint32_t DpiRegfile = 0x10000;
     constexpr uint32_t ScanCtrl = 0x20000;
-    constexpr uint32_t MemCtrl = 0x30000;
-    constexpr uint32_t ClkGen = 0x40000;
+    constexpr uint32_t MemCtrl  = 0x30000;
+    constexpr uint32_t ClkGen   = 0x40000;
     constexpr uint32_t Firewall = 0x50000;
+    constexpr uint32_t IcapCtrl = 0x60000;  // loom_icap_ctrl (ICAP_ULTRASCALE)
 }
 
 namespace reg {
@@ -184,11 +185,16 @@ namespace reg {
     constexpr uint32_t ScanDataBase = 0x10;
 
     // mem_ctrl register offsets
-    constexpr uint32_t MemStatus = 0x00;
-    constexpr uint32_t MemControl = 0x04;
-    constexpr uint32_t MemAddr = 0x08;
-    constexpr uint32_t MemLength = 0x0C;
+    constexpr uint32_t MemStatus   = 0x00;
+    constexpr uint32_t MemControl  = 0x04;
+    constexpr uint32_t MemAddr     = 0x08;
+    constexpr uint32_t MemLength   = 0x0C;
     constexpr uint32_t MemDataBase = 0x10;
+
+    // icap_ctrl register offsets (at addr::IcapCtrl = 0x60000)
+    constexpr uint32_t IcapStatus = 0x00;  // R: [0]=busy, [1]=prdone, [2]=prerror
+    constexpr uint32_t IcapCtrl   = 0x04;  // W: [0]=sw_reset
+    constexpr uint32_t IcapData   = 0x08;  // W: bitstream word (big-endian from file)
 }
 
 namespace cmd {
@@ -229,7 +235,7 @@ namespace ctrl {
 // Shell Version
 // ============================================================================
 
-constexpr uint32_t LOOM_SHELL_VERSION = 0x000100;  // 0.1.0
+constexpr uint32_t LOOM_SHELL_VERSION = 0x000200;  // 0.2.0
 
 // Convert packed version (0xMMNNPP) to "M.N.P" string
 inline std::string version_string(uint32_t v) {
@@ -381,6 +387,17 @@ public:
     Result<void> couple();
     Result<void> decouple();
     Result<bool> is_coupled();
+
+    // ========================================================================
+    // PCIe-based Partial Reconfiguration (ICAP_ULTRASCALE)
+    // ========================================================================
+
+    // Load a partial bitstream (.bit) into the FPGA via the ICAP controller.
+    // Automatically decouples the RP before streaming and re-couples after.
+    // The bitstream header is stripped automatically (searches for sync word
+    // 0xAA995566); only the raw configuration data is sent to ICAP.
+    // FPGA transport only — returns Error::NotSupported on socket transport.
+    Result<void> reconfigure(std::string_view partial_bit_path);
 
     // ========================================================================
     // Interrupt Support

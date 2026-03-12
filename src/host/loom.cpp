@@ -3,7 +3,12 @@
 
 #include "loom.h"
 #include "loom_log.h"
+
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
 #include <unistd.h>
+#include <vector>
 
 namespace loom {
 
@@ -647,6 +652,125 @@ Result<bool> Context::is_coupled() {
     auto val = read32(addr::Firewall + reg::FwStatus);
     if (!val.ok()) return val.error();
     return (val.value() & 0x8) == 0;  // bit 3 = decouple_status
+}
+
+// ============================================================================
+// PCIe-based Partial Reconfiguration
+// ============================================================================
+
+Result<void> Context::reconfigure(std::string_view partial_bit_path) {
+    // Open and read the partial bitstream file
+    std::string path(partial_bit_path);
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) {
+        logger.error("reconfigure: cannot open '%s': %s", path.c_str(), std::strerror(errno));
+        return Error::InvalidArg;
+    }
+
+    std::fseek(f, 0, SEEK_END);
+    long file_size = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+
+    if (file_size <= 0) {
+        std::fclose(f);
+        logger.error("reconfigure: empty or unreadable file '%s'", path.c_str());
+        return Error::InvalidArg;
+    }
+
+    std::vector<uint8_t> buf(static_cast<size_t>(file_size));
+    if (std::fread(buf.data(), 1, buf.size(), f) != buf.size()) {
+        std::fclose(f);
+        logger.error("reconfigure: short read on '%s'", path.c_str());
+        return Error::Transport;
+    }
+    std::fclose(f);
+
+    // Locate the bitstream sync word 0xAA995566 (UG570).
+    // Everything before it (including the .bit file header) is skipped.
+    size_t sync_off = buf.size();  // sentinel: not found
+    for (size_t i = 0; i + 4 <= buf.size(); i++) {
+        if (buf[i] == 0xAA && buf[i+1] == 0x99 &&
+            buf[i+2] == 0x55 && buf[i+3] == 0x66) {
+            sync_off = i;
+            break;
+        }
+    }
+    if (sync_off == buf.size()) {
+        logger.error("reconfigure: sync word 0xAA995566 not found in '%s'", path.c_str());
+        return Error::InvalidArg;
+    }
+
+    const uint8_t* data    = buf.data() + sync_off;
+    size_t         data_sz = buf.size() - sync_off;
+    size_t         n_words = (data_sz + 3) / 4;
+
+    logger.info("reconfigure: '%s' — %zu bytes, %zu words (header %zu bytes skipped)",
+                path.c_str(), data_sz, n_words, sync_off);
+
+    // 1. Decouple RP to isolate it during configuration
+    auto rc = decouple();
+    if (!rc.ok()) {
+        logger.error("reconfigure: decouple failed");
+        return rc;
+    }
+
+    // 2. Reset ICAP state machine and clear sticky status bits
+    auto wr = write32(addr::IcapCtrl + reg::IcapCtrl, 0x1);  // assert sw_reset
+    if (!wr.ok()) { couple(); return wr.error(); }
+    wr = write32(addr::IcapCtrl + reg::IcapCtrl, 0x0);        // deassert
+    if (!wr.ok()) { couple(); return wr.error(); }
+
+    // 3. Stream bitstream words to the DATA register.
+    // Each 4-byte group from the file is packed little-endian into a uint32_t
+    // so that file byte 0 occupies wdata[7:0], byte 1 → [15:8], etc.
+    // The hardware applies per-byte bit-reversal before ICAP (UG570 Table 2-7:
+    // file byte 0 maps to I[7:0] with MSB→LSB reversal within each byte).
+    for (size_t w = 0; w < n_words; w++) {
+        uint32_t word = 0;
+        for (int b = 0; b < 4; b++) {
+            size_t off = w * 4 + static_cast<size_t>(b);
+            word |= static_cast<uint32_t>(off < data_sz ? data[off] : 0x00u) << (b * 8);
+        }
+        wr = write32(addr::IcapCtrl + reg::IcapData, word);
+        if (!wr.ok()) {
+            logger.error("reconfigure: write failed at word %zu", w);
+            couple();
+            return wr.error();
+        }
+        if (w % 65536 == 0 && w > 0)
+            logger.info("  %zu / %zu words (%.0f%%)", w, n_words, 100.0 * w / n_words);
+    }
+
+    // 4. Poll STATUS for PRDONE (bit 1) or PRERROR (bit 2).
+    // Give ICAP up to 1 s to complete configuration.
+    bool pr_done = false;
+    for (int i = 0; i < 100; i++) {
+        auto st = read32(addr::IcapCtrl + reg::IcapStatus);
+        if (!st.ok()) { couple(); return st.error(); }
+        uint32_t s = st.value();
+        if (s & 0x4u) {
+            logger.error("reconfigure: ICAP PRERROR — partial reconfiguration failed");
+            couple();
+            return Error::Transport;
+        }
+        if (s & 0x2u) {
+            pr_done = true;
+            break;
+        }
+        ::usleep(10000);  // 10 ms
+    }
+    if (!pr_done)
+        logger.warning("reconfigure: PRDONE not seen within 1 s — PR may still succeed");
+
+    // 5. Re-couple RP
+    rc = couple();
+    if (!rc.ok()) {
+        logger.error("reconfigure: re-couple failed");
+        return rc;
+    }
+
+    logger.info("reconfigure: done");
+    return {};
 }
 
 } // namespace loom

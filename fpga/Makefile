@@ -110,6 +110,7 @@ LOOM_RTL := \
   $(LOOM_SRC)/rtl/loom_dpi_regfile.sv \
   $(LOOM_SRC)/rtl/loom_scan_ctrl.sv \
   $(LOOM_SRC)/rtl/loom_axil_firewall.sv \
+  $(LOOM_SRC)/rtl/loom_icap_ctrl.sv \
   $(LOOM_SRC)/rtl/loom_shell.sv
 
 # Constraints and scripts

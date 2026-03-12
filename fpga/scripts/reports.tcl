@@ -27,6 +27,7 @@ proc read_shell_rtl {} {
         $s/rtl/loom_dpi_regfile.sv \
         $s/rtl/loom_scan_ctrl.sv \
         $s/rtl/loom_axil_firewall.sv \
+        $s/rtl/loom_icap_ctrl.sv \
         $s/rtl/loom_shell.sv
 }
 
