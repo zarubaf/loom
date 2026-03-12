@@ -4,7 +4,8 @@
 ## Project Specific
 
 - If the loom shell changes, bump the version according to semantic versioning.
-- **Verilator must build with zero warnings.** After any RTL or BFM change, check the Verilator output (produced during `make test` in any e2e test) for new `%Warning-*` lines. Fix them in the source — never suppress a warning without a comment explaining why it is intentional.
+- **Verilator must build with zero warnings.**
+- **When you notice something odd** (unexpected warnings, suspicious behaviour, stale comments, potential bugs) that is out of scope for the current task, add a brief entry to `TODO.md` rather than ignoring it or fixing it inline. After any RTL or BFM change, check the Verilator output (produced during `make test` in any e2e test) for new `%Warning-*` lines. Fix them in the source — never suppress a warning without a comment explaining why it is intentional.
 
 ## Quick Start
 
