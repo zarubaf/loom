@@ -20,8 +20,16 @@ target_include_directories(loomx PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/src/util
 )
-target_link_libraries(loomx PRIVATE
-    "$<LINK_LIBRARY:WHOLE_ARCHIVE,loom_host>"
-    ${CMAKE_DL_LIBS}
-)
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.24")
+    target_link_libraries(loomx PRIVATE
+        "$<LINK_LIBRARY:WHOLE_ARCHIVE,loom_host>"
+        ${CMAKE_DL_LIBS}
+    )
+else()
+    # cmake < 3.24 doesn't support LINK_LIBRARY:WHOLE_ARCHIVE
+    target_link_libraries(loomx PRIVATE
+        -Wl,--whole-archive loom_host -Wl,--no-whole-archive
+        ${CMAKE_DL_LIBS}
+    )
+endif()
 target_compile_features(loomx PRIVATE cxx_std_20)

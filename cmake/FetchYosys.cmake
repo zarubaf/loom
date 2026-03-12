@@ -22,10 +22,10 @@ else()
 endif()
 
 ExternalProject_Add(yosys_ext
-    GIT_REPOSITORY https://github.com/YosysHQ/yosys.git
-    GIT_TAG        ${YOSYS_TAG}
-    GIT_SHALLOW    TRUE
-    PREFIX         ${CMAKE_BINARY_DIR}/yosys
+    GIT_REPOSITORY  https://github.com/YosysHQ/yosys.git
+    GIT_TAG         ${YOSYS_TAG}
+    GIT_SUBMODULES_RECURSE TRUE
+    PREFIX          ${CMAKE_BINARY_DIR}/yosys
     CONFIGURE_COMMAND ""
     BUILD_COMMAND   ${CMAKE_COMMAND} -E env ${YOSYS_BUILD_ENV}
         make -j${NPROC} PREFIX=<INSTALL_DIR> ENABLE_LIBYOSYS=1

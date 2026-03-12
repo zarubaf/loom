@@ -14,10 +14,9 @@ set(protobuf_BUILD_PROTOC_BINARIES ON CACHE BOOL "" FORCE)
 set(protobuf_WITH_ZLIB OFF CACHE BOOL "" FORCE)
 
 FetchContent_Declare(protobuf
-    GIT_REPOSITORY https://github.com/protocolbuffers/protobuf.git
-    GIT_TAG        v3.21.12
-    GIT_SHALLOW    TRUE
-    SOURCE_SUBDIR  cmake
+    URL      https://github.com/protocolbuffers/protobuf/archive/refs/tags/v3.21.12.tar.gz
+    URL_HASH SHA256=930c2c3b5ecc6c9c12615cf5ad93f1cd6e12d0aba862b572e076259970ac3a53
+    SOURCE_SUBDIR cmake
 )
 
 FetchContent_MakeAvailable(protobuf)
