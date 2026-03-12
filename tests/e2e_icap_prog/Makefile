@@ -13,6 +13,6 @@ test: $(_TEST_DEPS) $(BUILD)/test.bit
 	$(LOOMX) -work $(BUILD) -sim Vloom_shell -timeout -1 \
 		-f $(CURDIR)/test_script.txt 2>&1 | tee $(BUILD)/test.log
 	@echo "--- Checking output ---"
-	@grep -q 'reconfigure:.*words'  $(BUILD)/test.log
+	@grep -q 'reconfigure:.*bytes'  $(BUILD)/test.log
 	@grep -q 'reconfigure: done'    $(BUILD)/test.log
 	@echo "PASS: ICAP programming e2e test passed"

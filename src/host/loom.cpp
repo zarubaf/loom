@@ -5,6 +5,7 @@
 #include "loom_log.h"
 
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
@@ -67,7 +68,19 @@ Result<void> Context::connect(std::string_view target, uint32_t freq_mhz) {
         logger.warning("Failed to couple decoupler (may not be present)");
     }
 
-    // Now safe to read emu_ctrl registers (through firewall → CDC → emu_top)
+    // Now safe to read EM registers (through firewall → CDC → emu_top)
+    auto rc = probe_rm();
+    if (!rc.ok()) return rc;
+
+    logger.info("Connected. Shell: %s, Hash: %.16s..., DPI funcs: %u, Scan bits: %u, Memories: %u, FIFO words: %u",
+             version_string(shell_version_).c_str(),
+             design_hash_hex().c_str(),
+             n_dpi_funcs_, scan_chain_length_, n_memories_, fifo_entry_words_);
+
+    return {};
+}
+
+Result<void> Context::probe_rm() {
     auto val = read32(addr::EmuCtrl + reg::NDpiFuncs);
     if (!val.ok()) return val.error();
     n_dpi_funcs_ = val.value();
@@ -106,11 +119,6 @@ Result<void> Context::connect(std::string_view target, uint32_t freq_mhz) {
         if (!val.ok()) return val.error();
         design_hash_[i] = val.value();
     }
-
-    logger.info("Connected. Shell: %s, Hash: %.16s..., DPI funcs: %u, Scan bits: %u, Memories: %u, FIFO words: %u",
-             version_string(shell_version_).c_str(),
-             design_hash_hex().c_str(),
-             n_dpi_funcs_, scan_chain_length_, n_memories_, fifo_entry_words_);
 
     return {};
 }
@@ -704,8 +712,8 @@ Result<void> Context::reconfigure(std::string_view partial_bit_path) {
     size_t         data_sz = buf.size() - sync_off;
     size_t         n_words = (data_sz + 3) / 4;
 
-    logger.info("reconfigure: '%s' — %zu bytes, %zu words (header %zu bytes skipped)",
-                path.c_str(), data_sz, n_words, sync_off);
+    logger.info("reconfigure: '%s' — %zu bytes (header %zu bytes skipped)",
+                path.c_str(), data_sz, sync_off);
 
     // 1. Decouple RP to isolate it during configuration
     auto rc = decouple();
@@ -721,43 +729,91 @@ Result<void> Context::reconfigure(std::string_view partial_bit_path) {
     if (!wr.ok()) { couple(); return wr.error(); }
 
     // 3. Stream bitstream words to the DATA register.
-    // Each 4-byte group from the file is packed little-endian into a uint32_t
-    // so that file byte 0 occupies wdata[7:0], byte 1 → [15:8], etc.
-    // The hardware applies per-byte bit-reversal before ICAP (UG570 Table 2-7:
-    // file byte 0 maps to I[7:0] with MSB→LSB reversal within each byte).
-    for (size_t w = 0; w < n_words; w++) {
-        uint32_t word = 0;
-        for (int b = 0; b < 4; b++) {
-            size_t off = w * 4 + static_cast<size_t>(b);
-            word |= static_cast<uint32_t>(off < data_sz ? data[off] : 0x00u) << (b * 8);
+    // The .bit file stores 32-bit words big-endian.  ICAPE3 expects file byte 0
+    // at I[31:24], byte 1 at I[23:16], etc. (UG570 §9, Table 9-24).  We pack
+    // each 4-byte group big-endian into a uint32_t; hardware applies per-byte
+    // bit-reversal before presenting to ICAPE3 (UG570 Table 2-7).
+    {
+        constexpr int BAR_WIDTH = 40;
+        auto t0 = std::chrono::steady_clock::now();
+        int last_pct = -1;
+
+        // Print initial bar so cursor is on the right line.
+        std::string empty_bar(static_cast<size_t>(BAR_WIDTH), ' ');
+        std::fprintf(stderr, "  PR [%s]   0%%  --.- MB/s", empty_bar.c_str());
+
+        for (size_t w = 0; w < n_words; w++) {
+            uint32_t word = 0;
+            for (int b = 0; b < 4; b++) {
+                size_t off = w * 4 + static_cast<size_t>(b);
+                word |= static_cast<uint32_t>(off < data_sz ? data[off] : 0x00u) << ((3 - b) * 8);
+            }
+            wr = write32(addr::IcapCtrl + reg::IcapData, word);
+            if (!wr.ok()) {
+                std::fprintf(stderr, "\n");
+                logger.error("reconfigure: write failed at word %zu", w);
+                couple();
+                return wr.error();
+            }
+
+            int pct = static_cast<int>(100 * w / n_words);
+            if (pct != last_pct) {
+                last_pct = pct;
+                int filled = pct * BAR_WIDTH / 100;
+                auto now = std::chrono::steady_clock::now();
+                double elapsed_s = std::chrono::duration<double>(now - t0).count();
+                double mb_s = elapsed_s > 0.0
+                    ? (static_cast<double>(w) * 4.0 / 1e6) / elapsed_s
+                    : 0.0;
+                // Build bar: █ = U+2588 = \xe2\x96\x88, space for empty
+                std::string bar;
+                bar.reserve(static_cast<size_t>(BAR_WIDTH) * 3);
+                for (int i = 0; i < BAR_WIDTH; i++) {
+                    if (i < filled) { bar += "\xe2\x96\x88"; }  // █
+                    else            { bar += ' '; }
+                }
+                std::fprintf(stderr, "\r  PR [%s] %3d%%  %5.1f MB/s",
+                             bar.c_str(), pct, mb_s);
+                std::fflush(stderr);
+            }
         }
-        wr = write32(addr::IcapCtrl + reg::IcapData, word);
-        if (!wr.ok()) {
-            logger.error("reconfigure: write failed at word %zu", w);
-            couple();
-            return wr.error();
-        }
-        if (w % 65536 == 0 && w > 0)
-            logger.info("  %zu / %zu words (%.0f%%)", w, n_words, 100.0 * w / n_words);
+        std::fprintf(stderr, "\n");
     }
 
     // 4. Poll STATUS for PRDONE (bit 1) or PRERROR (bit 2).
     // Give ICAP up to 1 s to complete configuration.
-    bool pr_done = false;
+    bool pr_done  = false;
+    bool pr_error = false;
     for (int i = 0; i < 100; i++) {
         auto st = read32(addr::IcapCtrl + reg::IcapStatus);
         if (!st.ok()) { couple(); return st.error(); }
         uint32_t s = st.value();
-        if (s & 0x4u) {
-            logger.error("reconfigure: ICAP PRERROR — partial reconfiguration failed");
-            couple();
-            return Error::Transport;
-        }
-        if (s & 0x2u) {
-            pr_done = true;
-            break;
-        }
+        if (s & 0x4u) { pr_error = true; break; }
+        if (s & 0x2u) { pr_done  = true; break; }
         ::usleep(10000);  // 10 ms
+    }
+
+    // Final status read — PRERROR can arrive after PRDONE, so always re-check.
+    {
+        auto st = read32(addr::IcapCtrl + reg::IcapStatus);
+        if (st.ok()) {
+            uint32_t s = st.value();
+            if (s & 0x4u) pr_error = true;
+            if (s & 0x2u) pr_done  = true;
+            logger.info("reconfigure: ICAP STATUS = 0x%02x "
+                        "(busy=%d prdone=%d prerror=%d)",
+                        s, !!(s & 0x1u), !!(s & 0x2u), !!(s & 0x4u));
+        }
+    }
+
+    if (pr_error) {
+        logger.error("reconfigure: ICAP PRERROR — partial reconfiguration failed.\n"
+                     "  Common causes:\n"
+                     "  - Partial bitstream built against a different static design\n"
+                     "  - Wrong .bit file (full bitstream instead of partial)\n"
+                     "  - Bitstream byte-ordering mismatch");
+        couple();
+        return Error::Transport;
     }
     if (!pr_done)
         logger.warning("reconfigure: PRDONE not seen within 1 s — PR may still succeed");
@@ -769,7 +825,63 @@ Result<void> Context::reconfigure(std::string_view partial_bit_path) {
         return rc;
     }
 
-    logger.info("reconfigure: done");
+    // 6. Re-read RM registers so cached shell_version / design_hash / etc.
+    //    reflect the newly loaded design.
+    rc = probe_rm();
+    if (!rc.ok()) {
+        logger.error("reconfigure: post-PR register probe failed");
+        return rc;
+    }
+
+    // 6b. Verify hardware design hash matches the .hash sidecar written at
+    //     build time.  A mismatch means the bitstream wasn't applied (e.g. it
+    //     was built against a different static_routed.dcp and ICAP silently
+    //     accepted it, or the wrong .bit file was given).
+    {
+        std::string hash_path = path;
+        if (hash_path.size() > 4 &&
+            hash_path.compare(hash_path.size() - 4, 4, ".bit") == 0)
+            hash_path = hash_path.substr(0, hash_path.size() - 4) + ".hash";
+        else
+            hash_path += ".hash";
+
+        FILE* hf = std::fopen(hash_path.c_str(), "r");
+        if (!hf) {
+            logger.warning("reconfigure: no .hash sidecar found at '%s' — "
+                           "cannot verify bitstream acceptance", hash_path.c_str());
+        } else {
+            char expected[65] = {};
+            if (std::fread(expected, 1, 64, hf) < 8) {
+                logger.warning("reconfigure: .hash sidecar '%s' is malformed",
+                               hash_path.c_str());
+            } else {
+                expected[64] = '\0';
+                std::string actual = design_hash_hex();
+                if (actual == std::string(expected)) {
+                    logger.info("reconfigure: hash verified (%-.16s...)", expected);
+                } else {
+                    logger.error("reconfigure: HASH MISMATCH — bitstream may not have "
+                                 "been applied!\n"
+                                 "  expected: %s\n"
+                                 "  actual:   %s",
+                                 expected, actual.c_str());
+                }
+            }
+            std::fclose(hf);
+        }
+    }
+
+    // 7. Issue CMD_RESET so the new RM's emu_ctrl starts from a clean state.
+    //    emu_rst_n is driven by the static reset synchronizer which doesn't
+    //    toggle during PR — this is the only way to reset the new RM's logic.
+    rc = reset();
+    if (!rc.ok()) {
+        logger.warning("reconfigure: post-PR reset failed (non-fatal)");
+    }
+
+    logger.info("reconfigure: done — Shell: %s, Hash: %.16s...",
+                version_string(shell_version_).c_str(),
+                design_hash_hex().c_str());
     return {};
 }
 
