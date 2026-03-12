@@ -208,6 +208,12 @@ module loom_dpi_regfile #(
     logic [15:0] fifo_rd_threshold;
     logic [31:0] fifo_rd_head_word;
 
+    // AXI read address decode — declared here so the FIFO generate block
+    // can reference rd_reg_idx without a forward-reference warning
+    logic [15:0] rd_addr_q;
+    logic [5:0]  rd_reg_idx;
+    assign rd_reg_idx = rd_addr_q[5:2];
+
     generate if (HAS_DPI_FIFO) begin : gen_fifo
         localparam int DEPTH = 2**FIFO_DEPTH_LOG2;
 
@@ -223,8 +229,8 @@ module loom_dpi_regfile #(
         assign fifo_threshold_o = (level >= threshold_q);
 
         // Export signals for AXI read decode (avoid hierarchical refs)
-        assign fifo_rd_level = level[15:0];
-        assign fifo_rd_threshold = threshold_q[15:0];
+        assign fifo_rd_level     = 16'(level);
+        assign fifo_rd_threshold = 16'(threshold_q);
 
         // Head entry word read (selected by rd_reg_idx in AXI decode)
         // Unpack head entry into an array of 32-bit words for indexed read
@@ -235,17 +241,23 @@ module loom_dpi_regfile #(
         always_comb begin
             fifo_rd_head_word = 32'h0;
             if (!fifo_empty_o && (rd_reg_idx >= REG_ARG0) &&
-                (rd_reg_idx < REG_ARG0 + FIFO_ENTRY_WORDS[5:0])) begin
+                (rd_reg_idx < REG_ARG0 + 6'(FIFO_ENTRY_WORDS))) begin
                 fifo_rd_head_word = head_words[rd_reg_idx - REG_ARG0];
             end
         end
 
         // Write side (from emu_ctrl)
+        // fifo_mem is in its own clocked block (no async reset) so Vivado can
+        // infer BRAM/DRAM.  Only control signals get the async reset.
+        always_ff @(posedge clk_i) begin
+            if (fifo_wr_valid_i && fifo_wr_ready_o)
+                fifo_mem[wr_ptr_q[FIFO_DEPTH_LOG2-1:0]] <= fifo_wr_data_i;
+        end
+
         always_ff @(posedge clk_i or negedge rst_ni) begin
             if (!rst_ni) begin
                 wr_ptr_q <= '0;
             end else if (fifo_wr_valid_i && fifo_wr_ready_o) begin
-                fifo_mem[wr_ptr_q[FIFO_DEPTH_LOG2-1:0]] <= fifo_wr_data_i;
                 wr_ptr_q <= wr_ptr_q + 1;
             end
         end
@@ -286,13 +298,9 @@ module loom_dpi_regfile #(
     // AXI-Lite Read Interface
     // =========================================================================
 
-    logic [15:0] rd_addr_q;
     logic        rd_pending_q;
-
     logic [9:0]  rd_func_idx;
-    logic [5:0]  rd_reg_idx;
     assign rd_func_idx = rd_addr_q[15:6];
-    assign rd_reg_idx  = rd_addr_q[5:2];
 
     always_ff @(posedge clk_i or negedge rst_ni) begin
         if (!rst_ni) begin

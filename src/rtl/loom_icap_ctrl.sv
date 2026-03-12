@@ -21,8 +21,6 @@
 //   the instance stays in the static region.  In simulation the behavioral
 //   ICAPE3 stub from src/bfm/xilinx_primitives.sv is used automatically.
 
-`default_nettype none
-
 module loom_icap_ctrl #(
     parameter int unsigned ADDR_WIDTH = 20
 )(
@@ -249,5 +247,3 @@ module loom_icap_ctrl #(
     end
 
 endmodule
-
-`default_nettype wire
